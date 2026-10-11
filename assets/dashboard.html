@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>叁笙清理 · 空间与选择</title>
+<style>
+:root{--paper:#faf7f0;--ink:#243c2d;--green:#2f5d3a;--gold:#a57924;--line:#d9ddcf;--muted:#68756a;--white:#fffefa;--amber:#88611e;--red:#8a4a3a;--track:#e8ebe0;--rest:#cfd2c6;--sys:#a9ad9f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-variant-numeric:tabular-nums}
+button,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer;border:1px solid var(--line);border-radius:6px;padding:5px 12px;background:var(--white)}
+button:hover{border-color:var(--green)}button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+input[type=checkbox]{width:17px;height:17px;margin:0;accent-color:var(--green);cursor:pointer}
+header,.page{max-width:1240px;margin:auto;padding-left:28px;padding-right:28px}
+header{display:flex;align-items:center;gap:20px;padding-top:8px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:14px;flex:none}.logo{width:104px;height:36px;object-fit:contain}
+.brand strong{font-size:16px;font-weight:600;border-left:1px solid var(--line);padding-left:14px}
+.disk{margin-left:auto;width:min(420px,45%);font-size:12px;color:var(--muted);text-align:right}
+.disk .bar{height:6px;background:var(--track);border-radius:3px;overflow:hidden;margin-top:3px}.disk .bar span{display:block;height:100%;background:var(--green)}
+.page{display:grid;grid-template-columns:232px minmax(0,1fr);gap:28px;padding-top:16px}
+/* 左侧目录：挂在页面左边，跟着滚动停住 */
+.side{position:sticky;top:0;height:calc(100vh - 150px);display:flex;flex-direction:column}
+.dockbox{flex:1;min-height:0;display:flex;align-items:center}
+.dock{width:100%;max-height:calc(100% - 24px);overflow-y:auto;overscroll-behavior:contain}
+.side-foot{flex:none;display:flex;flex-wrap:wrap;gap:2px 8px;padding:6px 4px 0;font-size:11px}
+.side-foot a,.main-foot a{color:var(--muted);text-decoration:none}.side-foot a:hover,.main-foot a:hover{color:var(--green)}
+.main-foot{display:none;flex-wrap:wrap;gap:4px 10px;margin-top:16px;font-size:11px}
+.mod-h{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:2px 10px 4px;font-size:12px;color:var(--muted)}
+.mod-h b{font-weight:600}
+.mod-bar{height:3px;margin:0 10px 6px;background:var(--track);border-radius:2px;overflow:hidden;display:none}.mod-bar span{display:block;height:100%;background:var(--green)}
+.nav{display:flex;flex-direction:column;gap:1px}
+.nav button{display:flex;justify-content:space-between;align-items:baseline;gap:8px;text-align:left;border:0;border-radius:8px;background:transparent;padding:6px 10px;font-size:13px}
+.nav .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nav .r{flex:none;font-size:12px;color:var(--muted);white-space:nowrap}.nav .r b{font-weight:600;color:var(--green)}
+.nav button.keep .nm{color:var(--muted)}
+.mod-top .nav button{font-weight:600}
+/* 目录：深绿底悬浮导航岛，垂直居中 */
+.dock{background:#243c2d;color:#eef0e6;border-radius:16px;padding:10px;box-shadow:0 16px 40px rgba(36,60,45,.28),0 2px 8px rgba(36,60,45,.12)}
+.mod{padding:8px 0}.mod+.mod{border-top:1px solid rgba(255,255,255,.10)}
+.mod-h{color:#fff;font-size:14px;font-weight:650;padding:4px 10px 6px}.mod-h>span:last-child{font-size:12px;font-weight:400;color:rgba(238,240,230,.6)}.mod-h b{color:#e2c483}
+.mod .nav button{padding:5px 10px 5px 22px;font-size:13px;font-weight:400;color:rgba(238,240,230,.82);flex-wrap:wrap;row-gap:4px}
+.nav .r{color:rgba(238,240,230,.55)}.nav .r b{color:#e2c483;font-weight:600}
+.nav button.keep .nm{color:rgba(238,240,230,.5)}
+.mod-top .nav button{padding:6px 10px;font-size:14px;font-weight:650;color:#fff}
+.nav .r b.new{color:#e2c483}
+.vol{flex-basis:100%;height:3px;border-radius:2px;background:rgba(255,255,255,.08);overflow:hidden}
+.vol i{display:block;height:100%;background:rgba(238,240,230,.28);border-radius:2px;position:relative}
+.vol i b{position:absolute;left:0;top:0;bottom:0;background:#e2c483;border-radius:2px}
+.brand a{display:flex}
+.nav button:hover{background:rgba(255,255,255,.06)}
+.nav button[aria-current=true]{background:rgba(255,255,255,.12);color:#fff}
+/* 右侧 */
+.main{min-width:0;padding-bottom:20px}
+.main h1{font-size:21px;font-weight:600;margin:0;line-height:1.35}
+.lead{margin:4px 0 0;color:var(--muted)}
+.stack{display:flex;height:18px;border-radius:4px;overflow:hidden;background:var(--track);margin:16px 0 6px}
+.stack span{display:block;height:100%;min-width:2px}.stack span+span{border-left:2px solid var(--paper)}
+.scale{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}
+table.cats{width:100%;border-collapse:collapse;margin-top:14px}
+.cats th{font-size:12px;font-weight:500;color:var(--muted);text-align:right;padding:6px 8px;border-bottom:1px solid var(--line)}
+.cats th:first-child{text-align:left}
+.cats td{padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;vertical-align:top}
+.cats td:first-child{text-align:left;white-space:normal}
+.cats tr.go{cursor:pointer}.cats tr.go:hover td{background:var(--white)}
+.cats .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:8px}
+.cats .muted{color:var(--muted)}.cats .can{color:var(--green);font-weight:600}
+.cats tr.grp td{font-size:12px;color:var(--muted);padding-top:16px;border-bottom:0}
+.cats .ex{display:block;font-size:12px;color:var(--muted);margin:2px 0 0 18px;max-width:560px}
+.tally{display:flex;gap:28px;flex-wrap:wrap;margin:14px 0 4px;padding:10px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.tally small{display:block;font-size:12px;color:var(--muted)}.tally strong{font-size:19px;font-weight:600}
+.subh{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:20px 0 2px;padding:0 4px 6px;border-bottom:1px solid var(--line)}
+.subh h2{font-size:14px;font-weight:600;margin:0;color:var(--muted)}
+.subh label{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);cursor:pointer}
+/* 条目：左边文字，右边体积和勾选 */
+.item{display:grid;grid-template-columns:minmax(0,1fr) auto 28px;gap:4px 16px;padding:12px 4px;border-bottom:1px solid var(--line)}
+.item .tt{font-weight:600;font-size:15px;overflow-wrap:anywhere}
+.item .sz{font-weight:650;font-size:16px;white-space:nowrap;text-align:right}
+.item .ck{display:flex;justify-content:center;padding-top:3px}
+.item .ck .kp{font-size:12px;color:var(--muted)}
+.item .sub{grid-column:1;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.item .q{grid-column:1;font-size:13px;overflow-wrap:anywhere}
+.item .risk{grid-column:1;font-size:13px;color:var(--amber)}
+.item .down{grid-column:1;font-size:13px;color:var(--muted)}
+.item .down b{display:block;font-weight:600;color:var(--amber);font-size:12px}
+.item .down ul{margin:2px 0 0;padding-left:16px}
+.item details{grid-column:1}
+.item.keep .tt,.item.keep .sz{font-weight:500}
+.item.on{background:#f3f1e5}
+.tag{display:inline-block;font-size:12px;line-height:1.5;padding:0 6px;border:1px solid var(--green);color:var(--green);border-radius:4px;margin-left:8px;font-weight:400;vertical-align:1px}
+details.more{font-size:13px}details.more summary{cursor:pointer;color:var(--green);font-size:12px;width:max-content}
+details.more dl{display:grid;grid-template-columns:6em minmax(0,1fr);gap:4px 12px;margin:8px 0 2px}
+details.more dt{color:var(--muted)}details.more dd{margin:0;overflow-wrap:anywhere}details.more ul{margin:0;padding-left:16px}
+code{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere;word-break:break-all}
+.sc{color:var(--muted);font-size:12px}
+.none{padding:16px 4px;color:var(--muted)}
+.tips{margin-top:28px}.tips h2{font-size:15px;margin:0 0 6px}
+.tip{padding:10px 0;border-bottom:1px solid var(--line)}.tip .tt{font-weight:600}.tip p{margin:2px 0 0}
+.tip .done{color:var(--green)}
+.note{margin-top:22px;max-width:520px}.note label{font-size:12px}.note label span{color:var(--muted)}
+.note input{display:block;width:100%;margin:3px 0 0;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--white)}
+.quick{display:flex;gap:4px;flex-wrap:nowrap;white-space:nowrap}
+.quick button{font-size:12px;padding:4px 10px;border-radius:999px}
+.quick button[aria-pressed=true]{background:var(--green);color:#fff;border-color:var(--green)}
+.lvl{display:inline-block;font-size:11px;line-height:1.5;padding:0 6px;border-radius:4px;margin-left:8px;font-weight:400;vertical-align:2px;border:1px solid}
+.lvl.safe{color:var(--green);border-color:var(--green)}.lvl.recommended{color:#4f7270;border-color:#9fb4b2}.lvl.all{color:var(--amber);border-color:var(--gold)}
+.newtip{display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--white);border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:8px;padding:8px 14px;margin:0 0 14px}
+.newtip button{flex:none;background:var(--green);border-color:var(--green);color:#fff}
+.setsec{padding:18px 0;border-bottom:1px solid var(--line)}.setsec:last-child{border-bottom:0}
+.setsec h2{font-size:15px;margin:0 0 4px}.setsec p{margin:0 0 10px;color:var(--muted);font-size:13px}
+.opts{display:flex;gap:8px;flex-wrap:wrap}.opts label{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--white);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px}
+.opts label:has(input:checked){border-color:var(--green);box-shadow:inset 0 0 0 1px var(--green)}
+.opts input{accent-color:var(--green);margin:0}
+/* 我的项目 */
+.prow{display:grid;grid-template-columns:minmax(0,1fr) 84px 92px 214px;gap:4px 16px;align-items:start;padding:12px 10px;border-bottom:1px solid var(--line)}
+.prow.fresh{background:#f3f1e5;box-shadow:inset 3px 0 0 var(--gold)}
+.prow .nm{font-weight:600;font-size:15px;overflow-wrap:anywhere}
+.prow .sub{font-size:12px;color:var(--muted);overflow-wrap:anywhere}.prow .sub.ask{color:var(--amber)}
+.prow .sz,.prow .ago{text-align:right;white-space:nowrap}.prow .sz{font-weight:650}.prow .ago{color:var(--muted)}
+.prow .deliv{grid-column:1/-1}
+.deliv textarea{display:block;width:100%;height:64px;margin:6px 0 2px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--white);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}
+.deliv .hint{margin:0}
+.seg{display:flex;white-space:nowrap}
+.seg button{border-radius:0;margin-left:-1px;font-size:12px;padding:4px 10px}
+.seg button:first-child{border-radius:6px 0 0 6px;margin-left:0}.seg button:last-child{border-radius:0 6px 6px 0}
+.seg button[aria-pressed=true]{background:var(--green);color:#fff;border-color:var(--green)}
+.backbar{margin-top:22px;padding-top:14px;border-top:1px solid var(--line)}
+.pq{grid-column:1;display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.pq button{font-size:12px;padding:2px 10px;border-radius:999px}
+.pq button[aria-pressed=true]{background:var(--green);color:#fff;border-color:var(--green)}
+.hide-btn{grid-column:1;justify-self:start;border:0;background:none;padding:0;font-size:12px;color:var(--muted);text-decoration:underline;text-underline-offset:2px}
+.hide-btn:hover{color:var(--green)}
+.item.hidden-rule{opacity:.55}
+/* 底部选择栏 */
+.selbar{position:sticky;bottom:0;background:var(--paper);border-top:1px solid var(--line);margin-top:12px}
+.selbar .in{max-width:1240px;margin:auto;padding:10px 28px;display:flex;align-items:center;gap:16px}
+.selbar strong{font-size:15px}.hint{font-size:12px;color:var(--muted)}.hint.bad{color:var(--red)}
+.selbar .copywrap{margin-left:auto;text-align:right}.selbar .primary{white-space:nowrap}
+.selbar .copywrap .hint{margin-top:2px}
+.primary{background:var(--green);color:#fff;border-color:var(--green);padding:7px 16px}.primary:hover{border-color:var(--ink)}
+.feedback{font-size:12px;color:var(--muted);min-height:18px}
+.fallback{width:100%;height:120px;margin-top:6px}
+@media(max-width:780px){
+ header,.page,.selbar .in{padding-left:16px;padding-right:16px}
+ header{flex-wrap:wrap;gap:6px 12px}.brand{gap:10px}.brand strong{font-size:15px;padding-left:10px}.logo{width:92px;height:32px}.disk{width:100%;text-align:left}
+ .page{display:block}
+ .side{position:sticky;top:0;z-index:2;height:auto;background:var(--paper);border-bottom:1px solid var(--line);overflow-x:auto;padding:6px 0;margin-bottom:12px;display:block}
+ .dock{display:flex;gap:4px;max-height:none;overflow:visible;background:transparent;border:0;box-shadow:none;padding:0;color:inherit}
+ .mod{display:flex;padding:0;border:0;background:transparent;box-shadow:none;margin:0}
+ .mod-h,.mod-bar,.vol{display:none!important}.nav{flex-direction:row;gap:4px}
+ .dockbox{display:block}.side-foot{display:none}.main-foot{display:flex}
+ .prow{grid-template-columns:minmax(0,1fr) auto}.prow .ago{grid-column:1/-1;text-align:left;font-size:12px}.prow .seg{grid-column:1/-1}.seg button{flex:1}
+ .nav button{border:1px solid var(--line);background:var(--white);white-space:nowrap;color:var(--ink)}
+ .nav .r,.nav button.keep .nm{color:var(--muted)}.nav .r b{color:var(--green)}
+ .nav button[aria-current=true]{border-color:var(--green);color:var(--green);background:var(--white)}
+ .cats .hide-m{display:none}
+ .quick button{padding:3px 8px}
+ .selbar .in{gap:8px;flex-wrap:wrap}.selbar #selection-help{display:none}.selbar strong{font-size:13px;white-space:nowrap}
+ .quick{order:3;width:100%;flex-wrap:nowrap;overflow-x:auto}
+}
+</style>
+<header><div class="brand"><a href="https://sanshengai.top/" target="_blank" rel="noopener" title="叁笙早安 AI 官网"><img class="logo" src="__LOGO_DATA__" alt="叁笙早安 AI"></a><strong>叁笙清理</strong></div>
+<div class="disk"><span id="disk-text"></span><div class="bar" role="img" aria-label="硬盘已用比例"><span id="disk-used"></span></div></div></header>
+<div class="page">
+<aside class="side" aria-label="目录"><div class="dockbox"><nav class="dock" id="nav"></nav></div><div class="side-foot" id="side-foot"></div></aside>
+<main class="main"><div id="view"></div>
+<div class="note"><label for="note">还有哪些不要清理 <span>（选填，会一起发给 Agent）</span></label><input id="note" type="text" placeholder="例如：保留上周的图片原稿"></div>
+<div class="feedback" id="feedback" aria-live="polite"></div>
+<textarea id="fallback" class="fallback" aria-label="选中下面内容，复制给 Agent" hidden readonly></textarea>
+<div class="main-foot" id="main-foot"></div></main>
+</div>
+<div class="selbar"><div class="in"><div><strong id="selected">尚未勾选</strong><div class="hint" id="selection-help"></div></div>
+<div class="quick" id="quick" role="group" aria-label="一键选择"></div>
+<div class="copywrap"><button class="primary" id="copy" type="button">复制清单，发给 Agent</button><div class="hint" id="ledger-hint"></div></div></div></div>
+<script type="application/json" id="plan-data">__PLAN_JSON__</script>
+<script id="export-lib">
+// 导出文本的纯函数：测试在 node 里执行这段，再用 scripts/prefs.py 的 parse_ledger / parse_settings 解析核对。
+const STATUS_ZH={active:'进行中',done:'做完了',archived:'归档',protected:'别碰'};
+// Python 的 splitlines 会在这些字符处断行；JSON 里一律写成转义，保证“台账:”整行不被拆开
+const safeLine=s=>s.replace(/[\u0085\u2028\u2029]/g,c=>'\\u'+c.charCodeAt(0).toString(16).padStart(4,'0'));
+function ledgerLine(entries){ // entries：[{key,name,status,deliverables(数组或 null)}]
+  const o=Object.create(null);
+  for(const e of entries){if(!STATUS_ZH[e.status])continue;
+    const v={'状态':STATUS_ZH[e.status]};
+    if(Array.isArray(e.deliverables))v['成品']=e.deliverables;
+    if(e.name)v['名称']=e.name;
+    o[e.key]=v}
+  return '台账: '+safeLine(JSON.stringify({'项目':o}));
+}
+function settingsLine(s){return '设置: '+safeLine(JSON.stringify({'保留天数':s.days,'默认':s.def}))}
+// 扫描只是猜测，不当成用户标注：“做完了”不预选，只在行内用小字提示（用户点过任何状态后提示消失）
+function doneHint(p,nowMs){
+  if(p.status||p.default_status!=='done')return '';
+  const t=Date.parse(p.last_active||''),d=isNaN(t)?0:Math.floor(((nowMs==null?Date.now():nowMs)-t)/864e5);
+  return d>0?'看起来做完了（'+d+' 天没动）':'看起来做完了';
+}
+// 备注是自由文本，进的是按行解析的清单：控制字符、NEL、行/段分隔符（Python splitlines 会在这些处断行）一律换成空格，再折叠空白
+function cleanNote(v){return String(v==null?'':v).replace(/[\x00-\x1f\x7f\x85\u2028\u2029]/g,' ').replace(/\s+/g,' ').trim()}
+function splitPaths(text){const seen=new Set(),out=[];for(const l of String(text||'').split(/\r?\n/)){const p=l.trim();if(p&&!seen.has(p)){seen.add(p);out.push(p)}}return out}
+</script>
+<script>
+'use strict';
+const D=JSON.parse(document.getElementById('plan-data').textContent);
+const facts=D.facts||{}, plan=D.plan||{}, check=D.check||{errors:[]}, seal=D.seal||null;
+const $=id=>document.getElementById(id);
+const E=(tag,text,cls)=>{const el=document.createElement(tag);if(text!=null)el.textContent=text;if(cls)el.className=cls;return el};
+const fmtBytes=n=>{n=+n||0;const a=Math.abs(n);if(a<1000)return Math.trunc(n)+' B';const sg=n<0?'-':'';
+  for(const [u,d] of [['KB',1e3],['MB',1e6],['GB',1e9],['TB',1e12]]){const v=a/d;if(Number(v.toFixed(1))<1000||u==='TB')return sg+v.toFixed(1)+' '+u}}; // 十进制一位小数，与 scripts/units.py 的 fmt_bytes 逐值一致
+const gb=n=>{if(n==null)return'未统计';if(n<=0)return'0';return fmtBytes(n)};
+const g1=n=>(Math.round((n||0)/1e8)/10).toLocaleString('zh-CN',{minimumFractionDigits:1,maximumFractionDigits:1}); // 目录里的短写：9.7
+const LABEL={clean:'建议清理',decide:'需你决定',keep:'保留'};
+const SCOPE={all:'整个目录','ignored-only':'只删 git 忽略的文件',files:'指定文件'};
+const COLORS=['#2f5d3a','#5f8a6a','#93ad86','#a57924','#c9a35a','#4f7270','#7f9c9a','#b7a37a','#8c9a6c','#6e7a63','#dcd6c4'];
+const CATS=(plan.categories&&plan.categories.length?plan.categories:[{id:'other',name:'其他',section:'',desc:''}]);
+const catIndex=new Map(CATS.map((c,i)=>[c.id,i]));
+const colorOf=id=>COLORS[(catIndex.get(id)||0)%COLORS.length];
+const cards=(plan.cards||[]).filter(c=>LABEL[c.verdict]).sort((a,b)=>(b.bytes||0)-(a.bytes||0));
+// 项目做完了 / 归档的待定卡：回答默认选“删”（plan.py 预填，仍要用户确认；用户取消勾选即不清理）
+const prefillOf=c=>c.prefill==='删'||!!(D.proposal&&D.proposal.prefill&&D.proposal.prefill[c.id]==='删');
+// 勾选＝要清理，没勾＝不动。clean 卡初始按 plan.py 算出的 default_select 预勾选（c.verdict==='clean'&&c.default_select===true）；decide 卡只有项目做完了（prefillOf）才预勾选
+const picked=new Set(cards.filter(c=>(c.verdict==='clean'&&c.default_select===true)||(c.verdict==='decide'&&prefillOf(c))).map(c=>c.id));
+const catOf=c=>catIndex.has(c.category)?c.category:'other';
+const sum=a=>a.reduce((n,c)=>n+(c.bytes||0),0);
+const act=c=>c.verdict!=='keep';
+const isSel=c=>act(c)&&picked.has(c.id);
+let view='overview';
+const S=D.settings||{};
+const cfg={days:Number.isInteger(S.retention_days)&&S.retention_days>0?S.retention_days:0,def:['safe','recommended','all'].includes(S.default_choice)?S.default_choice:'recommended'};
+let settingsTouched=false;
+// 项目台账：台账里的项目 + 本次扫描认出的项目；status 是当前选择，orig 是打开页面时的状态（null＝还没标）
+const PQ=(D.proposal&&D.proposal.project_questions)||[];
+const newQ=PQ.find(q=>q.type==='new_projects');
+const newKeys=new Set(((newQ&&newQ.projects)||[]).map(p=>p.key));
+const staleDays=new Map(PQ.filter(q=>q.type==='stale_active').map(q=>[q.key,q.idle_days]));
+const PROJ=new Map();
+function addProj(p){const r={p,orig:p.status||null,status:p.status||null,deliv:(p.deliverables&&p.deliverables.length?p.deliverables:(p.deliverables_guess||[])).slice(),delivEdited:false};PROJ.set(p.key,r);return r}
+(D.projects||[]).forEach(addProj);
+const ledgerEntries=()=>[...PROJ.values()].filter(r=>r.status&&(r.status!==r.orig||r.delivEdited))
+  .map(r=>({key:r.p.key,name:r.p.name,status:r.status,deliverables:(r.delivEdited||!r.orig)?r.deliv:null}));
+const SEG=[['active','进行中'],['done','做完了'],['archived','归档'],['protected','别碰']];
+const RET_NAME={0:'不按天数，只看做没做完',7:'最近 7 天',15:'最近 15 天',30:'最近 30 天'};
+const short=k=>k.startsWith('env:')?'':k.replace(/^\/Users\/[^/]+/,'~');
+const ago=iso=>{const t=Date.parse(iso||'');if(isNaN(t))return'—';const d=Math.floor((Date.now()-t)/864e5);return d<=0?'今天':d+' 天前'};
+const hiddenKeys=new Set();   // “以后别列这类”：规则键
+const PRESET=[['safe','稳妥','删了不丢东西：软件会自己重新下载，或本来就是失败、废弃的记录。'],
+  ['recommended','推荐','稳妥的全部，再加有副本的、任务已经做完的过程记录和中间稿。以后要改得重新生成。'],
+  ['all','全部可删','再加删了就找不回来的，比如没有副本的图、模拟器里的数据。确认都不要了再选。']];
+const RANK={safe:0,recommended:1,all:2};
+const inPreset=(c,p)=>act(c)&&c.preset&&RANK[c.preset]<=RANK[p]&&!hiddenKeys.has(c.rule_key);
+const presetCards=p=>cards.filter(c=>inPreset(c,p));
+function choosePreset(p){picked.clear();if(p)presetCards(p).forEach(c=>picked.add(c.id));render()}
+function activePreset(){const ids=[...picked].sort().join();for(const [p] of PRESET){if(presetCards(p).map(c=>c.id).sort().join()===ids&&ids)return p}return ''}
+const LVL={safe:'稳妥',recommended:'推荐',all:'慎重'};
+
+const dk=facts.disk||{}, cov=facts.coverage||{};
+const used=dk.used!=null?dk.used:(dk.total>0?dk.total-dk.free:0);
+$('disk-text').textContent=(dk.total>0?'硬盘 '+gb(dk.total)+'，已用 '+gb(used)+'，还剩 '+gb(dk.free):'硬盘容量未读到')+(facts.created_at?' · 扫描于 '+String(facts.created_at).replace('T',' ').slice(5,16):'');
+if(dk.total>0)$('disk-used').style.width=Math.min(100,100*used/dk.total)+'%';
+
+function catStats(id){const cs=cards.filter(c=>catOf(c)===id);const a=cs.filter(act);
+  return {cards:cs,total:sum(cs),can:sum(a),sel:sum(cs.filter(isSel)),acts:a.length}}
+function navBtn(key,name,right,cls){
+  const b=E('button',null,cls||'');b.type='button';b.setAttribute('aria-current',String(view===key));
+  b.append(E('span',name,'nm'));const r=E('span',null,'r');right.forEach(([t,tag])=>r.append(tag?E(tag,t):document.createTextNode(t)));b.append(r);
+  b.onclick=()=>{view=key;render();window.scrollTo({top:0})};return b;
+}
+// 与官网左下角的社交入口一致
+const SOCIAL=[['GitHub','https://github.com/sanshengai/sansheng-disk-cleanup'],['反馈问题','https://github.com/sanshengai/sansheng-disk-cleanup/issues'],['公众号','https://sanshengai.top/about/'],['小红书','https://www.xiaohongshu.com/user/profile/5c716b6d000000001000f5c4?xsec_token=YB0ZibE9n6PQ4ZFwQ-T84w0MA0FnGi_yFDgtAGhNHlE70%3D&xsec_source=app_share'],['小宇宙','https://namecard.xiaoyuzhoufm.com/nnl8x']];
+function renderNav(){
+  const root=$('nav');root.replaceChildren();
+  const top=E('div',null,'mod mod-top'), tn=E('div',null,'nav');
+  tn.append(navBtn('overview','总览',[['已用 '],[g1(used),'b']]));
+  const pend=pendingNew();
+  tn.append(navBtn('projects','我的项目',pend.length?[['新 '],[String(pend.length),'b']]:[[PROJ.size+' 个']]));
+  top.append(tn);root.append(top);
+  const sections=[];
+  for(const c of CATS){const s=catStats(c.id);if(!s.cards.length)continue;
+    let sec=sections.find(x=>x.name===c.section);if(!sec){sec={name:c.section,cats:[]};sections.push(sec)}sec.cats.push([c,s])}
+  const maxTot=Math.max(1,...sections.flatMap(x=>x.cats.map(([,s])=>s.total)));
+  for(const sec of sections){
+    const m=E('div',null,'mod'), tot=sec.cats.reduce((n,[,s])=>n+s.total,0), can=sec.cats.reduce((n,[,s])=>n+s.can,0);
+    const h=E('div',null,'mod-h');h.append(E('span',sec.name));const hr=E('span');
+    if(can){hr.append('可删 ',E('b',g1(can)),'/'+g1(tot))}else hr.append('留 '+g1(tot));h.append(hr);m.append(h);
+    const bar=E('div',null,'mod-bar');const bs=E('span');bs.style.width=(tot?100*can/tot:0)+'%';bar.append(bs);m.append(bar);
+    const box=E('div',null,'nav');
+    for(const [c,s] of sec.cats){
+      const right=s.acts?[['可删 '],[g1(s.can),'b'],['/'+g1(s.total)]]:[['留 '+g1(s.total)]];
+      const b=navBtn(c.id,c.name,right,s.acts?'':'keep');
+      b.title=s.acts?c.name+'：共 '+gb(s.total)+'，可以腾出 '+gb(s.can)+(s.sel?'，已勾 '+gb(s.sel):''):c.name+'：共 '+gb(s.total)+'，都留着';
+      const vol=E('span',null,'vol'),vi=E('i'),vb=E('b');vi.style.width=(100*s.total/maxTot)+'%';vb.style.width=(s.total?100*s.can/s.total:0)+'%';vi.append(vb);vol.append(vi);b.append(vol);
+      box.append(b);
+    }
+    m.append(box);root.append(m);
+  }
+}
+// 小字入口：桌面在左下角，手机在页面底部
+function fillFoot(){
+  for(const id of ['side-foot','main-foot']){const f=$(id);f.replaceChildren();
+    for(const [n,u] of SOCIAL){const a=E('a',n);a.href=u;a.target='_blank';a.rel='noopener';f.append(a)}}
+}
+const pendingNew=()=>[...PROJ.values()].filter(r=>newKeys.has(r.p.key)&&!r.status);
+function newTip(){
+  if(!(newQ&&newQ.count>0))return null;
+  const pend=pendingNew();if(newKeys.size&&!pend.length)return null;
+  const n=newKeys.size?pend.length:newQ.count;
+  const tip=E('div',null,'newtip');tip.append(E('span','新发现 '+n+' 个项目，标一下状态'));
+  const go=E('button','去标记');go.type='button';go.onclick=()=>{view='projects';render();window.scrollTo({top:0});const f=document.querySelector('.prow.fresh');if(f)f.scrollIntoView({block:'center'})};
+  tip.append(go);return tip;
+}
+function setStatus(r,st){
+  const y=window.scrollY;r.status=r.status===st?r.orig:st;
+  if(r.status==='active'||r.status==='protected')cards.filter(c=>prefillOf(c)&&(c.projects||[]).some(x=>x.key===r.p.key)).forEach(c=>picked.delete(c.id)); // 改成还在做：预选的“删”撤掉
+  render();window.scrollTo({top:y});
+}
+
+function renderOverview(v){
+  const known=sum(cards), can=sum(cards.filter(act)), keep=known-can;
+  const walked=cov.walked_bytes||0, rest=Math.max(0,used-known), sysArea=Math.max(0,used-walked);
+  v.append(E('h1','已用的 '+gb(used)+' 都去哪了'));
+  v.append(E('p','逐项查清了 '+gb(known)+' 的来历：其中 '+gb(can)+' 可以腾出，要你在左边各类里勾选；'+gb(keep)+' 查过但要留着。其余 '+gb(rest)+' 没有逐项分析，下面说明是什么。','lead'));
+  const rows=CATS.map(c=>Object.assign({c},catStats(c.id))).filter(x=>x.cards.length);
+  const st=E('div',null,'stack');st.setAttribute('role','img');
+  const segs=rows.map(x=>[x.c.name,x.total,colorOf(x.c.id)]).concat([['你在用的项目、数据和应用',Math.max(0,rest-sysArea),'var(--rest)'],['系统区域',Math.min(rest,sysArea),'var(--sys)']]);
+  st.setAttribute('aria-label',segs.map(s=>s[0]+' '+gb(s[1])).join('，'));
+  for(const [n,b,col] of segs){if(!b)continue;const s=E('span');s.style.width=(100*b/Math.max(1,used))+'%';s.style.background=col;s.title=n+' '+gb(b);st.append(s)}
+  v.append(st);
+  const sc=E('div',null,'scale');sc.append(E('span','彩色：逐项查过的 '+gb(known)),E('span','浅灰：在用的文件 · 深灰：系统区域'));v.append(sc);
+  const tb=E('table',null,'cats'), hd=E('tr');
+  for(const [h,cls] of [['',''],['占用',''],['可以腾出',''],['已勾','hide-m']])hd.append(E('th',h,cls));
+  const thead=E('thead');thead.append(hd);tb.append(thead);const body=E('tbody');
+  let section=null;
+  for(const x of rows){
+    if(x.c.section!==section){section=x.c.section;const g=E('tr',null,'grp');const td=E('td',section);td.colSpan=4;g.append(td);body.append(g)}
+    const tr=E('tr',null,'go');tr.tabIndex=0;tr.onclick=tr.onkeydown=e=>{if(e.type==='keydown'&&e.key!=='Enter')return;view=x.c.id;render();window.scrollTo({top:0})};
+    const td=E('td');const sw=E('span',null,'sw');sw.style.background=colorOf(x.c.id);td.append(sw,x.c.name);
+    tr.append(td,E('td',gb(x.total)),E('td',x.acts?gb(x.can):'都留着',x.acts?'can':'muted'),E('td',x.sel?gb(x.sel):'—','hide-m'+(x.sel?'':' muted')));
+    body.append(tr);
+  }
+  // 没逐项分析的部分：系统区域 + 扫过但没逐项判断的目录
+  const g=E('tr',null,'grp');const gtd=E('td','没逐项分析的 '+gb(rest));gtd.colSpan=4;g.append(gtd);body.append(g);
+  const home=(cov.roots||[])[0]||'';const short=p=>home&&p&&p.startsWith(home+'/')?'~'+p.slice(home.length):p;
+  const tr1=E('tr');const t1=E('td');const s1=E('span',null,'sw');s1.style.background='var(--sys)';t1.append(s1,'系统区域');
+  t1.append(E('span','macOS 系统本身、虚拟内存、系统快照、系统临时文件等。扫描只进用户目录和应用程序，这部分没逐项看；系统会自己管理，清理软件也不该动。','ex'));
+  tr1.append(t1,E('td','约 '+gb(sysArea)),E('td','—','muted'),E('td','—','hide-m muted'));body.append(tr1);
+  const tr2=E('tr');const t2=E('td');const s2=E('span',null,'sw');s2.style.background='var(--rest)';t2.append(s2,'你在用的项目、数据和应用');
+  const areas=(facts.areas||[]).map(a=>short(a.path)+' '+gb(a.bytes)).join('、');
+  t2.append(E('span','扫过了，但都是在用的文件，不算垃圾，这次不逐项判断。'+(areas?'大头在：'+areas+'（目录总大小，含上面已查过的部分）。':''),'ex'));
+  tr2.append(t2,E('td','约 '+gb(Math.max(0,rest-sysArea))),E('td','—','muted'),E('td','—','hide-m muted'));body.append(tr2);
+  tb.append(body);v.append(tb);
+  renderTips(v);
+}
+function renderTips(v){
+  const g=plan.governance||[];if(!g.length)return;
+  const box=E('section',null,'tips');box.append(E('h2','以后怎么少长一点'));
+  for(const x of g){
+    const el=E('div',null,'tip');el.append(E('div',x.title,'tt'));
+    if(x.current)el.append(E('p','现在：'+x.current));
+    if(x.suggest)el.append(E('p','建议：'+x.suggest));
+    if(x.how)el.append(E('p',x.how,x.done?'done':''));
+    box.append(el);
+  }
+  v.append(box);
+}
+
+const EV_KIND={merged:'已合并',delivered:'已交付',copy_verified:'副本已核对',user_stated:'用户说明（不算结束证据）',refs_reviewed:'引用已核对'};
+function evText(e){if(typeof e==='string')return e;if(!e||typeof e!=='object')return String(e);
+  const k=EV_KIND[e.kind]||e.kind||'证据';const rest=Object.entries(e).filter(([x])=>x!=='kind').map(([x,v])=>x+'='+(typeof v==='object'?JSON.stringify(v):v)).join('，');
+  return k+(rest?'：'+rest:'')}
+const plain=s=>typeof s==='string'&&s.trim()&&s.trim()!=='无'?s.trim():'';
+function detail(c){
+  const d=E('details','','more');d.append(E('summary','详情'));
+  const dl=E('dl');
+  if(plain(c.impact)&&act(c))dl.append(E('dt','删了会怎样'),E('dd',c.impact));
+  if((c.evidence||[]).length){const ul=E('ul');c.evidence.forEach(e=>ul.append(E('li',evText(e))));const dd=E('dd');dd.append(ul);dl.append(E('dt','判断依据'),dd)}
+  if((c.evidence_verified||[]).length){const ul=E('ul');c.evidence_verified.forEach(v=>ul.append(E('li',evText(v.evidence)+(v.msg?'（'+v.msg+'）':''))));const dd=E('dd');dd.append(ul);dl.append(E('dt','已复核'),dd)}
+  if((c.risk_notes||[]).length)dl.append(E('dt','逐条提示'),E('dd',c.risk_notes.length.toLocaleString('zh-CN')+' 条，原因见上方“留意”'));
+  if((c.check_groups||[]).length){
+    const dd=E('dd');
+    for(const g of c.check_groups){
+      const p=E('div');p.append(g.reason+(g.count>1?'（共 '+g.count.toLocaleString('zh-CN')+' 条）':''));
+      const ex=E('div',null,'sc');(g.examples||[]).forEach(x=>ex.append(E('code',x),E('br')));if(ex.childNodes.length)p.append(ex);
+      dd.append(p);
+    }
+    if(c.check_groups_more>0)dd.append(E('div','……另有 '+c.check_groups_more+' 类原因','sc'));
+    dl.append(E('dt','复核结果'),dd);
+  }
+  if((c.items||[]).length){
+    const dd=E('dd');
+    for(const it of c.items){
+      const p=E('div');p.append(E('code',it.path||(it.argv||[]).join(' ')));
+      p.append(E('span',' · '+(it.method==='native'?'用软件自带命令删除':(SCOPE[it.scope]||'删除'))+(it.files_total?' '+it.files_total+' 个文件':''),'sc'));
+      dd.append(p);
+    }
+    if(c.items_total>c.items.length)dd.append(E('div','……共 '+c.items_total.toLocaleString('zh-CN')+' 条，这里只列前 '+c.items.length+' 条','sc'));
+    dl.append(E('dt','位置'),dd);
+  }
+  dl.append(E('dt','编号'),E('dd',c.id));
+  d.append(dl);return d;
+}
+function itemEl(c){
+  const el=E('div',null,'item '+c.verdict+(isSel(c)?' on':''));el.dataset.id=c.id;
+  const t=E('div',c.title,'tt');if(c.preset)t.append(E('span',LVL[c.preset],'lvl '+c.preset));
+  if(c.preset_raw==='all'&&c.preset!=='all')t.append(E('span','删了找不回','lvl all')); // 被归档项目降到推荐档，但东西仍是删了找不回的
+  const ck=E('div',null,'ck');
+  if(act(c)){
+    const i=document.createElement('input');i.type='checkbox';i.checked=picked.has(c.id);i.setAttribute('aria-label','清理 '+c.title);
+    i.onchange=()=>{i.checked?picked.add(c.id):picked.delete(c.id);el.classList.toggle('on',i.checked);update()};ck.append(i);
+  }else ck.append(E('span','留着','kp'));
+  el.append(t,E('div',gb(c.bytes),'sz'),ck);
+  const sub=[c.source?'来自 '+c.source:'',plain(c.summary)].filter(Boolean).join('。');
+  if(sub)el.append(E('div',sub,'sub'));
+  for(const pj of (c.projects||[]).slice(0,3)){
+    const r=PROJ.get(pj.key)||addProj({key:pj.key,name:pj.name,status:pj.status});
+    const row=E('div',null,'pq');row.append('属于「'+r.p.name+'」');
+    for(const [st,label] of [['done','这个项目做完了'],['active','还在做']]){const b=E('button',label);b.type='button';b.setAttribute('aria-pressed',String(r.status===st));b.onclick=()=>setStatus(r,st);row.append(b)}
+    el.append(row)}
+  if(c.verdict==='decide'&&prefillOf(c))el.append(E('div','项目已标“做完了”，这一项先替你勾上了；不想清就取消勾选。','sub'));
+  if(c.verdict==='decide'&&(c.ask||c.question))el.append(E('div','勾选前想一想：'+(c.ask||c.question),'q'));
+  if(c.downgraded){const dr=c.down_reasons||[];const dn=E('div',null,'down');dn.append(E('b','没通过自动复核，已改为'+LABEL[c.verdict]));
+    const ul=E('ul');(dr.length?dr:['原因未记录']).forEach(t=>ul.append(E('li',t)));
+    if(c.down_more>0)ul.append(E('li','另有 '+c.down_more+' 类原因，见详情'));dn.append(ul);el.append(dn)}
+  for(const r of (c.risk_summary||[]))el.append(E('div','留意：'+r.text+(r.count>1?'（涉及 '+r.count.toLocaleString('zh-CN')+' 处）':''),'risk'));
+  if(act(c)&&c.rule_key){const h=E('button',hiddenKeys.has(c.rule_key)?'以后不再列这类（撤销）':'以后别列这类','hide-btn');h.type='button';
+    h.title='这一类以后一律留着、不再列出来；会和清单一起告诉 Agent';
+    h.onclick=()=>{if(hiddenKeys.has(c.rule_key))hiddenKeys.delete(c.rule_key);else{hiddenKeys.add(c.rule_key);cards.filter(x=>x.rule_key===c.rule_key).forEach(x=>picked.delete(x.id))}render()};
+    el.append(h);if(hiddenKeys.has(c.rule_key))el.classList.add('hidden-rule')}
+  el.append(detail(c));return el;
+}
+function tallyRows(){
+  const s=catIndex.has(view)?catStats(view):null;
+  if(s)return [['可以腾出',s.acts?gb(s.can):'0'],['已勾，预计腾出',gb(s.sel)],['留着',gb(s.total-s.can)]];
+  return [];
+}
+function fillTally(t){t.replaceChildren();for(const [l,val] of tallyRows()){const d=E('div');d.append(E('small',l),E('strong',val));t.append(d)}}
+function renderCategory(v,id){
+  const c=CATS[catIndex.get(id)], s=catStats(id);
+  v.append(E('h1',c.name+' · '+gb(s.total)));
+  if(c.desc)v.append(E('p',c.desc,'lead'));
+  const t=E('div',null,'tally');t.id='tally';fillTally(t);v.append(t);
+  const a=s.cards.filter(act), k=s.cards.filter(x=>!act(x));
+  if(a.length){
+    const h=E('div',null,'subh');h.append(E('h2',a.length+' 项可以清理，勾上的才会删'));
+    const lab=E('label');const all=document.createElement('input');all.type='checkbox';all.id='pick-all';
+    all.checked=a.every(x=>picked.has(x.id));all.onchange=()=>{a.forEach(x=>all.checked?picked.add(x.id):picked.delete(x.id));render()};
+    lab.append(all,'全选本类');h.append(lab);v.append(h);
+    a.forEach(x=>v.append(itemEl(x)));
+  }else v.append(E('div','这一类没有可以清理的，下面是留着的原因。','none'));
+  if(k.length){const h=E('div',null,'subh');h.append(E('h2','留着的 '+k.length+' 项'));v.append(h);k.forEach(x=>v.append(itemEl(x)))}
+}
+function projRow(r){
+  const p=r.p, el=E('div',null,'prow'+(newKeys.has(p.key)&&!r.orig?' fresh':''));el.dataset.key=p.key;
+  const nm=E('div',null);nm.append(E('div',p.name,'nm'));
+  if(newKeys.has(p.key)&&!r.orig)nm.firstChild.append(E('span','新发现','tag'));
+  const sub=[short(p.key),p.sessions>0?p.sessions+' 个 AI 会话':''].filter(Boolean).join(' · ');
+  if(sub)nm.append(E('div',sub,'sub'));
+  if(staleDays.has(p.key))nm.append(E('div','已 '+staleDays.get(p.key)+' 天没动了，做完了吗？','sub ask'));
+  const dh=r.orig?'':doneHint(p),hint=dh?E('div',dh,'sub'):null;if(hint)nm.append(hint);
+  const g=E('div',null,'seg'), btns=[];g.setAttribute('role','group');g.setAttribute('aria-label',p.name+' 的状态');
+  for(const [k,name] of SEG){const b=E('button',name);b.type='button';b.setAttribute('aria-pressed',String(r.status===k));
+    b.onclick=()=>{r.status=r.status===k?r.orig:k;
+      if(r.status==='active'||r.status==='protected')cards.filter(c=>prefillOf(c)&&(c.projects||[]).some(x=>x.key===p.key)).forEach(c=>picked.delete(c.id));
+      for(const [kk,bb] of btns)bb.setAttribute('aria-pressed',String(r.status===kk));if(hint)hint.hidden=!!r.status;update()};
+    btns.push([k,b]);g.append(b)}
+  el.append(nm,E('div',p.bytes!=null?gb(p.bytes):'—','sz'),E('div',ago(p.last_active),'ago'),g);
+  const d=E('details',null,'more deliv');const sm=E('summary','成品在哪'+(r.deliv.length?'（'+r.deliv.length+' 处）':''));d.append(sm);
+  const ta=document.createElement('textarea');ta.value=r.deliv.join('\n');ta.placeholder='一行一个目录，例如 ~/Projects/短剧/成品';ta.setAttribute('aria-label',p.name+' 的成品目录');
+  ta.oninput=()=>{r.deliv=splitPaths(ta.value);r.delivEdited=true;sm.textContent='成品在哪'+(r.deliv.length?'（'+r.deliv.length+' 处）':'');update()};
+  d.append(ta,E('p','清理时，有副本的才放心清；清理前也会在这里查有没有文档引用了要清的东西。','hint'));
+  el.append(d);return el;
+}
+function renderProjects(v){
+  v.append(E('h1','我的项目'));
+  v.append(E('p','标一下每个项目现在的状态，清理就按你的习惯来。改动会随清单一起复制给 Agent。','lead'));
+  const list=E('div',null,'plist');list.style.marginTop='16px';list.style.borderTop='1px solid var(--line)';
+  const rs=[...PROJ.values()].sort((a,b)=>(newKeys.has(b.p.key)&&!b.orig)-(newKeys.has(a.p.key)&&!a.orig)||(b.p.bytes||0)-(a.p.bytes||0));
+  if(!rs.length)list.append(E('div','还没有认出项目。运行 scan.py probe projects 后重新生成看板，这里就会列出来。','none'));
+  rs.forEach(r=>list.append(projRow(r)));v.append(list);
+  const sec=(title,desc)=>{const d=E('div',null,'setsec');d.append(E('h2',title));if(desc)d.append(E('p',desc));v.append(d);return d};
+  const touch=()=>{settingsTouched=true;update()};
+  {const d=sec('AI 对话留多久','最近这些天里用过的对话一律留着，不列为可清。');const o=E('div',null,'opts');
+    for(const n of S.retention_choices||[0,7,15,30]){const l=E('label');const i=document.createElement('input');i.type='radio';i.name='days';i.checked=cfg.days===n;
+      i.onchange=()=>{cfg.days=n;touch()};l.append(i,RET_NAME[n]||'最近 '+n+' 天');o.append(l)}d.append(o)}
+  {const d=sec('平时默认清到哪一档','以后在对话里回一句“好”，就按这一档清。');const o=E('div',null,'opts');
+    for(const [p,name,desc] of PRESET){const l=E('label');l.title=desc;const i=document.createElement('input');i.type='radio';i.name='def';i.checked=cfg.def===p;
+      i.onchange=()=>{cfg.def=p;touch()};l.append(i,name);o.append(l)}d.append(o)}
+  const bar=E('div',null,'backbar');const back=E('button','回到清单');back.type='button';back.id='back';back.onclick=()=>{view='overview';render();window.scrollTo({top:0})};bar.append(back);v.append(bar);
+}
+function renderView(){
+  const v=$('view');v.replaceChildren();
+  if(view!=='projects'){const t=newTip();if(t)v.append(t)}
+  if(view==='projects')renderProjects(v);
+  else if(view!=='overview'&&catIndex.has(view))renderCategory(v,view);else renderOverview(v);
+}
+function selected(){return cards.filter(isSel)}
+function update(){
+  const s=selected();
+  $('selected').textContent=s.length?'已勾 '+s.length+' 项，预计腾出 '+gb(sum(s)):'尚未勾选';
+  const ok=!!(seal&&seal.digest);
+  const le=ledgerEntries(), extra=settingsTouched||le.length>0||hiddenKeys.size>0;
+  $('copy').disabled=!ok||(!s.length&&!extra);
+  $('selection-help').textContent=!ok?'计划尚未封存，先让 Agent 运行 plan.py seal'
+    :'这个页面自己不会删东西。复制清单粘贴给 Agent，它会先演练一遍、再删一条试试，确认没问题才删其余的；没勾的一律不动。';
+  $('selection-help').className='hint'+(ok?'':' bad');
+  $('ledger-hint').textContent=le.length?'改了项目状态，Agent 会先重新核对再执行':'';
+  const q=$('quick');q.replaceChildren();const ap=activePreset();
+  for(const [p,name] of PRESET){const cs=presetCards(p);if(!cs.length)continue;
+    const b=E('button',name+' '+gb(sum(cs)));b.type='button';b.title=cs.length+' 项。'+PRESET.find(x=>x[0]===p)[2];b.setAttribute('aria-pressed',String(ap===p));b.onclick=()=>choosePreset(p);q.append(b)}
+  if(picked.size){const c=E('button','清空');c.type='button';c.title='取消全部勾选';c.onclick=()=>choosePreset('');q.append(c)}
+  renderNav();
+  if($('tally'))fillTally($('tally'));
+  const all=$('pick-all');if(all&&catIndex.has(view)){const a=catStats(view).cards.filter(act);all.checked=a.length>0&&a.every(x=>picked.has(x.id))}
+  if(view==='overview')renderView();
+  const cur=document.querySelector('.nav button[aria-current=true]');if(cur&&matchMedia('(max-width:780px)').matches)cur.scrollIntoView({block:'nearest',inline:'center'});
+}
+function render(){renderView();update()}
+
+/*SEL-BEGIN*/
+// 选择指纹：sha256(JSON{"answers":[…],"cards":[…],"seal":"…"})[:12]，键序固定、无空白、不转义非 ASCII；
+// 与 plan.py selection_sig 逐字节一致（tests/test_selection.py 会抽出这段在 node 里对照）。
+function selPayload(sealDigest,ids,ans){
+  return '{"answers":'+JSON.stringify(ans.slice().sort())+',"cards":'+JSON.stringify(ids.slice().sort())+',"seal":'+JSON.stringify(sealDigest)+'}';
+}
+async function selSig(sealDigest,ids,ans){
+  const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(selPayload(sealDigest,ids,ans)));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,12);
+}
+/*SEL-END*/
+async function agentMessage(){
+  const ids=selected().map(c=>c.id).sort();
+  const ans=cards.filter(c=>c.verdict==='decide'&&picked.has(c.id)).map(c=>c.id+'=删').sort(); // 勾选的待定项即“删”；没勾的不进清单，也不会被删
+  const note=cleanNote($('note').value);
+  const sel=await selSig(seal?seal.digest:'',ids,ans);
+  return ['叁笙清理选择','scan_id: '+(facts.scan_id||plan.scan_id||''),'seal: '+(seal?seal.digest:''),
+    '清理: '+(ids.join(', ')||'无'),'回答: '+(ans.join(' / ')||'无'),'sel: '+sel,
+    ...(settingsTouched?[settingsLine(cfg)]:[]),
+    ...(ledgerEntries().length?[ledgerLine(ledgerEntries())]:[]),
+    ...(hiddenKeys.size?['别再列: '+[...hiddenKeys].sort().join(', ')]:[]),
+    '备注: '+(note||'无')].join('\n');
+}
+$('copy').onclick=async()=>{
+  if($('copy').disabled)return;let v;
+  try{v=await agentMessage()}catch(e){$('feedback').textContent='当前浏览器不支持生成选择校验码（需要 crypto.subtle，请用 Safari/Chrome 打开）。';return}
+  try{await navigator.clipboard.writeText(v);$('fallback').hidden=true;$('feedback').textContent='已复制。回到和 Agent 的对话里粘贴发送，它会接着清理。'}
+  catch(e){$('fallback').hidden=false;$('fallback').value=v;$('fallback').select();$('feedback').textContent='浏览器没让自动复制：请按 ⌘C 复制下面已选中的内容，再粘贴给 Agent。'}
+};
+fillFoot();render();
+</script>

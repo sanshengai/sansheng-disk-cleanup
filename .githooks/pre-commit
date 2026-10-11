@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Check the Git index, never print a matching credential."""
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+PATTERNS = {
+    'google-key': rb'AIza[0-9A-Za-z_-]{20,}',
+    'vertex-key': rb'AQ\.[A-Za-z0-9_-]{20,}',
+    'api-key': rb'sk-[A-Za-z0-9_-]{20,}',
+    'github-token': rb'gh[pousr]_[A-Za-z0-9]{30,}',
+    'firecrawl-key': rb'fc-[0-9a-f]{32}',
+    'private-key': rb'-----BEGIN [A-Z ]*PRIVATE KEY-----',
+    'windows-user-path': rb'[Cc]:\\Users\\',
+}
+
+
+def git(*arguments):
+    result = subprocess.run(['git', *arguments], capture_output=True, timeout=20)
+    if result.returncode:
+        raise ValueError('无法完整读取 Git 暂存内容')
+    return result.stdout
+
+
+def findings(data):
+    return [name for name, pattern in PATTERNS.items() if re.search(pattern, data)]
+
+
+def main():
+    try:
+        records = git('ls-files', '--stage', '-z').split(b'\0')
+        violations = []
+        count = 0
+        for record in records:
+            if not record:
+                continue
+            metadata, encoded_name = record.split(b'\t', 1)
+            mode, blob, stage = metadata.split()
+            name = encoded_name.decode('utf-8')
+            if stage != b'0' or mode not in (b'100644', b'100755'):
+                raise ValueError('暂存内容含冲突、链接或未支持的对象')
+            if name.startswith('.githooks/'):
+                continue
+            data = git('cat-file', 'blob', blob.decode('ascii'))
+            count += 1
+            matches = findings(data)
+            if matches:
+                violations.append({'path': name, 'types': matches})
+        if violations:
+            print(json.dumps({'redact_guard': 'rejected', 'files': violations}, ensure_ascii=False))
+            return 1
+        local = Path(__file__).resolve().with_name('pre-commit.local')
+        if local.exists() or local.is_symlink():
+            if local.is_symlink() or not local.is_file():
+                raise ValueError('本地脱敏检查必须是普通文件')
+            result = subprocess.run([str(local)], capture_output=True, timeout=30)
+            if result.returncode:
+                print('本地脱敏检查拒绝提交')
+                return 1
+        print(json.dumps({'redact_guard': 'passed', 'index_files_checked': count}))
+        return 0
+    except (OSError, ValueError, UnicodeError, subprocess.TimeoutExpired):
+        print('脱敏检查未完整完成，拒绝提交')
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

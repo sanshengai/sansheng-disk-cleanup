@@ -1,0 +1,10 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+.githooks/pre-commit.local
+.env
+.env.*
+!.env.example
+private-config.json
+runs/
+quarantine/

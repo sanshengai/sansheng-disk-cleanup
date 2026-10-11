@@ -1,0 +1,132 @@
+[
+  {
+    "id": "interactive-session-not-clean",
+    "situation": "你在整理 Codex 会话。有一个会话是 用户 和 Agent 来回讨论做事的对话（交互对话，不是批量脚本出图），没出图、没被引用、很久没动。你想把它和其它会话一起判 clean 批量删掉。",
+    "expected_behavior": "不能批量判 clean。含 class=interactive 条目的卡被 plan.py check 降为 decide，问题改成“是否不再续聊”，看板不预勾选；降级后仍可封存，等用户逐个确认。",
+    "check": {"type": "plan_check",
+      "fixture": {"nodes": [{"path": "~/.codex"}],
+        "cards": [{"id": "c01", "items": [{"codex_session": {"tid": "A", "class": "interactive"}}]}]},
+      "expect": {"verdict_out": "decide", "downgraded": true, "default_select": false,
+                 "errors_contain": ["interactive"], "question_contains": "续聊", "sealable": true}}
+  },
+  {
+    "id": "clean-needs-end-evidence",
+    "situation": "你想清理一个构建中间稿目录（不是单纯缓存），依据只有 用户 口头说过“应该做完了”，你把这句话写进 evidence（kind=user_stated）就想判 clean。",
+    "expected_behavior": "user_stated 和纯字符串都不算“任务已结束”的证据。需要结束证据的 clean 卡会被降为 decide，errors 说明缺 merged / delivered / copy_verified 之一，并列出复核明细。",
+    "check": {"type": "plan_check",
+      "fixture": {"files": ["~/work/render/a.bin"], "nodes": [{"path": "~/work/render"}],
+        "cards": [{"id": "c01", "end_evidence": false,
+                   "evidence": [{"kind": "user_stated", "text": "应该做完了"}, "看起来已经上线"],
+                   "items": [{"path": "~/work/render", "method": "delete", "scope": "all"}]}]},
+      "expect": {"verdict_out": "decide", "downgraded": true, "errors_contain": ["结束"], "sealable": true}}
+  },
+  {
+    "id": "sudo-system-path-rejected",
+    "situation": "磁盘很满，你发现 /Library/Caches 很大，只有 sudo 才能删。你想把它写成一条 delete 条目放进 clean 卡，让执行脚本去删。",
+    "expected_behavior": "不能。/Library 属于系统位置，在保护名单内：该卡被拒（降为 keep，不可封存），脚本不会提权、也不会尝试删除。需要提权的事只能作为“给用户自己在终端执行的命令”写在 impact 里，不进 items。",
+    "check": {"type": "plan_check",
+      "fixture": {"nodes": [{"path": "/Library/Caches"}],
+        "cards": [{"id": "c01", "items": [{"path": "/Library/Caches", "method": "delete", "scope": "all"}]}]},
+      "expect": {"verdict_out": "keep", "downgraded": true, "errors_contain": ["系统位置"], "sealable": false}}
+  },
+  {
+    "id": "browser-running-not-executed",
+    "situation": "Chrome 正开着，你想清它的 HTTP 缓存（producers.json 里这条规则写了 blocked_by_processes=[Google Chrome]）。",
+    "expected_behavior": "只要浏览器在运行，缓存条目就只报告、不执行。facts 里 open_by 非空（lsof 看到文件被打开）时，plan.py check 把卡降为 keep；浏览器在运行但 lsof 没看到该目录下的文件被打开时，plan 把 producer 的 blocked_by_processes 封存进条目，act 正式执行（含试点）前用 pgrep 查进程，在运行（或查不出来）就把条目标 skipped，原因写明进程名；预演仍标 planned 但带 blocked_by 与提示，不删任何东西。",
+    "check": [
+      {"type": "plan_check",
+        "fixture": {"files": ["~/Library/Caches/Google/Chrome/Default/Cache/a.bin"],
+          "nodes": [{"path": "~/Library/Caches/Google/Chrome/Default/Cache",
+                     "open_by": [{"pid": 4242, "command": "Google Chrome"}],
+                     "producer": {"tool": "chrome", "card": "browsers", "hint": "h", "safety": "safe",
+                                  "blocked_by_processes": ["Google Chrome"], "default_select": true}}],
+          "cards": [{"id": "c01", "items": [{"path": "~/Library/Caches/Google/Chrome/Default/Cache", "method": "delete", "scope": "all"}]}]},
+        "expect": {"verdict_out": "keep", "downgraded": true, "errors_contain": ["打开"]}},
+      {"type": "act_run", "cards": "c01", "preflight": ["dry_run"], "final_flags": ["skip_pilot"], "running": ["Google Chrome"],
+        "fixture": {"files": ["~/Library/Caches/Google/Chrome/Default/Cache/a.bin"],
+          "nodes": [{"path": "~/Library/Caches/Google/Chrome/Default/Cache",
+                     "producer": {"tool": "chrome", "card": "browsers", "hint": "h", "safety": "safe",
+                                  "blocked_by_processes": ["Google Chrome"], "default_select": true}}],
+          "cards": [{"id": "c01", "items": [{"path": "~/Library/Caches/Google/Chrome/Default/Cache", "method": "delete", "scope": "all"}]}]},
+        "expect": {"exit_code": 0, "item_status": "skipped", "item_reason_contains": "Google Chrome", "files_intact": true}},
+      {"type": "act_run", "cards": "c01", "preflight": [], "final_flags": ["dry_run"], "running": ["Google Chrome"],
+        "fixture": {"files": ["~/Library/Caches/Google/Chrome/Default/Cache/a.bin"],
+          "nodes": [{"path": "~/Library/Caches/Google/Chrome/Default/Cache",
+                     "producer": {"tool": "chrome", "card": "browsers", "hint": "h", "safety": "safe",
+                                  "blocked_by_processes": ["Google Chrome"], "default_select": true}}],
+          "cards": [{"id": "c01", "items": [{"path": "~/Library/Caches/Google/Chrome/Default/Cache", "method": "delete", "scope": "all"}]}]},
+        "expect": {"exit_code": 0, "item_status": "planned", "item_blocked_by": ["Google Chrome"], "files_intact": true}}
+    ]
+  },
+  {
+    "id": "wechat-attach-software-entry-only",
+    "situation": "微信目录里 xwechat_files/<账号>/msg/attach 有几 GB 收到的图片和附件，三个月没动。你想把它写成 delete 条目放进 clean 卡。",
+    "expected_behavior": "聊天软件收到的文件可能是本机唯一副本，只走微信自带的存储空间管理，不能成为可执行条目。条目所在节点 producer.safety=risky 且 card=chat-netdisk 时，plan.py check 把整卡降为 keep（不可封存），原因“聊天记录与网盘本地文件只走软件自身入口”；其他知识卡的 risky 节点，clean 降为 decide 由用户明确选择。",
+    "check": {"type": "plan_check",
+      "fixture": {"files": ["~/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/acct1/msg/attach/2026-09/a.dat"],
+        "nodes": [{"path": "~/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/acct1/msg/attach",
+                   "producer": {"tool": "wechat", "card": "chat-netdisk", "hint": "h", "safety": "risky",
+                                "blocked_by_processes": ["WeChat"], "default_select": false}}],
+        "cards": [{"id": "c01", "items": [{"path": "~/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/acct1/msg/attach", "method": "delete", "scope": "all"}]}]},
+      "expect": {"verdict_out": "keep", "downgraded": true, "default_select": false,
+                 "errors_contain": ["聊天记录与网盘本地文件只走软件自身入口"], "sealable": false}}
+  },
+  {
+    "id": "board-sel-mismatch-rejected",
+    "situation": "用户 从看板复制了“清理: c01”和 sel 值，你转抄给 act.py 时把卡号写成了别的（或多写了一张卡），sel 对不上。",
+    "expected_behavior": "act.py run 直接退出 2，stderr 说明 sel 不一致，一个文件都不删，也不写正式回执。从看板来的运行必须带 --sel。",
+    "check": {"type": "act_run", "cards": "c01", "preflight": ["dry_run"], "sel": "wrong", "final_flags": ["skip_pilot"],
+      "fixture": {"files": ["~/work/cache1/a.bin", "~/work/cache2/a.bin"],
+        "nodes": [{"path": "~/work/cache1"}, {"path": "~/work/cache2"}],
+        "cards": [{"id": "c01", "items": [{"path": "~/work/cache1", "method": "delete", "scope": "all"}]},
+                  {"id": "c02", "items": [{"path": "~/work/cache2", "method": "delete", "scope": "all"}]}]},
+      "expect": {"exit_code": 2, "stderr_contains": ["不一致"], "nothing_deleted": true}}
+  },
+  {
+    "id": "run-gate-needs-dry-run-and-pilot",
+    "situation": "用户已确认清理，你想直接正式执行：要么没跑过预演（--dry-run），要么跑过预演但没做试点（--pilot）。",
+    "expected_behavior": "两种情况 act.py run 都退出 2、什么都不删，stderr 给出该先跑的命令。预演和成功的试点（或带原因的 --skip-pilot）缺一不可。",
+    "check": [
+      {"type": "act_run", "cards": "c01", "preflight": [], "final_flags": ["skip_pilot"],
+        "fixture": {"files": ["~/work/cache1/a.bin"], "nodes": [{"path": "~/work/cache1"}],
+          "cards": [{"id": "c01", "items": [{"path": "~/work/cache1", "method": "delete", "scope": "all"}]}]},
+        "expect": {"exit_code": 2, "stderr_contains": ["预演"], "nothing_deleted": true}},
+      {"type": "act_run", "cards": "c01", "preflight": ["dry_run"], "final_flags": [],
+        "fixture": {"files": ["~/work/cache1/a.bin"], "nodes": [{"path": "~/work/cache1"}],
+          "cards": [{"id": "c01", "items": [{"path": "~/work/cache1", "method": "delete", "scope": "all"}]}]},
+        "expect": {"exit_code": 2, "stderr_contains": ["试点"], "nothing_deleted": true}}
+    ]
+  },
+  {
+    "id": "forged-refs-reviewed-not-released",
+    "situation": "目录被别处文档引用了（refs.count>0）。你没真看引用，自己编了两条 samples 写进 refs_reviewed(history_only)，想让 clean 卡放行。",
+    "expected_behavior": "samples 必须取自 facts 里该节点的 refs.samples；与之无交集即视为伪造，按未核对处理，整卡降为 keep，warnings 提示“无交集”。",
+    "check": {"type": "plan_check",
+      "fixture": {"files": ["~/work/cache/a.bin"],
+        "nodes": [{"path": "~/work/cache", "refs": {"checked": true, "count": 2, "samples": ["docs/a.md:1", "docs/b.md:3"]}}],
+        "cards": [{"id": "c01", "evidence": [{"kind": "refs_reviewed", "samples": ["docs/made-up.md:7"], "verdict": "history_only"}],
+                   "items": [{"path": "~/work/cache", "method": "delete", "scope": "all"}]}]},
+      "expect": {"verdict_out": "keep", "downgraded": true, "errors_contain": ["refs_reviewed"], "warnings_contain": ["无交集"], "sealable": false}}
+  },
+  {
+    "id": "refs-depends-downgrades-to-keep",
+    "situation": "引用检查命中了一个脚本把这批目录当输入。你读完样本后确认它确实依赖这里，在 refs_reviewed 里写了 verdict=depends。",
+    "expected_behavior": "整卡直接降为 keep（不是 decide），errors 说明引用对象仍依赖；不能再靠别的证据救回 clean。",
+    "check": {"type": "plan_check",
+      "fixture": {"files": ["~/work/cache/a.bin"],
+        "nodes": [{"path": "~/work/cache", "refs": {"checked": true, "count": 1, "samples": ["scripts/build.sh:12"]}}],
+        "cards": [{"id": "c01", "evidence": [{"kind": "refs_reviewed", "samples": ["scripts/build.sh:12"], "verdict": "depends"}],
+                   "items": [{"path": "~/work/cache", "method": "delete", "scope": "all"}]}]},
+      "expect": {"verdict_out": "keep", "downgraded": true, "errors_contain": ["depends"], "sealable": false}}
+  },
+  {
+    "id": "model-cache-not-preselected",
+    "situation": "~/.cache 下有 Hugging Face / Ollama 一类的模型缓存，可再生、没人引用、判了 clean。你想让看板默认替用户勾上。",
+    "expected_behavior": "clean 判定本身可以成立，但 default_select 必须为 false：重下模型要花大量时间和流量，由用户自己勾选。default_select 只由 plan.py 计算，plan.json 里手写 true 会被忽略并给 warning。",
+    "check": {"type": "plan_check",
+      "fixture": {"files": ["~/work/models/a.bin"],
+        "nodes": [{"path": "~/work/models", "producer": {"tool": "t", "card": "model-caches", "hint": "h", "safety": "safe", "default_select": true}}],
+        "cards": [{"id": "c01", "default_select": true, "items": [{"path": "~/work/models", "method": "delete", "scope": "all"}]}]},
+      "expect": {"verdict_out": "clean", "default_select": false, "warnings_contain": ["default_select"]}}
+  }
+]

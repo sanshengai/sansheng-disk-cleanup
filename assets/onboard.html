@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>叁笙清理 · 项目台账</title>
+<style>
+:root{--paper:#faf7f0;--ink:#243c2d;--green:#2f5d3a;--gold:#a57924;--line:#d9ddcf;--muted:#68756a;--white:#fffefa;--amber:#88611e;--red:#8a4a3a;--track:#e8ebe0}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-variant-numeric:tabular-nums}
+button,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer;border:1px solid var(--line);border-radius:6px;padding:5px 12px;background:var(--white)}
+button:hover{border-color:var(--green)}button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+header,.page{max-width:920px;margin:auto;padding-left:28px;padding-right:28px}
+header{display:flex;align-items:center;gap:20px;padding-top:8px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:14px;flex:none}.brand a{display:flex}.logo{width:104px;height:36px;object-fit:contain}
+.brand strong{font-size:16px;font-weight:600;border-left:1px solid var(--line);padding-left:14px}
+.page{padding-top:20px;padding-bottom:24px}
+h1{font-size:21px;font-weight:600;margin:0;line-height:1.35}
+.lead{margin:4px 0 0;color:var(--muted)}
+/* 项目表：一行一个项目 */
+.plist{margin-top:16px;border-top:1px solid var(--line)}
+.phead,.prow{display:grid;grid-template-columns:minmax(0,1fr) 84px 92px 214px;gap:4px 16px;align-items:start}
+.phead{padding:6px 4px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--line)}
+.phead span:nth-child(2),.phead span:nth-child(3){text-align:right}
+.prow{padding:12px 4px;border-bottom:1px solid var(--line)}
+.prow .nm{font-weight:600;font-size:15px;overflow-wrap:anywhere}
+.prow .sub{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.prow .sz,.prow .ago{text-align:right;white-space:nowrap}
+.prow .sz{font-weight:650}.prow .ago{color:var(--muted)}
+.prow .deliv{grid-column:1/-1}
+details.more{font-size:13px}details.more summary{cursor:pointer;color:var(--green);font-size:12px;width:max-content}
+details.more textarea{display:block;width:100%;height:64px;margin:6px 0 2px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--white);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}
+details.more .hint{margin:0}
+.seg{display:flex;white-space:nowrap}
+.seg button{border-radius:0;margin-left:-1px;font-size:12px;padding:4px 10px}
+.seg button:first-child{border-radius:6px 0 0 6px;margin-left:0}.seg button:last-child{border-radius:0 6px 6px 0}
+.seg button[aria-pressed=true]{background:var(--green);color:#fff;border-color:var(--green);position:relative}
+.none{padding:16px 4px;color:var(--muted)}
+/* 全局选项 */
+.setsec{padding:18px 0;border-bottom:1px solid var(--line)}
+.setsec h2{font-size:15px;margin:0 0 4px}.setsec p{margin:0 0 10px;color:var(--muted);font-size:13px}
+.opts{display:flex;gap:8px;flex-wrap:wrap}.opts label{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--white);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px}
+.opts label:has(input:checked){border-color:var(--green);box-shadow:inset 0 0 0 1px var(--green)}
+.opts input{accent-color:var(--green);margin:0}
+/* 底部 */
+.selbar{position:sticky;bottom:0;background:var(--paper);border-top:1px solid var(--line);margin-top:12px}
+.selbar .in{max-width:920px;margin:auto;padding:10px 28px;display:flex;align-items:center;gap:16px}
+.selbar strong{font-size:15px}.hint{font-size:12px;color:var(--muted)}
+.selbar .primary{margin-left:auto;white-space:nowrap}
+.primary{background:var(--green);color:#fff;border-color:var(--green);padding:7px 16px}.primary:hover{border-color:var(--ink)}
+.feedback{font-size:12px;color:var(--muted);min-height:18px;margin-top:10px}
+.fallback{width:100%;height:120px;margin-top:6px}
+.sitefoot{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:16px;font-size:11px}.sitefoot a{color:var(--muted);text-decoration:none}.sitefoot a:hover{color:var(--green)}
+@media(max-width:780px){
+ header,.page,.selbar .in{padding-left:16px;padding-right:16px}
+ .logo{width:92px;height:32px}.brand{gap:10px}.brand strong{font-size:15px;padding-left:10px}
+ .phead{display:none}
+ .prow{grid-template-columns:minmax(0,1fr) auto}
+ .prow .ago{grid-column:1/-1;text-align:left;font-size:12px}
+ .prow .seg{grid-column:1/-1}.seg button{flex:1}
+ .selbar .in{gap:8px}.selbar strong{font-size:13px}
+}
+</style>
+<header><div class="brand"><a href="https://sanshengai.top/" target="_blank" rel="noopener" title="叁笙早安 AI 官网"><img class="logo" src="__LOGO_DATA__" alt="叁笙早安 AI"></a><strong>叁笙清理</strong></div></header>
+<div class="page">
+<main>
+<h1>认识你的电脑</h1>
+<p class="lead">这是从扫描里认出来的项目。标一下状态，下次清理就按你的习惯来。</p>
+<p class="lead" id="count-note"></p>
+<div class="plist" id="plist"></div>
+<div id="opts"></div>
+<div class="feedback" id="feedback" aria-live="polite"></div>
+<textarea id="fallback" class="fallback" aria-label="选中下面内容，复制给 Agent" hidden readonly></textarea>
+<div class="sitefoot" id="sitefoot"></div>
+</main>
+</div>
+<div class="selbar"><div class="in"><div><strong id="marked">还没标</strong><div class="hint">这一页只保存你的习惯，不会动任何文件。</div></div>
+<button class="primary" id="copy" type="button">复制，发给 Agent</button></div></div>
+<script type="application/json" id="onboard-data">__ONBOARD_JSON__</script>
+<script id="export-lib">
+// 导出文本的纯函数：测试在 node 里执行这段，再用 scripts/prefs.py 的 parse_ledger / parse_settings 解析核对。
+const STATUS_ZH={active:'进行中',done:'做完了',archived:'归档',protected:'别碰'};
+// Python 的 splitlines 会在这些字符处断行；JSON 里一律写成转义，保证“台账:”整行不被拆开
+const safeLine=s=>s.replace(/[\u0085\u2028\u2029]/g,c=>'\\u'+c.charCodeAt(0).toString(16).padStart(4,'0'));
+function ledgerLine(entries){ // entries：[{key,name,status,deliverables(数组或 null)}]
+  const o=Object.create(null);
+  for(const e of entries){if(!STATUS_ZH[e.status])continue;
+    const v={'状态':STATUS_ZH[e.status]};
+    if(Array.isArray(e.deliverables))v['成品']=e.deliverables;
+    if(e.name)v['名称']=e.name;
+    o[e.key]=v}
+  return '台账: '+safeLine(JSON.stringify({'项目':o}));
+}
+function settingsLine(s){return '设置: '+safeLine(JSON.stringify({'保留天数':s.days,'默认':s.def}))}
+function onboardText(scanId,entries,s){return ['叁笙清理 · 项目台账','scan_id: '+scanId,ledgerLine(entries),settingsLine(s)].join('\n')}
+// 扫描只是猜测，不当成用户标注：只有“进行中”预选（它只会让清理更保守）；“做完了”不预选，只在行内用小字提示
+function initialStatus(p){return p.status||(p.default_status==='active'?'active':null)}
+function doneHint(p,nowMs){
+  if(p.status||p.default_status!=='done')return '';
+  const t=Date.parse(p.last_active||''),d=isNaN(t)?0:Math.floor(((nowMs==null?Date.now():nowMs)-t)/864e5);
+  return d>0?'看起来做完了（'+d+' 天没动）':'看起来做完了';
+}
+function splitPaths(text){const seen=new Set(),out=[];for(const l of String(text||'').split(/\r?\n/)){const p=l.trim();if(p&&!seen.has(p)){seen.add(p);out.push(p)}}return out}
+</script>
+<script>
+'use strict';
+const D=JSON.parse(document.getElementById('onboard-data').textContent);
+const $=id=>document.getElementById(id);
+const E=(tag,text,cls)=>{const el=document.createElement(tag);if(text!=null)el.textContent=text;if(cls)el.className=cls;return el};
+const fmtBytes=n=>{n=+n||0;const a=Math.abs(n);if(a<1000)return Math.trunc(n)+' B';const sg=n<0?'-':'';
+  for(const [u,d] of [['KB',1e3],['MB',1e6],['GB',1e9],['TB',1e12]]){const v=a/d;if(Number(v.toFixed(1))<1000||u==='TB')return sg+v.toFixed(1)+' '+u}}; // 十进制一位小数，与 scripts/units.py 的 fmt_bytes 逐值一致
+const SEG=[['active','进行中'],['done','做完了'],['archived','归档'],['protected','别碰']];
+const RET_NAME={0:'不按天数，只看做没做完',7:'最近 7 天',15:'最近 15 天',30:'最近 30 天'};
+const PRESET=[['safe','稳妥','清了不丢东西：软件会自己重新下载，或本来就是失败、废弃的记录。'],
+  ['recommended','推荐','稳妥的全部，再加有副本的、任务已经做完的过程记录和中间稿。'],
+  ['all','全部','再加找不回的，比如没有副本的图、模拟器里的数据。']];
+const S=D.settings||{};
+const cfg={days:Number.isInteger(S.retention_days)&&S.retention_days>0?S.retention_days:0,def:PRESET.some(p=>p[0]===S.default_choice)?S.default_choice:'recommended'};
+const short=k=>k.startsWith('env:')?'':k.replace(/^\/Users\/[^/]+/,'~');
+const ago=iso=>{const t=Date.parse(iso||'');if(isNaN(t))return'—';const d=Math.floor((Date.now()-t)/864e5);return d<=0?'今天':d+' 天前'};
+// 状态：台账里有的用台账的；没有的只在扫描判断为“进行中”时预选，“做完了”与不确定的都留空，等用户自己点
+const rows=(D.projects||[]).map(p=>({p,status:initialStatus(p),
+  deliv:(p.deliverables&&p.deliverables.length?p.deliverables:(p.deliverables_guess||[])).slice()}));
+
+function segEl(r,onchange){
+  const g=E('div',null,'seg'), btns=[];g.setAttribute('role','group');g.setAttribute('aria-label',r.p.name+' 的状态');
+  for(const [k,name] of SEG){const b=E('button',name);b.type='button';b.setAttribute('aria-pressed',String(r.status===k));
+    b.onclick=()=>{r.status=r.status===k?null:k;for(const [kk,bb] of btns)bb.setAttribute('aria-pressed',String(r.status===kk));onchange()};
+    btns.push([k,b]);g.append(b)}
+  return g;
+}
+function renderRows(){
+  const box=$('plist');box.replaceChildren();
+  if(!rows.length){box.append(E('div','这次扫描没有认出项目。直接复制发给 Agent 也行，它会按默认习惯来。','none'));return}
+  const hd=E('div',null,'phead');hd.append(E('span','项目'),E('span','体积'),E('span','最后活动'),E('span','状态'));box.append(hd);
+  for(const r of rows){
+    const p=r.p, el=E('div',null,'prow');
+    const nm=E('div',null);nm.append(E('div',p.name,'nm'));
+    const sub=[short(p.key),p.sessions>0?p.sessions+' 个 AI 会话':''].filter(Boolean).join(' · ');
+    if(sub)nm.append(E('div',sub,'sub'));
+    const dh=doneHint(p),hint=dh?E('div',dh,'sub'):null;if(hint)nm.append(hint);
+    el.append(nm,E('div',fmtBytes(p.bytes),'sz'),E('div',ago(p.last_active),'ago'),segEl(r,()=>{if(hint)hint.hidden=!!r.status;update()}));
+    const d=E('details',null,'more deliv');const n=r.deliv.length;
+    const sm=E('summary','成品在哪'+(n?'（'+n+' 处）':''));d.append(sm);
+    const ta=document.createElement('textarea');ta.value=r.deliv.join('\n');ta.placeholder='一行一个目录，例如 ~/Projects/短剧/成品';ta.setAttribute('aria-label',p.name+' 的成品目录');
+    ta.oninput=()=>{r.deliv=splitPaths(ta.value);sm.textContent='成品在哪'+(r.deliv.length?'（'+r.deliv.length+' 处）':'')};
+    d.append(ta,E('p','清理时，有副本的才放心清；清理前也会在这里查有没有文档引用了要清的东西。','hint'));
+    el.append(d);box.append(el);
+  }
+}
+function renderOpts(){
+  const root=$('opts');root.replaceChildren();
+  const sec=(title,desc)=>{const d=E('div',null,'setsec');d.append(E('h2',title));if(desc)d.append(E('p',desc));root.append(d);return d};
+  {const d=sec('AI 对话留多久','最近这些天里用过的对话一律留着，不列为可清。');const o=E('div',null,'opts');
+    for(const n of S.retention_choices||[0,7,15,30]){const l=E('label');const i=document.createElement('input');i.type='radio';i.name='days';i.checked=cfg.days===n;
+      i.onchange=()=>{cfg.days=n};l.append(i,RET_NAME[n]||'最近 '+n+' 天');o.append(l)}d.append(o)}
+  {const d=sec('平时默认清到哪一档','以后在对话里回一句“好”，就按这一档来。');const o=E('div',null,'opts');
+    for(const [p,name,desc] of PRESET){const l=E('label');l.title=desc;const i=document.createElement('input');i.type='radio';i.name='def';i.checked=cfg.def===p;
+      i.onchange=()=>{cfg.def=p};l.append(i,name);o.append(l)}d.append(o)}
+}
+function entries(){return rows.filter(r=>r.status).map(r=>({key:r.p.key,name:r.p.name,status:r.status,deliverables:r.deliv}))}
+function update(){const n=entries().length;$('marked').textContent=rows.length?'已标 '+n+' / '+rows.length+' 个项目':'没有认出项目';
+  $('count-note').textContent=rows.length?'按体积从大到小，最多列 '+rows.length+' 个。不确定的先不标也行。':''}
+$('copy').onclick=async()=>{
+  const v=onboardText(D.scan_id||'',entries(),cfg);
+  try{await navigator.clipboard.writeText(v);$('fallback').hidden=true;$('feedback').textContent='已复制。回到和 Agent 的对话里粘贴发送，它会保存你的习惯，再接着判断。'}
+  catch(e){$('fallback').hidden=false;$('fallback').value=v;$('fallback').select();$('feedback').textContent='浏览器没让自动复制：请按 ⌘C 复制下面已选中的内容，再粘贴给 Agent。'}
+};
+for(const [n,u] of [['GitHub','https://github.com/sanshengai/sansheng-disk-cleanup'],['反馈问题','https://github.com/sanshengai/sansheng-disk-cleanup/issues'],['公众号','https://sanshengai.top/about/'],['小红书','https://www.xiaohongshu.com/user/profile/5c716b6d000000001000f5c4?xsec_token=YB0ZibE9n6PQ4ZFwQ-T84w0MA0FnGi_yFDgtAGhNHlE70%3D&xsec_source=app_share'],['小宇宙','https://namecard.xiaoyuzhoufm.com/nnl8x']]){
+  const a=E('a',n);a.href=u;a.target='_blank';a.rel='noopener';$('sitefoot').append(a)}
+renderRows();renderOpts();update();
+</script>

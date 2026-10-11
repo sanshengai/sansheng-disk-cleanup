@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>叁笙清理 · 清理成果</title>
+<style>
+:root{--paper:#faf7f0;--ink:#243c2d;--green:#2f5d3a;--gold:#a57924;--gold2:#e2c483;--line:#d9ddcf;--muted:#68756a;--white:#fffefa;--track:#e8ebe0;--deep:#243c2d}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-variant-numeric:tabular-nums}
+a{color:inherit}
+button{font:inherit;cursor:pointer;border:1px solid var(--line);border-radius:8px;padding:8px 16px;background:var(--white);color:var(--ink)}
+button:hover{border-color:var(--green)}
+button.primary{background:var(--green);border-color:var(--green);color:#fff}
+:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+header,.wrap{max-width:960px;margin:auto;padding-left:28px;padding-right:28px}
+header{display:flex;align-items:center;gap:20px;padding-top:8px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:14px}.brand a{display:flex}.logo{width:104px;height:36px;object-fit:contain}
+.brand strong{font-size:16px;font-weight:600;border-left:1px solid var(--line);padding-left:14px}
+header .when{margin-left:auto;font-size:12px;color:var(--muted)}
+section{padding:36px 0;border-bottom:1px solid var(--line)}
+section:last-of-type{border-bottom:0}
+h2{font-size:17px;font-weight:650;margin:0 0 14px}
+.muted{color:var(--muted)}
+/* 首屏 */
+.hero .k{font-size:15px;color:var(--muted)}
+.hero .big{font-size:72px;font-weight:700;line-height:1.05;color:var(--green);letter-spacing:-1px;margin:6px 0 10px}
+.hero .big small{font-size:32px;font-weight:600;margin-left:6px}
+.hero .sub{font-size:15px}
+.hero .sub b{font-weight:650}
+.bars{margin-top:26px;display:grid;grid-template-columns:56px 1fr;gap:10px 14px;align-items:center}
+.bars .lb{font-size:13px;color:var(--muted)}
+.bar{display:flex;height:22px;border-radius:5px;overflow:hidden;background:var(--track)}
+.bar span{display:block;height:100%}
+.bar .u{background:var(--green)}.bar .f{background:var(--gold2)}
+.legend{grid-column:2;display:flex;gap:18px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+/* 来源 */
+.callout{background:var(--white);border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:8px;padding:12px 16px;margin-bottom:18px}
+.callout b{color:var(--green)}
+.rows{display:grid;grid-template-columns:minmax(120px,190px) 1fr 84px;gap:10px 14px;align-items:center}
+.rows .nm{display:flex;align-items:center;gap:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rows .sw{flex:none;width:10px;height:10px;border-radius:2px}
+.rows .tr{height:10px;border-radius:3px;background:var(--track);overflow:hidden}.rows .tr span{display:block;height:100%;border-radius:3px}
+.rows .v{text-align:right;font-weight:600}
+/* 治理 */
+.gov{display:grid;gap:12px}
+.gov>div{background:var(--white);border:1px solid var(--line);border-radius:8px;padding:12px 16px}
+.gov .t{font-weight:600}.gov .tag{font-size:12px;border:1px solid var(--green);color:var(--green);border-radius:4px;padding:0 6px;margin-left:8px;font-weight:400}
+.gov .tag.todo{border-color:var(--gold);color:var(--gold)}
+.gov p{margin:4px 0 0;font-size:14px;color:var(--muted)}
+/* 分享 */
+.share{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:28px;align-items:start}
+.poster{width:100%;max-width:420px;aspect-ratio:3/4;border:1px solid var(--line);border-radius:10px;background:var(--white);display:block}
+.share .acts{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+.qrbox{background:var(--white);border:1px solid var(--line);border-radius:10px;padding:18px;text-align:center}
+.qrbox svg{width:180px;height:180px;display:block;margin:0 auto 10px}
+.qrbox p{margin:0;font-size:13px;color:var(--muted)}
+.qrbox p b{color:var(--ink);font-weight:600;display:block;font-size:14px;margin-bottom:2px}
+footer{max-width:960px;margin:auto;padding:18px 28px 36px;display:flex;gap:18px;font-size:13px;color:var(--muted);border-top:1px solid var(--line)}
+footer a{text-decoration:none}footer a:hover{color:var(--green)}footer .r{margin-left:auto}
+.hint{font-size:12px;color:var(--muted);margin-top:8px}
+.star{margin-top:20px;font-size:13px;color:var(--muted)}.star a{color:var(--green)}
+@media (max-width:720px){
+ header,.wrap{padding-left:16px;padding-right:16px}footer{padding-left:16px;padding-right:16px;flex-wrap:wrap}
+ header .when{display:none}
+ .hero .big{font-size:52px}.hero .big small{font-size:24px}
+ .rows{grid-template-columns:128px 1fr 60px;gap:10px}
+ .share{grid-template-columns:1fr}.poster{max-width:100%}
+}
+</style>
+<header><div class="brand"><a href="https://sanshengai.top/" target="_blank" rel="noopener" title="叁笙早安 AI 官网"><img class="logo" id="logo" src="__LOGO_DATA__" alt="叁笙早安 AI"></a><strong>叁笙清理</strong></div><div class="when" id="when"></div></header>
+<main class="wrap">
+<section class="hero">
+  <div class="k">这次清理腾出了</div>
+  <div class="big" id="freed"></div>
+  <div class="sub" id="sub"></div>
+  <div class="bars" id="bars"></div>
+</section>
+<section id="from"><h2>腾出的空间从哪里来</h2><div id="callout"></div><div class="rows" id="rows"></div></section>
+<section id="gov-sec"><h2>从源头管住</h2><div class="gov" id="gov"></div></section>
+<section><h2>分享这次成果</h2>
+  <div class="share">
+    <div><canvas class="poster" id="poster" width="1080" height="1440" aria-label="分享图预览"></canvas>
+      <div class="acts"><button class="primary" id="save" type="button">保存分享图</button></div>
+      <div class="hint" id="save-hint">保存后可以直接发朋友圈或微信群。</div></div>
+    <div class="qrbox"><div id="qr"></div><p><b>手机微信扫一扫</b>打开这次的成果页，可以直接转发给朋友</p></div>
+  </div>
+  <div class="star" id="star" hidden></div>
+</section>
+</main>
+<footer><a href="https://sanshengai.top/about/" target="_blank" rel="noopener">公众号</a><a href="https://www.xiaohongshu.com/user/profile/5c716b6d000000001000f5c4?xsec_token=YB0ZibE9n6PQ4ZFwQ-T84w0MA0FnGi_yFDgtAGhNHlE70%3D&xsec_source=app_share" target="_blank" rel="noopener">小红书</a><a href="https://namecard.xiaoyuzhoufm.com/nnl8x" target="_blank" rel="noopener">小宇宙</a><a class="r" href="https://sanshengai.top/" target="_blank" rel="noopener">叁笙早安 AI</a></footer>
+<script>
+const R=__REPORT_JSON__;
+const $=id=>document.getElementById(id);
+const E=(t,txt,cls)=>{const e=document.createElement(t);if(txt!=null)e.textContent=txt;if(cls)e.className=cls;return e};
+const g1=n=>((n||0)/1e9).toFixed(1);
+const gb=n=>{n=+n||0;const a=Math.abs(n);if(a<1000)return Math.trunc(n)+' B';const sg=n<0?'-':'';
+  for(const [u,d] of [['KB',1e3],['MB',1e6],['GB',1e9],['TB',1e12]]){const v=a/d;if(Number(v.toFixed(1))<1000||u==='TB')return sg+v.toFixed(1)+' '+u}}; // 十进制一位小数，与 scripts/units.py 的 fmt_bytes 逐值一致
+const COLORS=['#2f5d3a','#5f8a6a','#93ad86','#a57924','#c9a35a','#4f7270','#7f9c9a','#b7a37a','#8c9a6c','#6e7a63','#dcd6c4'];
+const colorOf=id=>COLORS[Math.max(0,R.category_order.indexOf(id))%COLORS.length];
+const fmtDate=s=>{if(!s)return'';try{return new Date(s).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}catch(e){return''}};
+
+$('when').textContent=R.finished_at?'清理于 '+fmtDate(R.finished_at):'';
+// 首屏
+{const v=$('freed');v.textContent=g1(R.freed);v.append(E('small','GB'));}
+$('sub').innerHTML='';
+$('sub').append('已用 ',E('b',g1(R.used_before)+' GB'),' → ',E('b',g1(R.used_after)+' GB'),'，可用空间从 '+g1(R.free_before)+' GB 增加到 '+g1(R.free_after)+' GB');
+{const b=$('bars'),T=Math.max(1,R.disk_total);
+ const row=(label,parts)=>{b.append(E('div',label,'lb'));const bar=E('div',null,'bar');bar.setAttribute('role','img');
+   bar.setAttribute('aria-label',label+'：'+parts.map(p=>p[2]+' '+gb(p[0])).join('，'));
+   for(const [n,cls] of parts){const s=E('span',null,cls);s.style.width=(100*n/T)+'%';bar.append(s)}b.append(bar)};
+ row('清理前',[[R.used_before,'u','已用']]);
+ row('清理后',[[R.used_after,'u','已用'],[R.freed,'f','腾出']]);
+ const lg=E('div',null,'legend');
+ for(const [c,t] of [['var(--green)','已用'],['var(--gold2)','这次腾出'],['var(--track)','原本空着']]){const s=E('span');const i=E('i');i.style.background=c;s.append(i,t);lg.append(s)}
+ lg.append(E('span','硬盘 '+g1(R.disk_total)+' GB'));b.append(lg);}
+// 来源
+if(R.ai_freed>0){const c=E('div',null,'callout');c.append('其中 ',E('b',gb(R.ai_freed)),' 是 AI 工作留下的：对话记录、生成的图、项目中间稿和模型。常规清理工具一般不处理这些。');$('callout').append(c)}
+{const rows=$('rows'),mx=Math.max(1,...R.categories.map(c=>c.bytes));
+ for(const c of R.categories){const nm=E('div',null,'nm');const sw=E('span',null,'sw');sw.style.background=colorOf(c.id);nm.append(sw,c.name);
+   const tr=E('div',null,'tr');const s=E('span');s.style.width=(100*c.bytes/mx)+'%';s.style.background=colorOf(c.id);tr.append(s);
+   rows.append(nm,tr,E('div',gb(c.bytes),'v'))}
+ if(!R.categories.length)$('from').hidden=true;}
+// 治理
+{const gv=R.governance||[];if(!gv.length)$('gov-sec').hidden=true;
+ for(const g of gv){const d=E('div');const t=E('div',g.title,'t');t.append(E('span',g.done?'已改好':'建议你改','tag'+(g.done?'':' todo')));d.append(t);
+   const txt=g.done?(g.how||g.suggest):(g.suggest||'');if(txt)d.append(E('p',txt));$('gov').append(d)}}
+// 二维码（Python 端用 MIT 的 qrcodegen 编好矩阵，这里只画）
+const Q=R.share.qr,N=Q.length,QZ=4;
+function qrSvg(){const ns='http://www.w3.org/2000/svg',s=document.createElementNS(ns,'svg');s.setAttribute('viewBox',`0 0 ${N+2*QZ} ${N+2*QZ}`);
+  s.setAttribute('role','img');s.setAttribute('aria-label','扫码打开成果页');s.setAttribute('shape-rendering','crispEdges');
+  let d='';Q.forEach((row,y)=>{for(let x=0;x<N;x++)if(row[x]==='1')d+=`M${x+QZ} ${y+QZ}h1v1h-1z`});
+  const bg=document.createElementNS(ns,'rect');bg.setAttribute('width','100%');bg.setAttribute('height','100%');bg.setAttribute('fill','#fff');
+  const p=document.createElementNS(ns,'path');p.setAttribute('d',d);p.setAttribute('fill','#243c2d');s.append(bg,p);return s}
+$('qr').append(qrSvg());
+// 分享图（1080×1440，竖版，适合朋友圈）
+function drawPoster(){
+  const cv=$('poster'),x=cv.getContext('2d'),W=1080,H=1440,P=88,F='"PingFang SC","Microsoft YaHei",-apple-system,sans-serif';
+  x.fillStyle='#faf7f0';x.fillRect(0,0,W,H);
+  const logo=$('logo');
+  const finish=()=>{
+    x.fillStyle='#243c2d';x.font=`500 44px ${F}`;x.fillText('叁笙清理帮我腾出了',P,300);
+    x.fillStyle='#2f5d3a';x.font=`700 190px ${F}`;const num=g1(R.freed);x.fillText(num,P-6,500);
+    const w=x.measureText(num).width;x.font=`600 72px ${F}`;x.fillText('GB',P+w+18,500);
+    // 前后对比条
+    const bw=W-2*P,T=Math.max(1,R.disk_total);
+    const bar=(y,label,parts)=>{x.fillStyle='#68756a';x.font=`400 30px ${F}`;x.fillText(label,P,y-16);
+      x.fillStyle='#e8ebe0';x.fillRect(P,y,bw,40);let cx=P;for(const [n,c] of parts){const ww=bw*n/T;x.fillStyle=c;x.fillRect(cx,y,ww,40);cx+=ww}};
+    bar(620,'清理前 已用 '+g1(R.used_before)+' GB',[[R.used_before,'#2f5d3a']]);
+    bar(740,'清理后 已用 '+g1(R.used_after)+' GB',[[R.used_after,'#2f5d3a'],[R.freed,'#e2c483']]);
+    // AI 部分与前三类（前三类是全部类别里最大的，不只是 AI，所以单独加小标题）
+    let y=870;
+    if(R.ai_freed>0){x.fillStyle='#243c2d';x.font=`600 40px ${F}`;x.fillText('其中 '+gb(R.ai_freed)+' 是 AI 工作留下的',P,y);y+=64}
+    x.fillStyle='#6b7a6e';x.font=`400 28px ${F}`;x.fillText('腾出最多的三类',P,y);y+=52;
+    x.font=`400 32px ${F}`;
+    for(const c of R.categories.slice(0,3)){x.fillStyle=colorOf(c.id);x.fillRect(P,y-24,20,20);x.fillStyle='#243c2d';x.fillText(c.name,P+36,y);
+      x.textAlign='right';x.fillText(gb(c.bytes),W-P,y);x.textAlign='left';y+=54}
+    // 底部：二维码 + 一句话
+    x.fillStyle='#d9ddcf';x.fillRect(P,1150,bw,2);
+    const qs=200,qx=P,qy=1188,m=qs/(N+2*QZ);x.fillStyle='#ffffff';x.fillRect(qx,qy,qs,qs);x.fillStyle='#243c2d';
+    Q.forEach((row,yy)=>{for(let xx=0;xx<N;xx++)if(row[xx]==='1')x.fillRect(qx+(xx+QZ)*m,qy+(yy+QZ)*m,Math.ceil(m),Math.ceil(m))});
+    x.fillStyle='#243c2d';x.font=`600 38px ${F}`;x.fillText('为 AI 重度用户做的系统清理',qx+qs+40,1262);
+    x.fillStyle='#68756a';x.font=`400 30px ${F}`;x.fillText('扫码看看怎么装',qx+qs+40,1316);
+    x.fillStyle='#a57924';x.font=`400 26px ${F}`;x.fillText('sanshengai.top',qx+qs+40,1366);
+  };
+  const lw=300,lh=lw*104/300;
+  if(logo.complete&&logo.naturalWidth){const r=logo.naturalHeight/logo.naturalWidth;x.drawImage(logo,P,110,lw,lw*r);finish()}
+  else logo.onload=()=>{drawPoster()};
+}
+drawPoster();
+// 第一次清理的成果页才有这一句（Python 端按 profile 的 star_asked_at 决定 R.star.show）
+if(R.star&&R.star.show&&/^https:\/\/github\.com\//.test(R.star.url||'')){const a=E('a','去 GitHub 点个 Star');a.href=R.star.url;a.target='_blank';a.rel='noopener';
+  $('star').append('好用的话，',a);$('star').hidden=false}
+$('save').onclick=()=>{
+  try{const a=document.createElement('a');a.download='叁笙清理-腾出'+g1(R.freed)+'GB.png';a.href=$('poster').toDataURL('image/png');a.click();
+    $('save-hint').textContent='已保存到下载文件夹。'}
+  catch(e){$('save-hint').textContent='浏览器没让保存：在上面的图上点右键，选“存储图像为…”。'}
+};
+</script>

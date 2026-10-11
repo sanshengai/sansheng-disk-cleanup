@@ -1,0 +1,4 @@
+interface:
+  display_name: "叁笙清理"
+  short_description: "AI 重度用户的磁盘清理：按用途证据判断会话、生成图、中间稿与缓存，看板选择后复核执行"
+  default_prompt: "使用 $sansheng-disk-cleanup 扫描这台电脑，找出真正不再需要的大占用并生成清理选择看板。"
