@@ -1,4 +1,4 @@
-"""leftovers.py 的测试。夹具全部在 tmp_path；monkeypatch protect.HOME、scan.installed_apps、mdfind、brew。"""
+"""leftovers.py 的测试。夹具全部在 tmp_path；monkeypatch protect.HOME、scan.installed_apps、mdfind、brew、pgrep。"""
 import os
 import sys
 import time
@@ -42,6 +42,8 @@ class Env:
         self.spotlight = {}          # bundle id -> [路径]
         self.spotlight_fail = set()  # 这些 bundle id 查询抛异常
         self.spotlight_calls = []
+        self.running = set()         # 正在运行的进程名（小写）；夹具不跑真的 pgrep
+        self.process_fail = False    # True = 模拟读不到进程名单（沙箱里 pgrep 被禁）
         self.install()
 
         def fake_mdfind(bid):
@@ -53,13 +55,39 @@ class Env:
             return list(self.spotlight.get(bid, []))
         monkeypatch.setattr(leftovers, "_spotlight_apps", fake_mdfind)
 
+        def fake_process_names():
+            if self.process_fail:
+                raise RuntimeError("pgrep 读不到进程名单（夹具模拟）")
+            return set(self.running)
+        monkeypatch.setattr(leftovers, "_process_names", fake_process_names)
+
     def install(self, *bids, complete=True):
         apps = make_apps(*bids, complete=complete)
         self.mp.setattr(scan, "installed_apps", lambda: apps)
 
+    def install_raw(self, records, complete=True):
+        """按给定记录装已装清单（可带 name、app_groups 等字段，用来测名字匹配与 app-group 归属）。"""
+        apps = [dict(r) for r in records]
+        by_id = {}
+        for a in apps:
+            if a.get("bundle_id"):
+                by_id.setdefault(a["bundle_id"].lower(), []).append(a)
+        self.mp.setattr(scan, "installed_apps",
+                        lambda: {"complete": complete, "errors": [], "apps": apps, "by_id": by_id})
+
     def lib(self, loc, name, age_days=90, size=4096):
         p = "%s/Library/%s/%s" % (self.home, loc, name)
         mkdir_aged(p, age_days, size)
+        return p
+
+    def libfile(self, loc, name, age_days=90, size=1024):
+        """在 Library 位置下放一个普通文件（LaunchAgents / Cookies 只认文件）。"""
+        p = "%s/Library/%s/%s" % (self.home, loc, name)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "wb") as f:
+            f.write(b"x" * size)
+        t = time.time() - age_days * DAY
+        os.utime(p, (t, t))
         return p
 
     def probe(self, **kw):
@@ -313,3 +341,162 @@ def test_bytes_use_blocks_and_not_follow_symlink(env, tmp_path):
     st = os.lstat(p)
     expect = st.st_blocks * 512 + os.lstat(p + "/blob").st_blocks * 512 + os.lstat(p + "/link").st_blocks * 512
     assert c["bytes"] == expect and c["bytes"] < 1_000_000
+
+
+# ---- D3：按 AppCleaner 的思路重写的匹配判据（每条规则都有正例和被拒反例） --------------------------
+
+def test_name_matches_whole_name_plus_separator_suffix(env):
+    """整名 + 以分隔符或数字开头的后缀；子串不算（正例/反例）。"""
+    for name in ("Notion", "Notion Helper", "notion-enhancer", "Notion.old", "Notion_2", "Notion 3", "notion2"):
+        assert leftovers.name_matches("Notion", name) is True, name
+    for name in ("Notionary", "NotionApp", "MyNotion", "NotionX"):
+        assert leftovers.name_matches("Notion", name) is False, name   # 没有分隔符/数字，就是子串，拒绝
+    # 名字少于 4 个字符：只认整串相等
+    assert leftovers.name_matches("Arc", "Arc") is True
+    assert leftovers.name_matches("Arc", "Archive") is False
+    assert leftovers.name_matches("Arc", "arc-enhancer") is False
+    assert leftovers.name_matches("Arc", "arcade") is False
+    # 空值不当命中
+    assert leftovers.name_matches("", "Notion") is False
+    assert leftovers.name_matches("Notion", "") is False
+
+
+def test_normalize_bundle_id_strips_noise_and_trailing_numbers(env):
+    for bid in ("com.foo.bar.trial", "com.foo.bar.BETA", "com.foo.bar.demo", "com.foo.bar.debug",
+                "com.foo.bar.2", "com.foo.bar.app"):
+        assert leftovers.normalize_bundle_id(bid) == "com.foo.bar", bid
+    assert leftovers.normalize_bundle_id("com.foo.bar.demo.debug") == "com.foo.bar"
+    assert leftovers.normalize_bundle_id("com.foo.bar") == "com.foo.bar"     # 没有噪声段就不动
+    assert leftovers.normalize_bundle_id("com.foo") == "com.foo"             # 至少留两段
+    assert leftovers.normalize_bundle_id("ab.cd.1") == "ab.cd.1"             # 短 id 不归一，避免撞车
+
+
+def test_id_matches_exact_always_prefix_only_when_long(env):
+    # 整串相等永远算；归一后相等也算
+    assert leftovers.id_matches("com.foo.bar", "com.foo.bar") is True
+    assert leftovers.id_matches("com.foo.bar.trial", "com.foo.bar") is True
+    assert leftovers.id_matches("com.foo.bar", "com.foo.bar.2") is True
+    # bundle id 达到 8 个字符才放宽前缀匹配
+    assert leftovers.id_matches("com.gone.oldapp", "com.gone.oldapp.helper") is True
+    assert leftovers.id_matches("com.a.b", "com.a.b.helper") is False        # 7 个字符，不放宽
+    assert leftovers.id_matches("com.a.b", "com.a.b") is True
+    assert leftovers.id_matches("com.a.b", "com.a.bc.helper") is False
+
+
+def test_owner_of_rules_order_and_short_name(env):
+    apps = {"apps": [{"bundle_id": "com.gone.oldapp", "name": "OldApp"},
+                     {"bundle_id": "us.zoom.xos", "name": "Zoom"},
+                     {"bundle_id": "company.thebrowser.Browser", "name": "Arc"}],
+            "by_id": {}}
+    assert leftovers.owner_of("com.gone.oldapp", apps)[1] == "id_exact"
+    assert leftovers.owner_of("com.gone.oldapp.trial", apps)[1] == "id_normalized"
+    assert leftovers.owner_of("com.gone.oldapp.helper", apps)[1] == "id_prefix"
+    assert leftovers.owner_of("Zoom.us.app", apps)[1] == "name_match"
+    # 名字 "Arc" 只有 3 个字符：不前缀，所以 "Archive.*" 归不上、能当残留
+    assert leftovers.owner_of("Archive.Something.x", apps) == (None, None)
+
+
+def test_installed_app_name_prefix_skips_candidate_but_substring_does_not(env):
+    env.install_raw([{"path": "/Applications/Zoom.app", "bundle_id": "us.zoom.xos", "name": "Zoom",
+                      "version": "1", "short_version": "1"},
+                     {"path": "/Applications/Arc.app", "bundle_id": "company.thebrowser.Browser", "name": "Arc",
+                      "version": "1", "short_version": "1"}])
+    env.lib("Caches", "Zoom.us.app")            # 以已装软件名 Zoom 开头 -> 还在装，不列
+    env.lib("Caches", "Archive.Something.x")    # 名字 Arc 太短，不能前缀匹配 -> 列
+    res = env.probe()
+    assert names(res) == ["Archive.Something.x"]
+    assert res["skipped"] == {"app_installed:name_match": 1}
+
+
+def test_standard_library_dirs_are_never_leftovers(env):
+    for d in ("Caches", "Caches/Metadata", "Application Support", "Preferences", "Logs", "Containers",
+              "Group Containers", "Saved Application State", "HTTPStorages", "WebKit", "Cookies",
+              "LaunchAgents", "LaunchDaemons", "Saved Application State", "Keychains", "Fonts"):
+        assert leftovers.is_standard_library_dir(env.home + "/Library/" + d) is True, d
+    assert len(leftovers.STANDARD_LIBRARY_DIRS) >= 66
+    # 标准子目录底下的软件目录照常评估
+    assert leftovers.is_standard_library_dir(env.home + "/Library/Caches/com.gone.app") is False
+    assert leftovers.is_standard_library_dir(env.home + "/Library/Caches/Metadata/com.gone.app") is False
+    env.lib("Caches", "Metadata")               # 标准目录本身：不列、计入 skipped
+    env.lib("Caches", "com.gone.real")
+    res = env.probe()
+    assert names(res) == ["com.gone.real"] and res["skipped"] == {"standard_library_dir": 1}
+
+
+def test_launch_agents_and_cookies_need_bundle_id_at_least_8(env):
+    env.libfile("LaunchAgents", "com.gone.oldagent.plist")
+    env.libfile("LaunchAgents", "com.a.b.plist")             # id 只有 7 个字符：不看、也不计数
+    env.libfile("Cookies", "com.gone.big.cookie.binarycookies")
+    env.libfile("Cookies", "com.a.b.binarycookies")          # 同上
+    res = env.probe()
+    assert names(res) == ["com.gone.big.cookie", "com.gone.oldagent"]
+    by_name = {c["name"]: c for c in res["candidates"]}
+    assert by_name["com.gone.oldagent"]["location"] == "LaunchAgents"
+    assert by_name["com.gone.oldagent"]["match_rule"] == "launch_agent"
+    assert by_name["com.gone.big.cookie"]["match_rule"] == "cookie"
+    for c in res["candidates"]:
+        assert c["safety"] == "moderate" and c["default_select"] is False and c["reason"] == "no_installed_app"
+    assert res["skipped"] == {}
+
+
+def test_launch_agents_shared_component_never_listed(env):
+    env.libfile("LaunchAgents", "com.google.keystone.agent.plist")
+    res = env.probe()
+    assert res["candidates"] == [] and res["skipped"] == {"shared_component": 1}
+
+
+def test_group_containers_need_team_or_group_prefix_and_are_shared(env):
+    env.lib("Group Containers", "ABCDEFGHIJ.com.gone.shared")   # <TeamID>.xxx
+    env.lib("Group Containers", "group.com.gone.other")         # group.xxx
+    env.lib("Group Containers", "com.gone.noprefix")            # 裸 id：不是这种形态，不列
+    env.lib("Group Containers", "ABC.com.gone.short")           # 前缀既不是 group 也不是 10 位 TeamID，不列
+    res = env.probe()
+    assert names(res) == ["com.gone.other", "com.gone.shared"]
+    for c in res["candidates"]:
+        assert c["location"] == "Group Containers" and c["match_rule"] == "group_container"
+        assert c["shared"] is True and c["default_select"] is False
+    assert res["skipped"] == {}
+
+
+def test_group_container_with_app_group_signature_skipped(env):
+    # 归属靠 App 签名里的 app-group，而不是名字前缀（bundle id 与容器名不同源）
+    env.install_raw([{"path": "/Applications/Owner.app", "bundle_id": "org.example.ownerapp", "name": "Owner",
+                      "version": "1", "short_version": "1", "app_groups": ["ABCDEFGHIJ.com.gone.shared"]}])
+    env.lib("Group Containers", "ABCDEFGHIJ.com.gone.shared")
+    res = env.probe()
+    assert res["candidates"] == [] and res["skipped"] == {"app_installed:app_group": 1}
+
+
+def test_running_app_directory_is_protected(env):
+    env.lib("Caches", "com.gone.Running")
+    assert env.probe()["candidates"] != []                      # 没在跑：列为残留
+    env.running = {"com.gone.running"}                          # 进程名就是整串 bundle id
+    res = env.probe()
+    assert res["candidates"] == [] and res["skipped"] == {"app_running": 1}
+    env.running = {"Running"}                                   # 进程名是 bundle id 最后一段，也算
+    assert env.probe()["candidates"] == []
+    env.running = {"com.unrelated.Thing"}                       # 对不上的进程名不保护
+    assert names(env.probe()) == ["com.gone.Running"]
+
+
+def test_process_list_unreadable_protects_candidate(env):
+    env.lib("Caches", "com.gone.Running")
+    env.process_fail = True                                     # 读不到进程名单时保守当作还在运行
+    res = env.probe()
+    assert res["candidates"] == [] and res["skipped"] == {"process_check_failed": 1}
+    assert any(e.get("stage") == "processes" for e in res["errors"])
+
+
+def test_candidate_keeps_existing_fields_and_adds_match_rule(env):
+    p = env.lib("Caches", "com.gone.OldApp", age_days=90, size=100000)
+    c = env.probe()["candidates"][0]
+    assert set(c) >= {"path", "name", "location", "bytes", "age_days", "reason"}
+    assert c["path"] == p and c["reason"] == "no_installed_app" and c["match_rule"] == "bundle_id"
+
+
+def test_short_installed_app_name_still_owns_its_helper_dirs():
+    """归属判断是保护方向：已装 Arc 时 “Arc Helper” 不报残留，但 “Archive” 仍不归它。"""
+    apps = {"apps": [{"name": "Arc", "bundle_id": ""}]}
+    assert leftovers.owner_of("Arc Helper", apps)[1] == "name_match"
+    assert leftovers.owner_of("arc-2", apps)[1] == "name_match"
+    assert leftovers.owner_of("Archive", apps) == (None, None)

@@ -765,7 +765,7 @@ def test_board_injects_json_and_escapes(env, tmp_path):
     assert data["seal"]["digest"] == digest and data["plan"]["cards"][0]["summary"] == "</script><b>x</b>"
     fr = data["facts"]["frontier"]
     assert len(fr) == 40 and fr[0]["bytes"] == 60
-    assert set(fr[0]) == {"path", "bytes", "producer", "refs", "recent_24h"}
+    assert set(fr[0]) == {"path", "bytes", "category", "producer", "refs", "recent_24h"}
     assert data["check"]["cards"][0]["verdict_out"] == "clean"
     env.mp.setattr(plan, "TEMPLATE", str(tmp_path / "missing.html"))
     assert plan.main(["board", "--run", str(env.run)]) == 2

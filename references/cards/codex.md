@@ -15,7 +15,8 @@
 | `~/.codex/attachments/` | 粘贴/上传的附件 | 工具状态 |
 | `~/.codex/packages/standalone/releases/*`、`packages/app-server-daemon/releases/*` | 两套独立安装版本与更新暂存 | 可再生缓存，但有 current 链接与安装锁 |
 | `~/.codex/auth.json`、`config.toml`、`hooks.json`、`rules/`、`skills/` | 认证、配置、钩子、规则、技能 | 绝对保护 |
-| `~/.codex/cache/`、`models_cache.json`、`shell_snapshots/`、`.tmp/` | 缓存与临时 | 可再生缓存 |
+| `~/.codex/cache/`、`models_cache.json`、`shell_snapshots/` | 缓存与状态快照 | 可再生缓存 |
+| `~/.codex/.tmp/` | Codex 运行时的临时文件 | 临时文件：Codex 没在运行时可以清；运行中只报告，不碰 |
 
 ## 一张图存三份：批量出图是最大的占用来源
 
@@ -56,6 +57,7 @@
 - **会话之间的引用**：`trace` 会在其他 Codex 会话的 rollout 里搜这些线程号（`mentioned_by_sessions`）。提到同组 10 个以上线程号的会话视为盘点或清理清单（`search_complete.inventory_sessions`），不算逐个依赖；其中仍在运行的，会在被它列过的线程上标 `listed_by_live_inventory`——读那个会话的首句，确认它在做盘点或清理（而不是正在驱动这批任务）再继续；拿不准就整组归 `decide`。
 - **逐会话细看**：`scan.py probe codex`，列出 100MB 以上的单个会话：首行 `session_meta`、首条用户消息前 120 字、索引时间、是否被打开，以及 `generated_images/<id>` 的张数、字节、有无 rollout、引用命中。适合交互会话，不适合批量脚本。
 - **rollout 文件是否被打开**：`lsof` 命中 rollout 路径，即该会话正在运行；24 小时内修改过同样视为进行中。
+- **`~/.codex/.tmp/`**：Codex 运行时的临时文件，先看有没有 Codex 进程在跑（CLI 或桌面 App）；没在跑可以整目录清，运行中只报告、不碰，免得打断正在写的东西。
 - **`session_index.jsonl` 的 `updated_at`**：取同一 ID 最后一行；与 rollout 修改时间取较新者作为活动时间。索引里有条目但 rollout 已不存在，是已知的索引失步现象（见 https://github.com/openai/codex/issues/31074 ），不代表可以清别的东西。
 - **子 Agent 与父线程**：`session_meta.source` 为 `{"subagent":{"thread_spawn":{"parent_thread_id":...}}}` 的是派生会话。父线程仍在用，子会话一并保留；原生 `delete` 会连带删除派生后代，所以删父等于删整棵树。`source` 为 `exec` 表示由 `codex exec` 非交互启动，`cli` / `vscode` 等为交互入口。
 - **`generated_images/<线程ID>`**：

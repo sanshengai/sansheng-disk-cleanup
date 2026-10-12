@@ -32,6 +32,7 @@ if HERE not in sys.path:
 import prefs  # noqa: E402
 import protect  # noqa: E402
 import codex_state  # noqa: E402
+import setup_q  # noqa: E402
 import units  # noqa: E402
 
 SKILL_ROOT = os.path.dirname(HERE)
@@ -810,6 +811,24 @@ def compute_default_select(card, items, verdict_out, nodes):
     return True
 
 
+def _item_newest_ts(it, nodes):
+    """条目最近一次修改的时间戳：节点自己的 newest_mtime（路径逐字相同）优先，其次现场 lstat；都拿不到返回 None。"""
+    rp = protect.lexical(it["path"])
+    primary, _ = related_nodes(rp, nodes)
+    mt = primary.get("newest_mtime") if primary and os.path.normpath(str(primary.get("path"))) == rp else None
+    if isinstance(mt, str):
+        try:
+            mt = datetime.fromisoformat(mt.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            mt = None
+    if not isinstance(mt, (int, float)):
+        try:
+            mt = os.lstat(rp).st_mtime
+        except OSError:
+            return None
+    return mt
+
+
 def _retention_hit(items, nodes, profile):
     """用户在初次设置里定了“最近 N 天内用过的 AI 对话一律留着”：交互会话条目最近修改在 N 天内 → 整卡保留。"""
     days = profile.get("retention_days") if isinstance(profile, dict) else None
@@ -819,24 +838,82 @@ def _retention_hit(items, nodes, profile):
     for it in items if isinstance(items, list) else []:
         if not (isinstance(it, dict) and item_class(it) == "interactive" and isinstance(it.get("path"), str)):
             continue
-        rp = protect.lexical(it["path"])
-        primary, _ = related_nodes(rp, nodes)
-        mt = primary.get("newest_mtime") if primary and os.path.normpath(str(primary.get("path"))) == rp else None
-        if isinstance(mt, str):
-            try:
-                mt = datetime.fromisoformat(mt.replace("Z", "+00:00")).timestamp()
-            except ValueError:
-                mt = None
-        if not isinstance(mt, (int, float)):
-            try:
-                mt = os.lstat(rp).st_mtime
-            except OSError:
-                continue
-        newest = max(newest, mt)
+        mt = _item_newest_ts(it, nodes)
+        if mt is not None:
+            newest = max(newest, mt)
     age = (time.time() - newest) / 86400 if newest else None
     if age is not None and age < days:
         return f"你设定最近 {days} 天内用过的 AI 对话一律留着，这个会话 {age:.0f} 天前还有改动"
     return None
+
+
+# ----------------------------------------------------------------- 初始设置对判断的影响（0.6）
+# 原则：设置只改变“问不问、预填什么、进哪一档”，只会让卡变得更保守（降 keep / 降 decide / 抬档位 / 预填），
+# 不会让任何卡从 decide 升为 clean，也不会绕过证据复核、引用核对、进程与 24 小时检查。
+
+LIBRARY_REASON = "你说过旧对话当资料库，都留着"
+REJECTS_KEEP_REASON = "你说过没挑中的图都留着，而且这批图没有通过复核的成品副本或交付证据"
+BIG_OFF_REASON = "你说过录屏和大视频别问"
+WT_BUILD_ONLY_REASON = "你说过只清构建产物，整棵工作树先留着：这里要删整棵工作树，改为让你确认"
+WT_BUILD_ONLY_QUESTION = "只清构建产物，整棵工作树先留着？"
+SLOW_REBUILD_CARDS = ("model-caches",)
+
+
+def settings_of(profile):
+    """check / propose 用到的设置，已校验：不合法的值当作没设。"""
+    p = profile if isinstance(profile, dict) else {}
+
+    def one(key, allowed):
+        return p.get(key) if p.get(key) in allowed else None
+    tools = p.get("tools") if isinstance(p.get("tools"), dict) else {}
+    big = p.get("big_file_age_days")
+    return {
+        "tools_unused": {k for k, v in tools.items() if v == "unused" and k in setup_q.TOOL_KEYS},
+        "conv": one("conversation_policy", setup_q.SINGLE["conversations"][1]),
+        "rejects": one("rejects_policy", setup_q.SINGLE["rejects"][1]),
+        "worktree": one("worktree_policy", setup_q.SINGLE["worktrees"][1]),
+        "installer": one("installer_policy", setup_q.SINGLE["installers"][1]),
+        "big_days": big if isinstance(big, int) and not isinstance(big, bool) and big in setup_q.BIG_FILE_DAYS else None,
+        "done_project": one("done_project_policy", setup_q.SINGLE["done_projects"][1]),
+    }
+
+
+def _first_card(card):
+    used = card.get("cards_used") if isinstance(card.get("cards_used"), list) else []
+    return used[0] if used and isinstance(used[0], str) else ""
+
+
+def _is_worktree_root(rp, nodes):
+    """条目路径正好是某个 git 工作树的根目录（节点 git.role == worktree，或节点自己就是它所在工作树的根）。"""
+    for n in nodes if isinstance(nodes, list) else []:
+        if not isinstance(n, dict) or os.path.realpath(str(n.get("path") or "")) != rp:
+            continue
+        g = n.get("git") if isinstance(n.get("git"), dict) else {}
+        if g.get("role") == "worktree":
+            return True
+        wt = g.get("worktree")
+        if isinstance(wt, str) and os.path.realpath(wt) == rp:
+            return True
+    return False
+
+
+def _installer_card(card, items):
+    if _first_card(card) == "app-updaters-installers":
+        return True
+    for it in items if isinstance(items, list) else []:
+        if not isinstance(it, dict):
+            continue
+        paths = [it.get("path")] + (it.get("files") if isinstance(it.get("files"), list) else [])
+        if any(isinstance(x, str) and x.lower().endswith(INSTALLER_EXTS) for x in paths):
+            return True
+    return False
+
+
+def _floor_preset(card, preset, wt_ask):
+    """重建很慢的缓存（卡片写了 rebuild: slow，或模型缓存）不进稳妥档；工作树选了“每次问我”也至少是推荐档。"""
+    if preset == "safe" and (card.get("rebuild") == "slow" or _first_card(card) in SLOW_REBUILD_CARDS or wt_ask):
+        return "recommended"
+    return preset
 
 
 def check_item(item, ctx):
@@ -1397,6 +1474,7 @@ def check_plan(run):
     # 台账里有“进行中 / 别碰”的项目，而这次扫描没有（或对不上）项目识别结果：只靠台账里写的路径认不全归属
     # （会话号、Claude 项目目录要 projects.json 才认得出），不能放行任何删除卡
     projects_missing = pfile is None and any(e["status"] in ("active", "protected") for e in pindex.entries)
+    S = settings_of(profile)
     out_cards, flat_errors, flat_warnings, records, seen = [], [], [], {}, set()
     counts = {}
     for idx, card in enumerate(cards):
@@ -1418,6 +1496,7 @@ def check_plan(run):
         recs = []
         ev_checks, soft, warns, risk_notes = [], [], [], []
         card_projects, project_cap, prefill = [], None, None
+        setting_prefill, setting_q, wt_ask, proj_done = None, None, False, False
         if "default_select" in card:
             warns.append("default_select 由 plan.py 按规则计算，plan.json 里写的值被忽略")
         isess = interactive_sessions(items)
@@ -1478,7 +1557,9 @@ def check_plan(run):
                     if sts == {"archived"}:
                         project_cap = "recommended"
                     if sts <= {"done", "archived"}:
-                        prefill = "删"
+                        proj_done = True
+                        # 做完的项目素材怎么处理：删中间稿（预填“删”）/ 整个搬走（预填“归档”）/ 先都留着（不预填）
+                        prefill = {"archive": "归档", "keep": None}.get(S["done_project"], "删")
             for it in items if isinstance(items, list) else []:
                 cw = class_conflict(it)
                 if cw and cw not in warns:
@@ -1502,6 +1583,36 @@ def check_plan(run):
                 soft.append("clean 需要「任务已结束」的复核证据（merged / delivered / copy_verified），"
                             "现有证据没有一条通过复核（字符串与 user_stated 不算），降为 decide")
                 soft.extend(c["msg"] for c in ev_checks if not c["ok"])
+            # ---- 初始设置（0.6）：只会让卡更保守或预填，见上面 settings_of 的说明
+            used0, cat = _first_card(card), card_category(card)[0]
+            real_items = [i for i in items if isinstance(i, dict) and isinstance(i.get("path"), str)] if isinstance(items, list) else []
+            if isess and S["conv"] == "library":
+                errs.append(LIBRARY_REASON)
+            if used0 in S["tools_unused"]:
+                setting_prefill = "删"                       # 软件标了“不用了”：整套环境进入判断，仍由你逐项确认
+            if cat == "ai-images":
+                if S["rejects"] == "drop":
+                    setting_prefill = "删"
+                elif S["rejects"] == "keep" and not any(c.get("end") and c.get("kind") in ("copy_verified", "delivered")
+                                                        for c in ev_checks):
+                    errs.append(REJECTS_KEEP_REASON)
+            if used0 == "large-old-files":
+                if S["big_days"] == 0:
+                    errs.append(BIG_OFF_REASON)
+                elif S["big_days"]:
+                    for it in real_items:
+                        mt = _item_newest_ts(it, nodes)
+                        if mt is not None and (time.time() - mt) / 86400 < S["big_days"]:
+                            errs.append(f"{it['path']}：不到你定的 {S['big_days']} 天（最近 {(time.time() - mt) / 86400:.0f} 天内还有改动）")
+            if used0 == "git-worktree-build":
+                if S["worktree"] == "whole":
+                    setting_prefill = "删"
+                elif S["worktree"] == "ask":
+                    wt_ask = True
+                elif S["worktree"] == "build_only" and verdict == "clean" \
+                        and any(_is_worktree_root(os.path.realpath(i["path"]), nodes) for i in real_items):
+                    soft.append(WT_BUILD_ONLY_REASON)
+                    setting_q = WT_BUILD_ONLY_QUESTION
         elif verdict == "govern" and items:
             errs.append("govern 卡片只放进 governance，不应带 items")
         out = verdict
@@ -1517,16 +1628,26 @@ def check_plan(run):
             records[cid] = {"title": card.get("title"), "verdict": verdict, "items": recs}
         if cid in records:
             # 0.4 评审：提案的档位、规则键、要不要逐个问都从封存推导，封存后改 plan.json 改不动执行范围
-            preset = card_preset(card, records[cid]["verdict"], risk_notes, cap=project_cap)
+            preset = _floor_preset(card, card_preset(card, records[cid]["verdict"], risk_notes, cap=project_cap), wt_ask)
             records[cid]["preset"] = preset
             # 台账“归档”会把 all 档的卡降到推荐档；“删了找不回”的提醒按卡原本的风险判定，不按降档后的档位
-            records[cid]["preset_raw"] = card_preset(card, records[cid]["verdict"], risk_notes)
+            records[cid]["preset_raw"] = _floor_preset(card, card_preset(card, records[cid]["verdict"], risk_notes), wt_ask)
             if card_projects:
                 records[cid]["projects"] = card_projects
-            if prefill and records[cid]["verdict"] == "decide" and not risk_notes and not isess:
-                records[cid]["prefill"] = prefill        # 项目做完了：看板 / 提案里这张卡的问题预填“删”（只是预填，仍要用户确认）
+            # 预填只是预填，仍要用户确认：项目做完了（按“做完的项目怎么处理”预填删或归档；含交互对话的卡只有选了
+            # “做完就不再看”才预填）；其次是初始设置里的“不用了的软件 / 废稿不留 / 整棵工作树删”
+            pf = None
+            if prefill and (not isess or (proj_done and S["conv"] == "done")):
+                pf = prefill
+            if pf is None and setting_prefill and not isess:
+                pf = setting_prefill
+            if pf and records[cid]["verdict"] == "decide" and not risk_notes:
+                records[cid]["prefill"] = pf
             records[cid]["rule_key"] = prefs.rule_key(card, preset, card_category(card)[0])
-            records[cid]["review"] = bool(downgraded or risk_notes)      # 降过级或带风险：本机“以后都删”规则不适用
+            # 降过级或带风险：本机“以后都删”规则不适用；工作树选了“每次问我”也不适用
+            records[cid]["review"] = bool(downgraded or risk_notes or wt_ask)
+            if _installer_card(card, items):
+                records[cid]["installer"] = True          # 提案里“安装包直接清”据此按规则处理
             records[cid]["interactive"] = bool(isess)                     # 含交互会话：只在看板里逐个确认
         counts[out] = counts.get(out, 0) + 1
         for e in errs:
@@ -1542,6 +1663,7 @@ def check_plan(run):
         if card_projects:
             oc["projects"] = card_projects
         if cid in records:
+            oc["preset"], oc["preset_raw"] = records[cid]["preset"], records[cid]["preset_raw"]
             if project_cap:
                 oc["project_cap"] = project_cap
             if records[cid].get("prefill"):
@@ -1573,7 +1695,7 @@ def check_plan(run):
             else:
                 default_q = ("这个对话会话你确认不再需要、不会回来续聊了吗？" if isess
                              else risk_q or "这批东西对应的任务确实已经结束、不会再续跑了吗？")
-                oc["question"] = q or default_q
+                oc["question"] = setting_q or q or default_q
         out_cards.append(oc)
     result = {"schema": "plan.check/1", "scan_id": scan_id, "checked_at": now_iso(), "ok": True,
               "plan_errors": [], "cards": out_cards, "errors": flat_errors, "warnings": flat_warnings, "counts": counts}
@@ -1657,15 +1779,87 @@ def cmd_seal(args):
 
 # ----------------------------------------------------------------- 看板
 
-def facts_summary(facts):
+COMPOSITION_NOTE_SYSTEM = "系统区域没有单独量，算在“其他”里"
+_USER_DIRS = ("Documents", "Desktop", "Movies", "Pictures", "Music")
+
+
+def composition_of(facts):
+    """整盘构成（看板总览）：你的文件与软件数据 / 应用程序 / 系统 / 其他（含可清除空间）。
+    home = 扫描根里落在家目录下的根节点合计；apps = /Applications 下的根节点合计（没扫就是 None）；
+    系统区域扫描没有单独量过，不编数字：bytes 为 None 并标注，剩下的差额全部算“其他”，并标 estimated。"""
+    disk = facts.get("disk") if isinstance(facts.get("disk"), dict) else {}
+    used = disk.get("used") if isinstance(disk.get("used"), int) and not isinstance(disk.get("used"), bool) else 0
+    home_dir = os.path.realpath(str((facts.get("host") or {}).get("home") or ""))
+    roots = [n for n in facts.get("nodes", []) if isinstance(n, dict) and n.get("depth") == 0
+             and isinstance(n.get("bytes"), int)]
+    home_nodes = [n for n in roots if home_dir and within(os.path.realpath(str(n.get("path"))), home_dir)]
+    app_nodes = [n for n in roots if within(os.path.realpath(str(n.get("path"))), "/Applications")]
+    home = sum(n["bytes"] for n in home_nodes) if home_nodes else None
+    apps = sum(n["bytes"] for n in app_nodes) if app_nodes else None
+    other = max(0, used - (home or 0) - (apps or 0)) if used and home is not None else None
+    return [
+        {"id": "home", "name": "你的文件与软件数据", "bytes": home,
+         "estimated": any(n.get("bytes_lower_bound") for n in home_nodes)},
+        {"id": "apps", "name": "应用程序", "bytes": apps, "estimated": apps is None or any(n.get("bytes_lower_bound") for n in app_nodes),
+         **({} if apps is not None else {"note": "这次扫描没有量 /Applications"})},
+        {"id": "system", "name": "系统", "bytes": None, "estimated": True, "note": COMPOSITION_NOTE_SYSTEM},
+        {"id": "other", "name": "其他（含可清除空间）", "bytes": other, "estimated": True},
+    ]
+
+
+def purgeable_bytes(facts):
+    """访达口径的可清除空间估算（capacity.purgeable_estimate = Finder 可用 − statvfs 可用）；取不到是 None，不等于 0。"""
+    cap = facts.get("capacity") if isinstance(facts.get("capacity"), dict) else {}
+    v = cap.get("purgeable_estimate")
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+
+
+def _plan_item_categories(plan):
+    out = {}
+    for c in (plan or {}).get("cards") or []:
+        if not isinstance(c, dict):
+            continue
+        cat = card_category(c)[0]
+        for it in c.get("items") if isinstance(c.get("items"), list) else []:
+            if isinstance(it, dict) and isinstance(it.get("path"), str):
+                out.setdefault(os.path.normpath(it["path"]), cat)
+    return out
+
+
+def node_category(n, home, item_cats):
+    """前沿节点属于哪个看板类别：先看计划里包含它（或就是它）的条目所属卡片，再看识别出的工具，最后按位置猜。"""
+    path = os.path.normpath(str(n.get("path") or ""))
+    probe = path
+    while probe and probe != "/":
+        if probe in item_cats:
+            return item_cats[probe]
+        probe = os.path.dirname(probe)
+    card = (n.get("producer") or {}).get("card")
+    if card in USER_SOURCES:
+        return USER_SOURCES[card][0]
+    if home and within(path, home):
+        rel = path[len(home.rstrip("/")) + 1:].split("/", 1)
+        if rel[0] in _USER_DIRS:
+            return "my-files"
+        if rel[0] == "Downloads":
+            return "old-files"
+        if rel[0] == "Library":
+            return "system"
+    return "other"
+
+
+def facts_summary(facts, plan=None):
     nodes = [n for n in facts.get("nodes", []) if isinstance(n, dict)]
     frontier = [n for n in nodes if not n.get("children_over_threshold")]
     frontier.sort(key=lambda n: n.get("bytes") or 0, reverse=True)
+    home = os.path.realpath(str((facts.get("host") or {}).get("home") or "")) or None
+    item_cats = _plan_item_categories(plan)
     top = []
     for n in frontier[:FRONTIER_TOP]:
         top.append({
             "path": n.get("path"),
             "bytes": n.get("bytes"),
+            "category": node_category(n, home, item_cats),
             "producer": {"card": (n.get("producer") or {}).get("card")},
             "refs": {"count": (n.get("refs") or {}).get("count")},
             "recent_24h": n.get("recent_24h"),
@@ -1674,7 +1868,8 @@ def facts_summary(facts):
     areas = sorted((n for n in nodes if n.get("depth") == 1), key=lambda n: n.get("bytes") or 0, reverse=True)
     areas = [{"path": n.get("path"), "bytes": n.get("bytes")} for n in areas[:6]]
     return {"scan_id": facts.get("scan_id"), "created_at": facts.get("created_at"),
-            "disk": facts.get("disk"), "coverage": facts.get("coverage"), "frontier": top, "areas": areas}
+            "disk": facts.get("disk"), "coverage": facts.get("coverage"), "frontier": top, "areas": areas,
+            "composition": composition_of(facts), "purgeable_bytes": purgeable_bytes(facts)}
 
 
 def _json_for_html(obj):
@@ -1818,8 +2013,13 @@ def board_plan(plan, result):
             bc["bytes"] = r["bytes_checked"]
         elif r is not None and r.get("downgraded"):
             bc["bytes"] = r.get("bytes_hint")            # 没有实测就是 None：页面显示“未统计”，不拿 Agent 在计划里写的数
-        bc["preset"] = card_preset(c, bc.get("verdict"), (r or {}).get("risk_notes") or [], cap=(r or {}).get("project_cap"))
-        raw = card_preset(c, bc.get("verdict"), (r or {}).get("risk_notes") or [])
+        # 档位以 check 算出来的为准（含初始设置带来的调整：重建慢的缓存不进稳妥档等）；降级成 keep 的卡没有档位
+        if r is not None and r.get("preset") in PRESETS:
+            bc["preset"] = r["preset"]
+            raw = r.get("preset_raw") if r.get("preset_raw") in PRESETS else r["preset"]
+        else:
+            bc["preset"] = card_preset(c, bc.get("verdict"), (r or {}).get("risk_notes") or [], cap=(r or {}).get("project_cap"))
+            raw = card_preset(c, bc.get("verdict"), (r or {}).get("risk_notes") or [])
         if raw != bc["preset"]:
             bc["preset_raw"] = raw                         # 被台账降档的卡：看板仍标出它原本是“删了找不回”
         if r is not None and r.get("projects"):
@@ -1836,52 +2036,11 @@ def board_plan(plan, result):
     return dict(plan, cards=cards, categories=BOARD_CATEGORIES)
 
 
-ONBOARD_TEMPLATE = os.path.join(SKILL_ROOT, "assets", "onboard.html")
-PROJECT_ROW_FIELDS = ("key", "name", "kind", "bytes", "last_active", "sessions", "deliverables_guess", "default_status")
-
-
-def _project_row(p, ledger):
-    """给页面看的项目行：只带显示用字段。roots / claude_dirs / session_ids 是 check 判断归属用的，不进页面。
-    status / deliverables 取台账里已有的（没有就是 None / []）。"""
-    row = {k: p.get(k) for k in PROJECT_ROW_FIELDS if k in p}
-    e = ledger.get(p.get("key")) if isinstance(ledger.get(p.get("key")), dict) else None
-    row["status"] = e.get("status") if e and e.get("status") in protect.PROJECT_STATUSES else None
-    row["deliverables"] = list(e.get("deliverables") or []) if e else []
-    row["in_ledger"] = bool(e)
-    if e and e.get("name"):
-        row["name"] = e["name"]
-    return row
-
-
-def board_projects(profile, pfile):
-    """清理看板“我的项目”页的数据：台账里的全部项目 + 本次扫描认出的 shown 项目（台账里没有的）。"""
-    ledger = profile.get("projects") if isinstance(profile.get("projects"), dict) else {}
-    scanned = {p.get("key"): p for p in (pfile or {}).get("projects", []) if isinstance(p, dict) and p.get("key")}
-    rows = []
-    for key, e in ledger.items():
-        if not (isinstance(e, dict) and e.get("status") in protect.PROJECT_STATUSES):
-            continue
-        base = dict(scanned.get(key) or {"key": key, "name": e.get("name") or os.path.basename(key.rstrip("/")) or key})
-        rows.append(_project_row(base, ledger))
-    for key, p in scanned.items():
-        if p.get("shown") and key not in ledger:
-            rows.append(_project_row(p, ledger))
-    return rows
-
-
-def onboard_projects(profile, pfile):
-    """①台账看板的数据：本次扫描 shown 的项目（体积降序），台账里已有的状态与成品目录一并带上。"""
-    ledger = profile.get("projects") if isinstance(profile.get("projects"), dict) else {}
-    return [_project_row(p, ledger) for p in (pfile or {}).get("projects", []) if isinstance(p, dict) and p.get("shown") and p.get("key")]
-
-
-def settings_payload(profile):
-    """看板“我的项目”页底部小设置的当前值（保留天数、默认档位）。"""
-    days = profile.get("retention_days")
-    # 没设保留天数就是 0（不保留），与 protect.profile_guard 的口径一致；页面不要自己编一个默认值
-    days = days if isinstance(days, int) and not isinstance(days, bool) and days > 0 else 0
-    return {"retention_days": days, "default_choice": profile.get("default_choice"),
-            "retention_choices": list(prefs.RETENTION_CHOICES)}
+SETUP_TEMPLATE = os.path.join(SKILL_ROOT, "assets", "setup.html")
+# 项目行的取法在 setup_q.py（设置页的单一真源）；这里保留旧名字，免得外部脚本断掉
+PROJECT_ROW_FIELDS = setup_q.PROJECT_ROW_FIELDS
+_project_row = setup_q.project_row
+onboard_projects = setup_q.onboard_projects
 
 
 def proposal_for_board(run, scan_id):
@@ -1892,7 +2051,17 @@ def proposal_for_board(run, scan_id):
         return None
     if not isinstance(pr, dict) or (scan_id and pr.get("scan_id") != scan_id):
         return None
-    return {"stage": pr.get("stage"), "project_questions": pr.get("project_questions") or [], "prefill": pr.get("prefill") or {}}
+    return {"stage": pr.get("stage"), "project_questions": pr.get("project_questions") or [], "prefill": pr.get("prefill") or {},
+            "cloud_suggestions": pr.get("cloud_suggestions") or []}
+
+
+def pending_rules_of(profile):
+    """用户在设置页“补充”里说的话，Agent 翻译后待确认的规则：[{id, text}]。看板每条两按钮“对 / 不对”。"""
+    out = []
+    for r in profile.get("pending_rules") if isinstance(profile.get("pending_rules"), list) else []:
+        if isinstance(r, dict) and isinstance(r.get("id"), str) and isinstance(r.get("text"), str) and r["text"].strip():
+            out.append({"id": r["id"], "text": r["text"]})
+    return out
 
 
 def _render_template(template, logo_path, placeholder, payload, out_path):
@@ -1941,10 +2110,16 @@ def cmd_board(args):
         write_cardkeys(run, bplan["cards"], seal.get("cards") or {})
     profile = prefs.load()
     scan_id = facts.get("scan_id") or plan.get("scan_id")
-    payload = {"facts": facts_summary(facts), "plan": bplan, "check": result,
+    proposal = proposal_for_board(run, scan_id)
+    # 0.6：台账表和全局设置不再放在清理看板里（改设置在对话里说“改设置”，打开设置页）。看板只带：
+    # 顶部“按你的设置”摘要、新项目 / 久没动项目的单题卡、待确认规则、归档开关
+    payload = {"facts": facts_summary(facts, plan), "plan": bplan, "check": result,
                "seal": {"digest": digest}, "seal_digest": digest,
-               "projects": board_projects(profile, load_projects_file(run, scan_id)),
-               "settings": settings_payload(profile), "proposal": proposal_for_board(run, scan_id)}
+               "setup_summary": setup_q.summary_lines(profile),
+               "project_questions": (proposal or {}).get("project_questions") or [],
+               "pending_rules": pending_rules_of(profile), "archive_enabled": True,
+               "cloud_suggestions": (proposal or {}).get("cloud_suggestions") or [],
+               "proposal": proposal}
     out = args.out or "board.html"
     if not os.path.isabs(out):
         out = os.path.join(run, out)
@@ -1961,11 +2136,13 @@ def cmd_board(args):
     return 0
 
 
-def cmd_onboard(args):
-    """①「认识你的电脑」项目台账看板：读 <run>/projects.json（scan.py probe projects 的结果），写 <run>/onboard.html。
-    页面只保存使用习惯（导出抬头“叁笙清理 · 项目台账”），没有任何清理选项。"""
+def cmd_setup(args):
+    """「认识你的电脑」初始设置页：读 <run>/projects.json（scan.py probe projects 的结果），写 <run>/setup.html。
+    --mode first（第一次，出全部适用的题）/ upgrade（题库更新了，只补新题，不出项目表）/ edit（改设置，预填现值；
+    导出时只带改动过的题）；不写按 profile 自动判断。页面只保存设置（导出抬头“叁笙清理 · 初始设置”），没有任何清理选项。
+    plan.py onboard 是它的别名。"""
     run = os.path.realpath(args.run)
-    for path in (ONBOARD_TEMPLATE, LOGO):
+    for path in (SETUP_TEMPLATE, LOGO):
         if not os.path.isfile(path):
             print(f"错误：文件不存在：{path}", file=sys.stderr)
             return 2
@@ -1989,17 +2166,21 @@ def cmd_onboard(args):
         print("错误：projects.json 的 scan_id 与 facts.json 对不上（换过扫描），重新运行 scan.py probe projects", file=sys.stderr)
         return 2
     profile = prefs.load()
-    payload = {"scan_id": pfile.get("scan_id") or "", "projects": onboard_projects(profile, pfile),
-               "settings": settings_payload(profile)}
-    out = args.out or "onboard.html"
+    mode = getattr(args, "mode", None) or setup_q.auto_mode(profile)
+    payload = setup_q.build_payload(profile, pfile, mode)
+    if not payload["groups"]:
+        print("没有需要问的题：这台电脑上没有新增的情况。想改已有设置，用 --mode edit")
+        return 0
+    out = args.out or "setup.html"
     if not os.path.isabs(out):
         out = os.path.join(run, out)
     try:
-        _render_template(ONBOARD_TEMPLATE, LOGO, "__ONBOARD_JSON__", payload, out)
+        _render_template(SETUP_TEMPLATE, LOGO, "__SETUP_JSON__", payload, out)
     except ValueError as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2
-    print(f"台账看板已生成：{out}")
+    n = sum(len(g["questions"]) for g in payload["groups"])
+    print(f"设置页已生成（{ {'first': '第一次', 'upgrade': '只补新题', 'edit': '改设置'}[mode] }，共 {n} 题）：{out}")
     return 0
 
 
@@ -2017,8 +2198,10 @@ _gb = units.fmt_bytes         # 十进制 GB，一位小数；小于 1 GB 用 MB
 def needs_board(profile, attention):
     """返回发看板的原因列表；空列表 = 在对话里一句话确认即可。"""
     reasons = []
-    if not (isinstance(profile, dict) and profile.get("onboarded_at")):
+    if setup_q.stage_of(profile) == "onboarding":
         reasons.append("第一次使用：要核对一次你的使用习惯")
+    if isinstance(profile, dict) and profile.get("confirm_mode") == "board":
+        reasons.append("你选了每次都发看板")
     if len(attention) > BOARD_ATTENTION_MAX:
         reasons.append(f"有 {len(attention)} 项要你看，超过 {BOARD_ATTENTION_MAX} 项，在网页里看更清楚")
     return reasons
@@ -2076,6 +2259,45 @@ def project_questions(profile, pfile, now=None):
     return questions, lines
 
 
+# ----------------------------------------------------------------- 云盘建议（第 11 题）
+# 只读情报 + 官方入口：不执行任何释放动作，也不调 brctl evict（非官方文档承诺、没上传完的文件会不会丢没有依据）。
+# 调研见 references/ 与 0.6 云盘调研；链接都是各家官方帮助页。
+CLOUD_MIN_BYTES = 10 ** 9           # 本机占不到 1 GB 的文件夹不值得提
+CLOUD_MAX_SUGGESTIONS = 8
+_CLOUD_CAVEAT = "先在访达里确认这个文件夹里没有“正在上传”的文件；别直接删除，也别把文件拖出云盘，那样会连云端的一起删掉。"
+CLOUD_HOWTO = {
+    "iCloud Drive": ("在访达的“iCloud 云盘”里，按住 Control 点这个文件夹，选“移除下载”：文件还留在云上，用到时再下载。" + _CLOUD_CAVEAT,
+                     "https://support.apple.com/guide/mac-help/mchl1a02d711/mac"),
+    "Dropbox": ("在访达里右键这个文件夹，选“设为仅在线”（英文版是 Make online-only）：文件还留在 Dropbox 里，用到时再下载。" + _CLOUD_CAVEAT,
+                "https://help.dropbox.com/sync/make-files-online-only"),
+    "OneDrive": ("在访达里右键这个文件夹，选“释放空间”（Free up space）：文件还留在 OneDrive 里，用到时再下载。" + _CLOUD_CAVEAT,
+                 "https://support.microsoft.com/en-us/onedrive/save-disk-space-with-onedrive-files-on-demand-for-mac"),
+    "Google Drive": ("在 Google Drive 桌面版的设置里，把“我的云端硬盘”改成“串流文件”（Stream files）：文件留在云上，本机只留很少的缓存。" + _CLOUD_CAVEAT,
+                     "https://support.google.com/drive/answer/13401938"),
+    "其他": ("我没法判断这个网盘里哪些能只留云端。请在它自己的设置里找“仅在线 / 取消同步到本地”这类选项；同步型网盘直接删除可能连云端一起删，先别删。", None),
+}
+
+
+def cloud_suggestions_of(profile, pfile):
+    """第 11 题的建议：设置里回答“可以”或“不确定”，且 projects.json 里有本机占 ≥ 1 GB 的云盘文件夹时，
+    列出最大的几个，每个写明官方怎么做。回答“不行，我要离线用”或没回答时为空。只读：这里不动任何文件。"""
+    if (profile or {}).get("cloud_policy") not in ("ok", "unsure"):
+        return []
+    sf = (pfile or {}).get("setup_facts") if isinstance((pfile or {}).get("setup_facts"), dict) else {}
+    rows = []
+    for f in sf.get("cloud_folders") if isinstance(sf.get("cloud_folders"), list) else []:
+        if not (isinstance(f, dict) and isinstance(f.get("path"), str) and f["path"]):
+            continue
+        b = f.get("local_bytes")
+        if not isinstance(b, int) or isinstance(b, bool) or b < CLOUD_MIN_BYTES:
+            continue
+        prov = f.get("provider") if f.get("provider") in CLOUD_HOWTO else "其他"
+        how, link = CLOUD_HOWTO[prov]
+        rows.append({"path": f["path"], "provider": prov, "local_bytes": b, "how": how, "link": link})
+    rows.sort(key=lambda r: (-r["local_bytes"], r["path"]))
+    return rows[:CLOUD_MAX_SUGGESTIONS]
+
+
 def build_proposal(run):
     """按封存的计划生成三档选项（每档：卡号、答复、sel、体积）与对话文案。没封存或封存失效时返回 (None, 错误)。
     档位、规则键、体积、要不要逐个问都取自封存（0.4 评审：封存后改 plan.json 不能改变执行范围）；plan.json 只用来显示类别。
@@ -2094,6 +2316,7 @@ def build_proposal(run):
     plan, _ = load_plan(run)
     result, _ = check_plan(run)
     profile = prefs.load()
+    S = settings_of(profile)
     shown = {c.get("id"): c for c in board_plan(plan, result)["cards"]}
     cards = []
     for cid, r in sealed.items():
@@ -2107,6 +2330,9 @@ def build_proposal(run):
         rule = prefs.rule_for(profile, c["rule_key"]) if c["rule_key"] else None
         if rule == "delete" and (c["review"] or c["interactive"]):
             rule = None
+        # 设置“安装包直接清”：和一条“以后都删”的规则一样处理（仍不适用于降过级、带风险或含交互对话的卡；用户明确的“留”规则优先）
+        if rule is None and S["installer"] == "auto" and r.get("installer") and not c["review"] and not c["interactive"]:
+            rule = "delete"
         c["rule"] = rule
         cards.append(c)
     write_cardkeys(run, cards, sealed)
@@ -2174,17 +2400,31 @@ def build_proposal(run):
     pfile = load_projects_file(run, seal.get("scan_id"))
     pquestions, plines = project_questions(profile, pfile)
     lines.extend(plines)
+    cloud = cloud_suggestions_of(profile, pfile)
+    if cloud:
+        lines.append("另外，iCloud 或网盘里有 %d 个文件夹在本机占了 %s，可以只留云端（看板上写了怎么做，我不会替你动）。"
+                     % (len(cloud), _gb(sum(c["local_bytes"] for c in cloud))))
     prefill = {cid: r["prefill"] for cid, r in sealed.items() if isinstance(r, dict) and r.get("prefill")}
     projects_by_card = {cid: r["projects"] for cid, r in sealed.items() if isinstance(r, dict) and r.get("projects")}
-    stage = "cleanup" if profile.get("onboarded_at") else "onboarding"
+    stage = setup_q.stage_of(profile)
+    rs = profile.get("read_scope")
     proposal = {"schema": "proposal/1", "scan_id": seal.get("scan_id"), "seal": seal["digest"],
                 "created_at": now_iso(), "stage": stage, "mode": "board" if reasons else "chat", "board_reasons": reasons,
                 "default": default, "attention": [c["id"] for c in attention], "questions": questions,
                 "project_questions": pquestions, "prefill": prefill, "projects_by_card": projects_by_card,
-                "options": options, "message": "".join(lines)}
+                "options": options, "message": "".join(lines),
+                # 0.6 初始设置：治本建议怎么写、删除用废纸篓还是直接删（没设就是直接删，和 0.5 一致）、第二轮能读哪些文件
+                "governance_mode": profile.get("governance_mode") if profile.get("governance_mode") in setup_q.SINGLE["governance"][1] else "guide",
+                "delete_mode": profile.get("delete_mode") if profile.get("delete_mode") in setup_q.SINGLE["delete_mode"][1] else "delete",
+                "read_scope": [x for x in rs if x in setup_q.READ_SCOPES] if isinstance(rs, list) else ["basic"],
+                "setup_upgrade": setup_q.setup_upgrade(profile),
+                "cloud_suggestions": cloud}
     if stage == "onboarding":
-        proposal["onboarding_hint"] = ("第一次使用：先发 ①「认识你的电脑」项目台账看板（plan.py probe projects 的结果），"
-                                       "用户标完项目状态、plan.py profile --apply 保存后再发清理清单；台账是保存设置，不含清理授权")
+        proposal["onboarding_hint"] = ("第一次使用：先发「认识你的电脑」设置页（plan.py setup --run <目录>，数据来自 scan.py probe projects），"
+                                       "用户答完、plan.py profile --apply 保存后再发清理清单；设置页只保存设置，不含清理授权")
+    if proposal["setup_upgrade"]:
+        proposal["setup_hint"] = ("这个版本多了几个设置问题（之前的设置都保留）：先用 plan.py setup --mode upgrade 发一份只补新题的设置页，"
+                                  "保存后再发清理看板")
     return proposal, None
 
 
@@ -2207,6 +2447,8 @@ def cmd_propose(args):
     print(f"阶段：{proposal['stage']}" + ("（第一次使用）" if proposal["stage"] == "onboarding" else ""))
     if proposal.get("onboarding_hint"):
         print("提示：" + proposal["onboarding_hint"])
+    if proposal.get("setup_hint"):
+        print("提示：" + proposal["setup_hint"])
     if proposal["mode"] == "board":
         print("方式：发看板（" + "；".join(proposal["board_reasons"]) + "）。先运行 plan.py board，再把看板交给用户")
     else:
@@ -2226,7 +2468,7 @@ def cmd_propose(args):
 
 def cmd_rule(args):
     try:
-        print(prefs.answer(args.key, args.reply))
+        print(prefs.answer(args.key, args.reply, getattr(args, "scan_id", None)))
     except ValueError as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2
@@ -2241,11 +2483,21 @@ def cmd_profile(args):
         print(f"错误：读不了 --apply 指定的文件 {args.apply}（{reason}）；请确认路径对不对，或用 - 从标准输入读", file=sys.stderr)
         return 2
     before = protect.profile_guard(load_profile())["digest"]
-    done, errs = prefs.apply_settings(text)
+    note = None
+    if setup_q.is_setup_export(text):
+        # 初始设置导出：只保存设置，不含清理授权（act.py go --from-board 遇到这个抬头一律拒绝）
+        done, errs, note = setup_q.apply_export(text, getattr(args, "scan_id", None))
+    else:
+        done, errs = prefs.apply_settings(text, getattr(args, "scan_id", None))
     for d in done:
         print("已保存：" + d)
     for e in errs:
         print("没保存：" + e, file=sys.stderr)
+    if note:
+        # 用户在“还有什么想让我知道的”里写的原话：不存。请 Agent 翻译成待确认规则，在第一张清理看板上请用户确认后才生效
+        print("补充（用户原话，不存档）：" + json.dumps(note, ensure_ascii=False))
+        print("请把它翻译成规则或备注：python3 scripts/memory.py pending add --text \"<一句话规则>\" --kind protect|rule|note [--value JSON]；"
+              "清理看板上会请用户确认，确认前不生效")
     if done and protect.profile_guard(load_profile())["digest"] != before:
         print("提醒：影响判断的本机设置变了，已封存的计划里按旧设置做的判断就过期了；执行前先重新运行 plan.py check 和 plan.py seal", file=sys.stderr)
     return 0 if done else 2
@@ -2254,7 +2506,7 @@ def cmd_profile(args):
 def cmd_project(args):
     before = protect.profile_guard(load_profile())["digest"]
     try:
-        print("已保存：" + prefs.set_project(args.key, args.status))
+        print("已保存：" + prefs.set_project(args.key, args.status, scan_id=getattr(args, "scan_id", None)))
     except ValueError as exc:
         print(f"没保存：{exc}", file=sys.stderr)
         return 2
@@ -2266,21 +2518,28 @@ def cmd_project(args):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="叁笙清理：计划校验 / 封存 / 看板")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("check", "seal", "board", "propose", "onboard"):
-        sp = sub.add_parser(name, help="①「认识你的电脑」项目台账看板（读 projects.json，写 onboard.html）" if name == "onboard" else None)
-        sp.add_argument("--run", required=True, help="运行目录（含 facts.json、plan.json；onboard 需要 projects.json）")
-        if name in ("board", "onboard"):
-            sp.add_argument("--out", default=None, help=f"输出文件，相对路径落在运行目录内，默认 {name}.html")
+    for name in ("check", "seal", "board", "propose", "setup", "onboard"):
+        sp = sub.add_parser(name, help={"setup": "「认识你的电脑」初始设置页（读 projects.json，写 setup.html）",
+                                        "onboard": "setup 的别名"}.get(name))
+        sp.add_argument("--run", required=True, help="运行目录（含 facts.json、plan.json；setup 需要 projects.json）")
+        if name in ("board", "setup", "onboard"):
+            sp.add_argument("--out", default=None, help=f"输出文件，相对路径落在运行目录内，默认 {'board' if name == 'board' else 'setup'}.html")
+        if name in ("setup", "onboard"):
+            sp.add_argument("--mode", choices=("first", "upgrade", "edit"), default=None,
+                            help="first 第一次 / upgrade 只补新题 / edit 改设置（预填现值）；缺省按 profile 自动判断")
     rp = sub.add_parser("rule", help="回答“以后都这样吗”：delete/keep 记成规则，never 冷却 60 天，once 只这次，forget 忘掉")
     rp.add_argument("--key", required=True)
     rp.add_argument("--reply", required=True, choices=("delete", "keep", "never", "once", "forget"))
-    pp = sub.add_parser("profile", help="保存看板“设置:”“别再列:”两行到本机偏好")
+    rp.add_argument("--scan-id", dest="scan_id", default=None, help="这次扫描的编号（写进“这次我记住了”，可省）")
+    pp = sub.add_parser("profile", help="保存看板“设置:”“别再列:”行、台账导出、或初始设置导出到本机偏好")
     pp.add_argument("--apply", required=True, help="含看板导出文本的文件，- 表示标准输入")
+    pp.add_argument("--scan-id", dest="scan_id", default=None, help="这次扫描的编号（写进“这次我记住了”，可省）")
     pj = sub.add_parser("project", help="改单个项目的台账状态（如回答“X 做完了吗”）")
+    pj.add_argument("--scan-id", dest="scan_id", default=None, help="这次扫描的编号（写进“这次我记住了”，可省）")
     pj.add_argument("--key", required=True, help="项目键：项目目录的绝对路径，或 env:android 这类环境项目")
     pj.add_argument("--status", required=True, help="active / done / archived / protected，或 进行中 / 做完了 / 归档 / 别碰")
     args = ap.parse_args(argv)
-    return {"check": cmd_check, "seal": cmd_seal, "board": cmd_board, "onboard": cmd_onboard, "propose": cmd_propose,
+    return {"check": cmd_check, "seal": cmd_seal, "board": cmd_board, "setup": cmd_setup, "onboard": cmd_setup, "propose": cmd_propose,
             "rule": cmd_rule, "profile": cmd_profile, "project": cmd_project}[args.cmd](args)
 
 

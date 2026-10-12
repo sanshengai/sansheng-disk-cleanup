@@ -3,7 +3,8 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>叁笙清理 · 空间与选择</title>
 <style>
-:root{--paper:#faf7f0;--ink:#243c2d;--green:#2f5d3a;--gold:#a57924;--line:#d9ddcf;--muted:#68756a;--white:#fffefa;--amber:#88611e;--red:#8a4a3a;--track:#e8ebe0;--rest:#cfd2c6;--sys:#a9ad9f}
+:root{color-scheme:light dark;--paper:#faf7f0;--ink:#243c2d;--green:#2f5d3a;--gbg:#2f5d3a;--onG:#fff;--gold:#a57924;--line:#d9ddcf;--muted:#68756a;--white:#fffefa;--amber:#88611e;--red:#8a4a3a;--track:#e8ebe0;--rest:#cfd2c6;--sys:#a9ad9f;--on:#f3f1e5;--dock:#243c2d}
+@media(prefers-color-scheme:dark){:root{--paper:#161d18;--ink:#e4e8dc;--green:#8fc79b;--gbg:#8fc79b;--onG:#10200f;--gold:#d4a84e;--line:#2e3a31;--muted:#9aa89c;--white:#1e2a22;--amber:#d9b06a;--red:#e0a090;--track:#26322a;--rest:#4a5448;--sys:#69725f;--on:#1f2c23;--dock:#1d2b22}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-variant-numeric:tabular-nums}
 button,input,textarea{font:inherit;color:inherit}
@@ -35,7 +36,7 @@ header{display:flex;align-items:center;gap:20px;padding-top:8px;padding-bottom:8
 .nav button.keep .nm{color:var(--muted)}
 .mod-top .nav button{font-weight:600}
 /* 目录：深绿底悬浮导航岛，垂直居中 */
-.dock{background:#243c2d;color:#eef0e6;border-radius:16px;padding:10px;box-shadow:0 16px 40px rgba(36,60,45,.28),0 2px 8px rgba(36,60,45,.12)}
+.dock{background:var(--dock);border:1px solid var(--line);color:#eef0e6;border-radius:16px;padding:10px;box-shadow:0 16px 40px rgba(36,60,45,.28),0 2px 8px rgba(36,60,45,.12)}
 .mod{padding:8px 0}.mod+.mod{border-top:1px solid rgba(255,255,255,.10)}
 .mod-h{color:#fff;font-size:14px;font-weight:650;padding:4px 10px 6px}.mod-h>span:last-child{font-size:12px;font-weight:400;color:rgba(238,240,230,.6)}.mod-h b{color:#e2c483}
 .mod .nav button{padding:5px 10px 5px 22px;font-size:13px;font-weight:400;color:rgba(238,240,230,.82);flex-wrap:wrap;row-gap:4px}
@@ -85,7 +86,7 @@ table.cats{width:100%;border-collapse:collapse;margin-top:14px}
 .item .down ul{margin:2px 0 0;padding-left:16px}
 .item details{grid-column:1}
 .item.keep .tt,.item.keep .sz{font-weight:500}
-.item.on{background:#f3f1e5}
+.item.on{background:var(--on)}
 .tag{display:inline-block;font-size:12px;line-height:1.5;padding:0 6px;border:1px solid var(--green);color:var(--green);border-radius:4px;margin-left:8px;font-weight:400;vertical-align:1px}
 details.more{font-size:13px}details.more summary{cursor:pointer;color:var(--green);font-size:12px;width:max-content}
 details.more dl{display:grid;grid-template-columns:6em minmax(0,1fr);gap:4px 12px;margin:8px 0 2px}
@@ -100,33 +101,42 @@ code{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:any
 .note input{display:block;width:100%;margin:3px 0 0;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--white)}
 .quick{display:flex;gap:4px;flex-wrap:nowrap;white-space:nowrap}
 .quick button{font-size:12px;padding:4px 10px;border-radius:999px}
-.quick button[aria-pressed=true]{background:var(--green);color:#fff;border-color:var(--green)}
+.quick button[aria-pressed=true]{background:var(--gbg);color:var(--onG);border-color:var(--gbg)}
 .lvl{display:inline-block;font-size:11px;line-height:1.5;padding:0 6px;border-radius:4px;margin-left:8px;font-weight:400;vertical-align:2px;border:1px solid}
-.lvl.safe{color:var(--green);border-color:var(--green)}.lvl.recommended{color:#4f7270;border-color:#9fb4b2}.lvl.all{color:var(--amber);border-color:var(--gold)}
+.lvl.safe{color:var(--green);border-color:var(--green)}.lvl.recommended{color:var(--muted);border-color:var(--line)}.lvl.all{color:var(--amber);border-color:var(--gold)}
 .newtip{display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--white);border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:8px;padding:8px 14px;margin:0 0 14px}
-.newtip button{flex:none;background:var(--green);border-color:var(--green);color:#fff}
-.setsec{padding:18px 0;border-bottom:1px solid var(--line)}.setsec:last-child{border-bottom:0}
-.setsec h2{font-size:15px;margin:0 0 4px}.setsec p{margin:0 0 10px;color:var(--muted);font-size:13px}
-.opts{display:flex;gap:8px;flex-wrap:wrap}.opts label{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--white);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px}
-.opts label:has(input:checked){border-color:var(--green);box-shadow:inset 0 0 0 1px var(--green)}
-.opts input{accent-color:var(--green);margin:0}
-/* 我的项目 */
-.prow{display:grid;grid-template-columns:minmax(0,1fr) 84px 92px 214px;gap:4px 16px;align-items:start;padding:12px 10px;border-bottom:1px solid var(--line)}
-.prow.fresh{background:#f3f1e5;box-shadow:inset 3px 0 0 var(--gold)}
-.prow .nm{font-weight:600;font-size:15px;overflow-wrap:anywhere}
-.prow .sub{font-size:12px;color:var(--muted);overflow-wrap:anywhere}.prow .sub.ask{color:var(--amber)}
-.prow .sz,.prow .ago{text-align:right;white-space:nowrap}.prow .sz{font-weight:650}.prow .ago{color:var(--muted)}
-.prow .deliv{grid-column:1/-1}
-.deliv textarea{display:block;width:100%;height:64px;margin:6px 0 2px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--white);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}
-.deliv .hint{margin:0}
-.seg{display:flex;white-space:nowrap}
-.seg button{border-radius:0;margin-left:-1px;font-size:12px;padding:4px 10px}
+.newtip button{flex:none;background:var(--gbg);border-color:var(--gbg);color:var(--onG)}
+.setline{margin:0 0 12px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--white);font-size:13px;color:var(--muted)}
+.setline b{color:var(--ink);font-weight:600}
+.asks{margin:14px 0 6px}.asks h2{font-size:15px;margin:0 0 6px}
+.qcard{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;padding:12px 14px;margin-bottom:8px;border:1px solid var(--line);border-radius:8px;background:var(--white)}
+.qcard.done{opacity:.8}
+.qcard .qt{flex:1 1 280px;min-width:0;overflow-wrap:anywhere}.qcard .qt small{display:block;color:var(--muted);font-size:12px}
+.seg{display:flex;white-space:nowrap;max-width:100%}
+.seg button{border-radius:0;margin-left:-1px;font-size:12px;padding:5px 12px}
 .seg button:first-child{border-radius:6px 0 0 6px;margin-left:0}.seg button:last-child{border-radius:0 6px 6px 0}
-.seg button[aria-pressed=true]{background:var(--green);color:#fff;border-color:var(--green)}
-.backbar{margin-top:22px;padding-top:14px;border-top:1px solid var(--line)}
+.seg button[aria-pressed=true]{background:var(--gbg);color:var(--onG);border-color:var(--gbg)}
+.choice{grid-column:1/-1;display:flex;align-items:center;gap:10px;flex-wrap:wrap}.choice small{color:var(--muted);font-size:12px}
+.comp{margin:14px 0 4px}.comp h2,.models h2,.deep h2{font-size:14px;font-weight:600;margin:0 0 6px;color:var(--muted)}
+.comp .stack{margin:6px 0}.comp .legend{display:flex;flex-wrap:wrap;gap:2px 18px;font-size:13px}.comp .legend span.k{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}
+.comp .purge{margin:4px 0 0;font-size:13px;color:var(--muted)}
+.models{margin:12px 0 0;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--white);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.models.go{cursor:pointer}.models.go:hover{border-color:var(--green)}
+.deep{margin:16px 0 0}.deep ol{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
+.deep li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 16px;padding:8px 4px;border-bottom:1px solid var(--line)}
+.deep li .sz{font-weight:650;white-space:nowrap}.deep li .sc{grid-column:1/-1}
+.cloud{margin:12px 0 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--white)}
+.cloud h2{font-size:14px;font-weight:600;margin:0 0 4px;color:var(--ink)}.cloud .hint{margin:0 0 6px}
+.cloud ol{list-style:none;margin:0;padding:0}
+.cloud li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 16px;padding:8px 0;border-top:1px solid var(--line)}
+.cloud li .sz{font-weight:650;white-space:nowrap}.cloud li .sc,.cloud li .how{grid-column:1/-1}.cloud li .how{font-size:13px}
+.cloud li a{color:var(--green)}
+.archrow{display:none;max-width:1240px;margin:auto;padding:8px 28px 0;font-size:13px}.archrow.on{display:block}
+.archrow label{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.archrow input{flex:1 1 260px;min-width:0;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--white)}
 .pq{grid-column:1;display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
 .pq button{font-size:12px;padding:2px 10px;border-radius:999px}
-.pq button[aria-pressed=true]{background:var(--green);color:#fff;border-color:var(--green)}
+.pq button[aria-pressed=true]{background:var(--gbg);color:var(--onG);border-color:var(--gbg)}
 .hide-btn{grid-column:1;justify-self:start;border:0;background:none;padding:0;font-size:12px;color:var(--muted);text-decoration:underline;text-underline-offset:2px}
 .hide-btn:hover{color:var(--green)}
 .item.hidden-rule{opacity:.55}
@@ -136,7 +146,7 @@ code{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:any
 .selbar strong{font-size:15px}.hint{font-size:12px;color:var(--muted)}.hint.bad{color:var(--red)}
 .selbar .copywrap{margin-left:auto;text-align:right}.selbar .primary{white-space:nowrap}
 .selbar .copywrap .hint{margin-top:2px}
-.primary{background:var(--green);color:#fff;border-color:var(--green);padding:7px 16px}.primary:hover{border-color:var(--ink)}
+.primary{background:var(--gbg);color:var(--onG);border-color:var(--gbg);padding:7px 16px}.primary:hover{border-color:var(--ink)}
 .feedback{font-size:12px;color:var(--muted);min-height:18px}
 .fallback{width:100%;height:120px;margin-top:6px}
 @media(max-width:780px){
@@ -148,12 +158,13 @@ code{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:any
  .mod{display:flex;padding:0;border:0;background:transparent;box-shadow:none;margin:0}
  .mod-h,.mod-bar,.vol{display:none!important}.nav{flex-direction:row;gap:4px}
  .dockbox{display:block}.side-foot{display:none}.main-foot{display:flex}
- .prow{grid-template-columns:minmax(0,1fr) auto}.prow .ago{grid-column:1/-1;text-align:left;font-size:12px}.prow .seg{grid-column:1/-1}.seg button{flex:1}
  .nav button{border:1px solid var(--line);background:var(--white);white-space:nowrap;color:var(--ink)}
  .nav .r,.nav button.keep .nm{color:var(--muted)}.nav .r b{color:var(--green)}
  .nav button[aria-current=true]{border-color:var(--green);color:var(--green);background:var(--white)}
  .cats .hide-m{display:none}
  .quick button{padding:3px 8px}
+ .archrow{padding-left:16px;padding-right:16px}
+ .seg{flex-wrap:wrap}
  .selbar .in{gap:8px;flex-wrap:wrap}.selbar #selection-help{display:none}.selbar strong{font-size:13px;white-space:nowrap}
  .quick{order:3;width:100%;flex-wrap:nowrap;overflow-x:auto}
 }
@@ -162,18 +173,18 @@ code{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:any
 <div class="disk"><span id="disk-text"></span><div class="bar" role="img" aria-label="硬盘已用比例"><span id="disk-used"></span></div></div></header>
 <div class="page">
 <aside class="side" aria-label="目录"><div class="dockbox"><nav class="dock" id="nav"></nav></div><div class="side-foot" id="side-foot"></div></aside>
-<main class="main"><div id="view"></div>
+<main class="main"><div class="setline" id="setline" hidden></div><div id="view"></div>
 <div class="note"><label for="note">还有哪些不要清理 <span>（选填，会一起发给 Agent）</span></label><input id="note" type="text" placeholder="例如：保留上周的图片原稿"></div>
 <div class="feedback" id="feedback" aria-live="polite"></div>
 <textarea id="fallback" class="fallback" aria-label="选中下面内容，复制给 Agent" hidden readonly></textarea>
 <div class="main-foot" id="main-foot"></div></main>
 </div>
-<div class="selbar"><div class="in"><div><strong id="selected">尚未勾选</strong><div class="hint" id="selection-help"></div></div>
+<div class="selbar"><div class="archrow" id="archrow"><label for="arch"><strong>归档到哪块外接硬盘</strong><input id="arch" type="text" autocomplete="off" spellcheck="false" placeholder="/Volumes/移动硬盘/叁笙归档"></label><div class="hint" id="archhint"></div></div><div class="in"><div><strong id="selected">尚未勾选</strong><div class="hint" id="selection-help"></div></div>
 <div class="quick" id="quick" role="group" aria-label="一键选择"></div>
 <div class="copywrap"><button class="primary" id="copy" type="button">复制清单，发给 Agent</button><div class="hint" id="ledger-hint"></div></div></div></div>
 <script type="application/json" id="plan-data">__PLAN_JSON__</script>
 <script id="export-lib">
-// 导出文本的纯函数：测试在 node 里执行这段，再用 scripts/prefs.py 的 parse_ledger / parse_settings 解析核对。
+// 导出文本的纯函数：测试在 node 里执行这段，再用 scripts/prefs.py 的 parse_ledger / parse_board_export 解析核对。
 const STATUS_ZH={active:'进行中',done:'做完了',archived:'归档',protected:'别碰'};
 // Python 的 splitlines 会在这些字符处断行；JSON 里一律写成转义，保证“台账:”整行不被拆开
 const safeLine=s=>s.replace(/[\u0085\u2028\u2029]/g,c=>'\\u'+c.charCodeAt(0).toString(16).padStart(4,'0'));
@@ -186,16 +197,19 @@ function ledgerLine(entries){ // entries：[{key,name,status,deliverables(数组
     o[e.key]=v}
   return '台账: '+safeLine(JSON.stringify({'项目':o}));
 }
-function settingsLine(s){return '设置: '+safeLine(JSON.stringify({'保留天数':s.days,'默认':s.def}))}
-// 扫描只是猜测，不当成用户标注：“做完了”不预选，只在行内用小字提示（用户点过任何状态后提示消失）
-function doneHint(p,nowMs){
-  if(p.status||p.default_status!=='done')return '';
-  const t=Date.parse(p.last_active||''),d=isNaN(t)?0:Math.floor(((nowMs==null?Date.now():nowMs)-t)/864e5);
-  return d>0?'看起来做完了（'+d+' 天没动）':'看起来做完了';
-}
 // 备注是自由文本，进的是按行解析的清单：控制字符、NEL、行/段分隔符（Python splitlines 会在这些处断行）一律换成空格，再折叠空白
 function cleanNote(v){return String(v==null?'':v).replace(/[\x00-\x1f\x7f\x85\u2028\u2029]/g,' ').replace(/\s+/g,' ').trim()}
-function splitPaths(text){const seen=new Set(),out=[];for(const l of String(text||'').split(/\r?\n/)){const p=l.trim();if(p&&!seen.has(p)){seen.add(p);out.push(p)}}return out}
+// 归档目标：必须是外接硬盘 /Volumes/<盘名>/…，不许有 . 或 .. 段；真正的“是不是另一块盘、能不能写”由 act.py 现场核对
+function archivePathOk(p){p=cleanNote(p).replace(/\/+$/,'');const seg=p.split('/');return /^\/Volumes\/[^\/]+(\/[^\/]+)*$/.test(p)&&!seg.includes('.')&&!seg.includes('..')}
+function archiveLine(p){return '归档到: '+cleanNote(p).replace(/\/+$/,'')}
+// 待确认规则：只导出形如 p1 的编号，文字本身不进清单
+function ruleLines(confirmIds,rejectIds){
+  const ok=a=>[...new Set(a)].filter(x=>/^[A-Za-z0-9_-]+$/.test(x)).sort();
+  const c=ok(confirmIds||[]),r=ok(rejectIds||[]),out=[];
+  if(c.length)out.push('确认规则: '+c.join(','));
+  if(r.length)out.push('不要规则: '+r.join(','));
+  return out;
+}
 </script>
 <script>
 'use strict';
@@ -214,32 +228,40 @@ const CATS=(plan.categories&&plan.categories.length?plan.categories:[{id:'other'
 const catIndex=new Map(CATS.map((c,i)=>[c.id,i]));
 const colorOf=id=>COLORS[(catIndex.get(id)||0)%COLORS.length];
 const cards=(plan.cards||[]).filter(c=>LABEL[c.verdict]).sort((a,b)=>(b.bytes||0)-(a.bytes||0));
-// 项目做完了 / 归档的待定卡：回答默认选“删”（plan.py 预填，仍要用户确认；用户取消勾选即不清理）
-const prefillOf=c=>c.prefill==='删'||!!(D.proposal&&D.proposal.prefill&&D.proposal.prefill[c.id]==='删');
-// 勾选＝要清理，没勾＝不动。clean 卡初始按 plan.py 算出的 default_select 预勾选（c.verdict==='clean'&&c.default_select===true）；decide 卡只有项目做完了（prefillOf）才预勾选
+// 待定卡的预填：plan.py 写 prefill（删 / 归档）；只是预选，仍要用户确认。归档只在 archive_enabled 为真时认
+const ARCH=D.archive_enabled===true;
+const prefillMode=c=>{const v=c.prefill||(D.proposal&&D.proposal.prefill&&D.proposal.prefill[c.id])||null;return v==='删'||(v==='归档'&&ARCH)?v:null};
+const prefillOf=c=>prefillMode(c)!==null;
+// 勾选＝要处理，没勾＝不动。clean 卡按 plan.py 算出的 default_select 预勾选；decide 卡只有被预填（项目做完了等）才预选，选项是 删 / 留 / 归档
+const modeOf=new Map(); // decide 卡的回答：删 / 归档 / 留
 const picked=new Set(cards.filter(c=>(c.verdict==='clean'&&c.default_select===true)||(c.verdict==='decide'&&prefillOf(c))).map(c=>c.id));
+cards.filter(c=>c.verdict==='decide'&&prefillOf(c)).forEach(c=>modeOf.set(c.id,prefillMode(c)));
 const catOf=c=>catIndex.has(c.category)?c.category:'other';
 const sum=a=>a.reduce((n,c)=>n+(c.bytes||0),0);
 const act=c=>c.verdict!=='keep';
 const isSel=c=>act(c)&&picked.has(c.id);
+const isDecide=c=>c.verdict==='decide';
+function setPick(c,on){ // 勾上 / 取消；decide 卡勾上默认是“删”，已选了归档的保持
+  if(on){picked.add(c.id);if(isDecide(c)&&modeOf.get(c.id)!=='归档')modeOf.set(c.id,'删')}
+  else{picked.delete(c.id);if(isDecide(c))modeOf.delete(c.id)}
+}
 let view='overview';
-const S=D.settings||{};
-const cfg={days:Number.isInteger(S.retention_days)&&S.retention_days>0?S.retention_days:0,def:['safe','recommended','all'].includes(S.default_choice)?S.default_choice:'recommended'};
-let settingsTouched=false;
-// 项目台账：台账里的项目 + 本次扫描认出的项目；status 是当前选择，orig 是打开页面时的状态（null＝还没标）
+// 项目问题：一题一卡。status 是当前回答，orig 是打开页面时的状态（null＝还没标；久没动的“进行中”项目 orig 是 active）
 const PQ=(D.proposal&&D.proposal.project_questions)||[];
 const newQ=PQ.find(q=>q.type==='new_projects');
-const newKeys=new Set(((newQ&&newQ.projects)||[]).map(p=>p.key));
-const staleDays=new Map(PQ.filter(q=>q.type==='stale_active').map(q=>[q.key,q.idle_days]));
 const PROJ=new Map();
-function addProj(p){const r={p,orig:p.status||null,status:p.status||null,deliv:(p.deliverables&&p.deliverables.length?p.deliverables:(p.deliverables_guess||[])).slice(),delivEdited:false};PROJ.set(p.key,r);return r}
-(D.projects||[]).forEach(addProj);
-const ledgerEntries=()=>[...PROJ.values()].filter(r=>r.status&&(r.status!==r.orig||r.delivEdited))
-  .map(r=>({key:r.p.key,name:r.p.name,status:r.status,deliverables:(r.delivEdited||!r.orig)?r.deliv:null}));
+function addProj(p){if(PROJ.has(p.key))return PROJ.get(p.key);const r={p,orig:p.status||null,status:p.status||null};PROJ.set(p.key,r);return r}
+const QCARDS=[];
+for(const p of ((newQ&&newQ.projects)||[])){addProj({key:p.key,name:p.name});QCARDS.push({kind:'new',key:p.key,name:p.name,bytes:p.bytes})}
+const newMore=Math.max(0,((newQ&&newQ.count)||0)-QCARDS.length);
+for(const q of PQ.filter(q=>q.type==='stale_active')){addProj({key:q.key,name:q.name,status:'active'});QCARDS.push({kind:'stale',key:q.key,name:q.name,days:q.idle_days})}
+// 待确认的规则：用户在设置页“补充”里说的话，Agent 翻译后等她点头
+const RULES=(D.pending_rules||[]).filter(r=>r&&typeof r.id==='string'&&r.text);
+const ruleAns=new Map(); // id -> confirm | reject
+const ledgerEntries=()=>[...PROJ.values()].filter(r=>r.status&&r.status!==r.orig)
+  .map(r=>({key:r.p.key,name:r.p.name,status:r.status,deliverables:null}));
 const SEG=[['active','进行中'],['done','做完了'],['archived','归档'],['protected','别碰']];
-const RET_NAME={0:'不按天数，只看做没做完',7:'最近 7 天',15:'最近 15 天',30:'最近 30 天'};
-const short=k=>k.startsWith('env:')?'':k.replace(/^\/Users\/[^/]+/,'~');
-const ago=iso=>{const t=Date.parse(iso||'');if(isNaN(t))return'—';const d=Math.floor((Date.now()-t)/864e5);return d<=0?'今天':d+' 天前'};
+const shp=p=>String(p||'').replace(/^\/Users\/[^/]+/,'~');
 const hiddenKeys=new Set();   // “以后别列这类”：规则键
 const PRESET=[['safe','稳妥','删了不丢东西：软件会自己重新下载，或本来就是失败、废弃的记录。'],
   ['recommended','推荐','稳妥的全部，再加有副本的、任务已经做完的过程记录和中间稿。以后要改得重新生成。'],
@@ -247,9 +269,10 @@ const PRESET=[['safe','稳妥','删了不丢东西：软件会自己重新下载
 const RANK={safe:0,recommended:1,all:2};
 const inPreset=(c,p)=>act(c)&&c.preset&&RANK[c.preset]<=RANK[p]&&!hiddenKeys.has(c.rule_key);
 const presetCards=p=>cards.filter(c=>inPreset(c,p));
-function choosePreset(p){picked.clear();if(p)presetCards(p).forEach(c=>picked.add(c.id));render()}
+function choosePreset(p){picked.clear();for(const [k,v] of [...modeOf])if(v!=='留')modeOf.delete(k);presetCards(p).forEach(c=>setPick(c,true));render()}
 function activePreset(){const ids=[...picked].sort().join();for(const [p] of PRESET){if(presetCards(p).map(c=>c.id).sort().join()===ids&&ids)return p}return ''}
 const LVL={safe:'稳妥',recommended:'推荐',all:'慎重'};
+const openAsks=()=>QCARDS.filter(q=>{const r=PROJ.get(q.key);return r.status===r.orig}).length+RULES.filter(r=>!ruleAns.has(r.id)).length;
 
 const dk=facts.disk||{}, cov=facts.coverage||{};
 const used=dk.used!=null?dk.used:(dk.total>0?dk.total-dk.free:0);
@@ -268,9 +291,8 @@ const SOCIAL=[['GitHub','https://github.com/sanshengai/sansheng-disk-cleanup'],[
 function renderNav(){
   const root=$('nav');root.replaceChildren();
   const top=E('div',null,'mod mod-top'), tn=E('div',null,'nav');
-  tn.append(navBtn('overview','总览',[['已用 '],[g1(used),'b']]));
-  const pend=pendingNew();
-  tn.append(navBtn('projects','我的项目',pend.length?[['新 '],[String(pend.length),'b']]:[[PROJ.size+' 个']]));
+  const n=openAsks();
+  tn.append(navBtn('overview','总览',n?[['待答 '],[String(n),'b']]:[['已用 '],[g1(used),'b']]));
   top.append(tn);root.append(top);
   const sections=[];
   for(const c of CATS){const s=catStats(c.id);if(!s.cards.length)continue;
@@ -297,25 +319,102 @@ function fillFoot(){
   for(const id of ['side-foot','main-foot']){const f=$(id);f.replaceChildren();
     for(const [n,u] of SOCIAL){const a=E('a',n);a.href=u;a.target='_blank';a.rel='noopener';f.append(a)}}
 }
-const pendingNew=()=>[...PROJ.values()].filter(r=>newKeys.has(r.p.key)&&!r.status);
-function newTip(){
-  if(!(newQ&&newQ.count>0))return null;
-  const pend=pendingNew();if(newKeys.size&&!pend.length)return null;
-  const n=newKeys.size?pend.length:newQ.count;
-  const tip=E('div',null,'newtip');tip.append(E('span','新发现 '+n+' 个项目，标一下状态'));
-  const go=E('button','去标记');go.type='button';go.onclick=()=>{view='projects';render();window.scrollTo({top:0});const f=document.querySelector('.prow.fresh');if(f)f.scrollIntoView({block:'center'})};
+// 在别的页面提醒：还有问题没答
+function askTip(){
+  const n=openAsks();if(!n)return null;
+  const tip=E('div',null,'newtip');tip.append(E('span','还有 '+n+' 个问题等你回答，在“总览”里'));
+  const go=E('button','去回答');go.type='button';go.onclick=()=>{view='overview';render();window.scrollTo({top:0})};
   tip.append(go);return tip;
 }
 function setStatus(r,st){
   const y=window.scrollY;r.status=r.status===st?r.orig:st;
-  if(r.status==='active'||r.status==='protected')cards.filter(c=>prefillOf(c)&&(c.projects||[]).some(x=>x.key===r.p.key)).forEach(c=>picked.delete(c.id)); // 改成还在做：预选的“删”撤掉
+  if(r.status==='active'||r.status==='protected')cards.filter(c=>prefillOf(c)&&(c.projects||[]).some(x=>x.key===r.p.key)).forEach(c=>{picked.delete(c.id);modeOf.delete(c.id)}); // 改成还在做：预选的“删 / 归档”撤掉
   render();window.scrollTo({top:y});
+}
+// 单题卡：一张卡问一件事，答案只存在页面里，最后随清单一起复制
+function qCard(q){
+  const r=PROJ.get(q.key), el=E('div',null,'qcard'+(r.status!==r.orig?' done':''));el.dataset.key=q.key;
+  const t=E('div',null,'qt');
+  if(q.kind==='new'){t.append('发现新项目《'+q.name+'》'+(q.bytes!=null?gb(q.bytes)+'，':'，')+'是进行中还是做完了？');t.append(E('small',shp(q.key)))}
+  else{t.append('你标成进行中的《'+q.name+'》已经 '+q.days+' 天没动了，做完了吗？');t.append(E('small',shp(q.key)))}
+  const g=E('div',null,'seg');g.setAttribute('role','group');g.setAttribute('aria-label',q.name+' 的状态');
+  for(const [k,name] of SEG){const b=E('button',name);b.type='button';b.setAttribute('aria-pressed',String(r.status===k));b.onclick=()=>setStatus(r,k);g.append(b)}
+  el.append(t,g);return el;
+}
+function ruleCard(r){
+  const a=ruleAns.get(r.id), el=E('div',null,'qcard'+(a?' done':''));el.dataset.id=r.id;
+  const t=E('div',null,'qt');t.append('你说过：“'+r.text+'”。我是这样理解的，对吗？');
+  const g=E('div',null,'seg');g.setAttribute('role','group');g.setAttribute('aria-label','确认规则：'+r.text);
+  for(const [k,name] of [['confirm','对'],['reject','不对']]){const b=E('button',name);b.type='button';b.setAttribute('aria-pressed',String(a===k));
+    b.onclick=()=>{const y=window.scrollY;if(ruleAns.get(r.id)===k)ruleAns.delete(r.id);else ruleAns.set(r.id,k);render();window.scrollTo({top:y})};g.append(b)}
+  el.append(t,g);return el;
+}
+function renderAsks(v){
+  if(!QCARDS.length&&!RULES.length)return;
+  const box=E('section',null,'asks');box.append(E('h2','先回答几个问题'));
+  QCARDS.forEach(q=>box.append(qCard(q)));
+  if(newMore>0)box.append(E('p','还有 '+newMore+' 个新项目，下次再问。','hint'));
+  RULES.forEach(r=>box.append(ruleCard(r)));
+  v.append(box);
+}
+// 整盘构成：一条横条，回答“硬盘到底被什么占着”
+const COMP_COLOR={home:'#2f5d3a',apps:'#a57924',system:'#a9ad9f',other:'#dcd6c4'};
+function renderComposition(v){
+  const comp=(facts.composition||[]).filter(x=>x&&x.bytes>0);if(!comp.length)return;
+  const tot=comp.reduce((n,x)=>n+x.bytes,0), box=E('section',null,'comp');box.append(E('h2','整个硬盘的构成'));
+  const st=E('div',null,'stack');st.setAttribute('role','img');st.setAttribute('aria-label',comp.map(x=>x.name+' '+gb(x.bytes)).join('，'));
+  const lg=E('div',null,'legend');
+  comp.forEach((x,i)=>{const col=COMP_COLOR[x.id]||COLORS[i%COLORS.length];
+    const sg=E('span');sg.style.width=(100*x.bytes/tot)+'%';sg.style.background=col;sg.title=x.name+' '+gb(x.bytes);st.append(sg);
+    const it=E('span');const k=E('span',null,'k');k.style.background=col;it.append(k,x.name+' '+gb(x.bytes)+'（'+Math.round(100*x.bytes/tot)+'%）');lg.append(it)});
+  box.append(st,lg);
+  if(facts.purgeable_bytes>0)box.append(E('p','其中系统可自动回收约 '+gb(facts.purgeable_bytes)+'：硬盘不够用时 macOS 会自己清，不用你动手。','purge'));
+  v.append(box);
+}
+// 本地模型单独一行（没有也写明）
+function renderModels(v){
+  const mc=cards.filter(c=>c.category==='ai-models');
+  const total=mc.length?sum(mc):(facts.frontier||[]).filter(f=>f.category==='ai-models').reduce((n,f)=>n+(f.bytes||0),0);
+  const row=E('div',null,'models');
+  if(!(total>0)){row.append(E('span','没有本地模型'));v.append(row);return}
+  const can=sum(mc.filter(act));
+  row.append(E('span','本地模型 '+gb(total)+(can?'，其中 '+gb(can)+' 可以腾出':'，都留着')));
+  if(catIndex.has('ai-models')){row.classList.add('go');row.tabIndex=0;row.append(E('span','看明细','hint'));
+    row.onclick=row.onkeydown=e=>{if(e.type==='keydown'&&e.key!=='Enter')return;view='ai-models';render();window.scrollTo({top:0})}}
+  v.append(row);
+}
+// 云盘建议（只读）：哪些文件夹可以只留云端，每行写怎么做。没有勾选、没有删除，页面不动任何文件
+function renderCloud(v){
+  const rows=(D.cloud_suggestions||(D.proposal&&D.proposal.cloud_suggestions)||[]).filter(r=>r&&typeof r.path==='string'&&typeof r.how==='string'&&r.local_bytes>0);
+  if(!rows.length)return;
+  const box=E('section',null,'cloud');box.append(E('h2','这些文件夹可以只留云端'));
+  box.append(E('p','“只留云端”＝文件还在云上，本机只留一个占位，用到时再下载。这里只是建议：我和这个页面都不会替你动云盘里的东西，请按每行写的官方做法自己来。','hint'));
+  const ol=E('ol');
+  for(const r of rows){const li=E('li');li.append(E('code',shp(r.path)),E('span','本机占 '+gb(r.local_bytes),'sz'));
+    li.append(E('span',(r.provider||'')+'：'+r.how,'how'));
+    if(typeof r.link==='string'&&/^https:\/\//.test(r.link)){const a=document.createElement('a');a.href=r.link;a.target='_blank';a.rel='noopener';a.textContent='官方说明';const d=E('span',null,'sc');d.append(a);li.append(d)}
+    ol.append(li)}
+  box.append(ol);v.append(box);
+}
+// 点进一个类别：这一类里最大的 20 个目录（来自扫描的前沿节点）
+function renderFrontier(v,id){
+  const fs=(facts.frontier||[]).filter(f=>f&&f.category===id).sort((a,b)=>(b.bytes||0)-(a.bytes||0)).slice(0,20);if(!fs.length)return;
+  const box=E('section',null,'deep');box.append(E('h2','这一类里最大的 '+fs.length+' 个目录'));
+  const ol=E('ol');
+  for(const f of fs){const li=E('li');li.append(E('code',shp(f.path)),E('span',gb(f.bytes),'sz'));
+    const n=f.refs&&f.refs.count;
+    li.append(E('span',n==null?'没查引用':(n>0?'被 '+n+' 处文件引用':'没发现被引用'),'sc'));ol.append(li)}
+  box.append(ol);v.append(box);
 }
 
 function renderOverview(v){
   const known=sum(cards), can=sum(cards.filter(act)), keep=known-can;
   const walked=cov.walked_bytes||0, rest=Math.max(0,used-known), sysArea=Math.max(0,used-walked);
   v.append(E('h1','已用的 '+gb(used)+' 都去哪了'));
+  renderAsks(v);
+  renderComposition(v);
+  renderModels(v);
+  renderCloud(v);
   v.append(E('p','逐项查清了 '+gb(known)+' 的来历：其中 '+gb(can)+' 可以腾出，要你在左边各类里勾选；'+gb(keep)+' 查过但要留着。其余 '+gb(rest)+' 没有逐项分析，下面说明是什么。','lead'));
   const rows=CATS.map(c=>Object.assign({c},catStats(c.id))).filter(x=>x.cards.length);
   const st=E('div',null,'stack');st.setAttribute('role','img');
@@ -350,12 +449,18 @@ function renderOverview(v){
 }
 function renderTips(v){
   const g=plan.governance||[];if(!g.length)return;
-  const box=E('section',null,'tips');box.append(E('h2','以后怎么少长一点'));
+  const mode=(D.proposal&&D.proposal.governance_mode)||'guide';
+  const HEAD={tell:'这些地方还在往上涨',guide:'以后怎么少长一点',fix:'可以从源头改好，同意后我来改'};
+  const box=E('section',null,'tips');box.append(E('h2',HEAD[mode]||HEAD.guide));
+  if(mode==='tell')box.append(E('p','你设置的是“只告诉我”，所以这里只说现象，不给改法、也不会动手。','hint'));
+  if(mode==='fix')box.append(E('p','改动都能撤销；你回复同意之后我才会改，改前会写明怎么撤。','hint'));
   for(const x of g){
     const el=E('div',null,'tip');el.append(E('div',x.title,'tt'));
     if(x.current)el.append(E('p','现在：'+x.current));
-    if(x.suggest)el.append(E('p','建议：'+x.suggest));
-    if(x.how)el.append(E('p',x.how,x.done?'done':''));
+    if(mode!=='tell'){
+      if(x.suggest)el.append(E('p',(mode==='fix'?'我打算：':'建议：')+x.suggest));
+      if(x.how)el.append(E('p',(mode==='fix'&&!x.done?'做法：':'')+x.how,x.done?'done':''));
+    }
     box.append(el);
   }
   v.append(box);
@@ -396,12 +501,26 @@ function detail(c){
   dl.append(E('dt','编号'),E('dd',c.id));
   d.append(dl);return d;
 }
+// 待定卡的回答：删 / 留 / 归档（归档只在 archive_enabled 时给）
+function choiceRow(c,el){
+  const row=E('div',null,'choice'), g=E('div',null,'seg'), btns=[];g.setAttribute('role','group');g.setAttribute('aria-label','怎么处理 '+c.title);
+  const cur=()=>picked.has(c.id)?(modeOf.get(c.id)||'删'):(modeOf.get(c.id)==='留'?'留':null);
+  const opts=[['删','删'],['留','留']].concat(ARCH?[['归档','归档']]:[]);
+  const paint=()=>{for(const [k,b] of btns)b.setAttribute('aria-pressed',String(cur()===k));el.classList.toggle('on',picked.has(c.id))};
+  for(const [k,name] of opts){const b=E('button',name);b.type='button';
+    b.onclick=()=>{if(k==='留'){picked.delete(c.id);modeOf.set(c.id,'留')}else{picked.add(c.id);modeOf.set(c.id,k)}paint();update()};
+    btns.push([k,b]);g.append(b)}
+  paint();row.append(g);
+  if(ARCH)row.append(E('small','归档＝先搬到外接硬盘，核对无误再清掉'));
+  return row;
+}
 function itemEl(c){
   const el=E('div',null,'item '+c.verdict+(isSel(c)?' on':''));el.dataset.id=c.id;
   const t=E('div',c.title,'tt');if(c.preset)t.append(E('span',LVL[c.preset],'lvl '+c.preset));
   if(c.preset_raw==='all'&&c.preset!=='all')t.append(E('span','删了找不回','lvl all')); // 被归档项目降到推荐档，但东西仍是删了找不回的
   const ck=E('div',null,'ck');
-  if(act(c)){
+  if(isDecide(c)){/* 待定卡用下面的 删 / 留 / 归档 三选一，不放勾选框 */}
+  else if(act(c)){
     const i=document.createElement('input');i.type='checkbox';i.checked=picked.has(c.id);i.setAttribute('aria-label','清理 '+c.title);
     i.onchange=()=>{i.checked?picked.add(c.id):picked.delete(c.id);el.classList.toggle('on',i.checked);update()};ck.append(i);
   }else ck.append(E('span','留着','kp'));
@@ -413,8 +532,9 @@ function itemEl(c){
     const row=E('div',null,'pq');row.append('属于「'+r.p.name+'」');
     for(const [st,label] of [['done','这个项目做完了'],['active','还在做']]){const b=E('button',label);b.type='button';b.setAttribute('aria-pressed',String(r.status===st));b.onclick=()=>setStatus(r,st);row.append(b)}
     el.append(row)}
-  if(c.verdict==='decide'&&prefillOf(c))el.append(E('div','项目已标“做完了”，这一项先替你勾上了；不想清就取消勾选。','sub'));
-  if(c.verdict==='decide'&&(c.ask||c.question))el.append(E('div','勾选前想一想：'+(c.ask||c.question),'q'));
+  if(isDecide(c)&&prefillOf(c))el.append(E('div',prefillMode(c)==='归档'?'项目已标“做完了”，这一项先替你选了“归档”（先搬到外接硬盘，再从电脑上清掉）；不想动就改成“留”。':'先替你选了“删”；不想清就改成“留”。','sub'));
+  if(isDecide(c)&&(c.ask||c.question))el.append(E('div','决定前想一想：'+(c.ask||c.question),'q'));
+  if(isDecide(c))el.append(choiceRow(c,el));
   if(c.downgraded){const dr=c.down_reasons||[];const dn=E('div',null,'down');dn.append(E('b','没通过自动复核，已改为'+LABEL[c.verdict]));
     const ul=E('ul');(dr.length?dr:['原因未记录']).forEach(t=>ul.append(E('li',t)));
     if(c.down_more>0)ul.append(E('li','另有 '+c.down_more+' 类原因，见详情'));dn.append(ul);el.append(dn)}
@@ -436,67 +556,41 @@ function renderCategory(v,id){
   v.append(E('h1',c.name+' · '+gb(s.total)));
   if(c.desc)v.append(E('p',c.desc,'lead'));
   const t=E('div',null,'tally');t.id='tally';fillTally(t);v.append(t);
+  if(id==='chat-netdisk')renderCloud(v);
+  renderFrontier(v,id);
   const a=s.cards.filter(act), k=s.cards.filter(x=>!act(x));
   if(a.length){
-    const h=E('div',null,'subh');h.append(E('h2',a.length+' 项可以清理，勾上的才会删'));
+    const h=E('div',null,'subh');h.append(E('h2',a.length+' 项可以清理，选中的才会处理'));
     const lab=E('label');const all=document.createElement('input');all.type='checkbox';all.id='pick-all';
-    all.checked=a.every(x=>picked.has(x.id));all.onchange=()=>{a.forEach(x=>all.checked?picked.add(x.id):picked.delete(x.id));render()};
+    all.checked=a.every(x=>picked.has(x.id));all.onchange=()=>{a.forEach(x=>setPick(x,all.checked));render()};
     lab.append(all,'全选本类');h.append(lab);v.append(h);
     a.forEach(x=>v.append(itemEl(x)));
   }else v.append(E('div','这一类没有可以清理的，下面是留着的原因。','none'));
   if(k.length){const h=E('div',null,'subh');h.append(E('h2','留着的 '+k.length+' 项'));v.append(h);k.forEach(x=>v.append(itemEl(x)))}
 }
-function projRow(r){
-  const p=r.p, el=E('div',null,'prow'+(newKeys.has(p.key)&&!r.orig?' fresh':''));el.dataset.key=p.key;
-  const nm=E('div',null);nm.append(E('div',p.name,'nm'));
-  if(newKeys.has(p.key)&&!r.orig)nm.firstChild.append(E('span','新发现','tag'));
-  const sub=[short(p.key),p.sessions>0?p.sessions+' 个 AI 会话':''].filter(Boolean).join(' · ');
-  if(sub)nm.append(E('div',sub,'sub'));
-  if(staleDays.has(p.key))nm.append(E('div','已 '+staleDays.get(p.key)+' 天没动了，做完了吗？','sub ask'));
-  const dh=r.orig?'':doneHint(p),hint=dh?E('div',dh,'sub'):null;if(hint)nm.append(hint);
-  const g=E('div',null,'seg'), btns=[];g.setAttribute('role','group');g.setAttribute('aria-label',p.name+' 的状态');
-  for(const [k,name] of SEG){const b=E('button',name);b.type='button';b.setAttribute('aria-pressed',String(r.status===k));
-    b.onclick=()=>{r.status=r.status===k?r.orig:k;
-      if(r.status==='active'||r.status==='protected')cards.filter(c=>prefillOf(c)&&(c.projects||[]).some(x=>x.key===p.key)).forEach(c=>picked.delete(c.id));
-      for(const [kk,bb] of btns)bb.setAttribute('aria-pressed',String(r.status===kk));if(hint)hint.hidden=!!r.status;update()};
-    btns.push([k,b]);g.append(b)}
-  el.append(nm,E('div',p.bytes!=null?gb(p.bytes):'—','sz'),E('div',ago(p.last_active),'ago'),g);
-  const d=E('details',null,'more deliv');const sm=E('summary','成品在哪'+(r.deliv.length?'（'+r.deliv.length+' 处）':''));d.append(sm);
-  const ta=document.createElement('textarea');ta.value=r.deliv.join('\n');ta.placeholder='一行一个目录，例如 ~/Projects/短剧/成品';ta.setAttribute('aria-label',p.name+' 的成品目录');
-  ta.oninput=()=>{r.deliv=splitPaths(ta.value);r.delivEdited=true;sm.textContent='成品在哪'+(r.deliv.length?'（'+r.deliv.length+' 处）':'');update()};
-  d.append(ta,E('p','清理时，有副本的才放心清；清理前也会在这里查有没有文档引用了要清的东西。','hint'));
-  el.append(d);return el;
-}
-function renderProjects(v){
-  v.append(E('h1','我的项目'));
-  v.append(E('p','标一下每个项目现在的状态，清理就按你的习惯来。改动会随清单一起复制给 Agent。','lead'));
-  const list=E('div',null,'plist');list.style.marginTop='16px';list.style.borderTop='1px solid var(--line)';
-  const rs=[...PROJ.values()].sort((a,b)=>(newKeys.has(b.p.key)&&!b.orig)-(newKeys.has(a.p.key)&&!a.orig)||(b.p.bytes||0)-(a.p.bytes||0));
-  if(!rs.length)list.append(E('div','还没有认出项目。运行 scan.py probe projects 后重新生成看板，这里就会列出来。','none'));
-  rs.forEach(r=>list.append(projRow(r)));v.append(list);
-  const sec=(title,desc)=>{const d=E('div',null,'setsec');d.append(E('h2',title));if(desc)d.append(E('p',desc));v.append(d);return d};
-  const touch=()=>{settingsTouched=true;update()};
-  {const d=sec('AI 对话留多久','最近这些天里用过的对话一律留着，不列为可清。');const o=E('div',null,'opts');
-    for(const n of S.retention_choices||[0,7,15,30]){const l=E('label');const i=document.createElement('input');i.type='radio';i.name='days';i.checked=cfg.days===n;
-      i.onchange=()=>{cfg.days=n;touch()};l.append(i,RET_NAME[n]||'最近 '+n+' 天');o.append(l)}d.append(o)}
-  {const d=sec('平时默认清到哪一档','以后在对话里回一句“好”，就按这一档清。');const o=E('div',null,'opts');
-    for(const [p,name,desc] of PRESET){const l=E('label');l.title=desc;const i=document.createElement('input');i.type='radio';i.name='def';i.checked=cfg.def===p;
-      i.onchange=()=>{cfg.def=p;touch()};l.append(i,name);o.append(l)}d.append(o)}
-  const bar=E('div',null,'backbar');const back=E('button','回到清单');back.type='button';back.id='back';back.onclick=()=>{view='overview';render();window.scrollTo({top:0})};bar.append(back);v.append(bar);
-}
 function renderView(){
   const v=$('view');v.replaceChildren();
-  if(view!=='projects'){const t=newTip();if(t)v.append(t)}
-  if(view==='projects')renderProjects(v);
-  else if(view!=='overview'&&catIndex.has(view))renderCategory(v,view);else renderOverview(v);
+  if(view!=='overview'){const t=askTip();if(t)v.append(t)}
+  if(view!=='overview'&&catIndex.has(view))renderCategory(v,view);else renderOverview(v);
 }
 function selected(){return cards.filter(isSel)}
+const archCards=()=>cards.filter(c=>isDecide(c)&&picked.has(c.id)&&modeOf.get(c.id)==='归档');
+// 设置摘要：一行，逐句来自 plan.py 的 setup_summary
+function fillSetline(){
+  const el=$('setline'), a=(D.setup_summary||[]).filter(x=>typeof x==='string'&&x.trim());
+  if(!a.length){el.hidden=true;return}
+  el.replaceChildren(E('b','按你的设置：'),document.createTextNode(a.map(x=>x.trim().replace(/[。；;]+$/,'')).join('；')+'（要改就跟我说“改设置”）'));el.hidden=false;
+}
 function update(){
   const s=selected();
-  $('selected').textContent=s.length?'已勾 '+s.length+' 项，预计腾出 '+gb(sum(s)):'尚未勾选';
+  $('selected').textContent=s.length?'已选 '+s.length+' 项，预计腾出 '+gb(sum(s)):'尚未选择';
   const ok=!!(seal&&seal.digest);
-  const le=ledgerEntries(), extra=settingsTouched||le.length>0||hiddenKeys.size>0;
-  $('copy').disabled=!ok||(!s.length&&!extra);
+  const le=ledgerEntries(), extra=le.length>0||hiddenKeys.size>0||ruleAns.size>0;
+  const na=archCards().length, archBad=na>0&&!archivePathOk($('arch').value);
+  $('archrow').classList.toggle('on',na>0);
+  $('archhint').textContent=na?(archBad?'要写成外接硬盘的路径，形如 /Volumes/盘名/文件夹；内置硬盘不行。填好前不能复制。':'共 '+na+' 项选了归档：先搬到这里，核对无误才从电脑上清掉。'):'';
+  $('archhint').className='hint'+(archBad?' bad':'');
+  $('copy').disabled=!ok||(!s.length&&!extra)||archBad;
   $('selection-help').textContent=!ok?'计划尚未封存，先让 Agent 运行 plan.py seal'
     :'这个页面自己不会删东西。复制清单粘贴给 Agent，它会先演练一遍、再删一条试试，确认没问题才删其余的；没勾的一律不动。';
   $('selection-help').className='hint'+(ok?'':' bad');
@@ -504,7 +598,7 @@ function update(){
   const q=$('quick');q.replaceChildren();const ap=activePreset();
   for(const [p,name] of PRESET){const cs=presetCards(p);if(!cs.length)continue;
     const b=E('button',name+' '+gb(sum(cs)));b.type='button';b.title=cs.length+' 项。'+PRESET.find(x=>x[0]===p)[2];b.setAttribute('aria-pressed',String(ap===p));b.onclick=()=>choosePreset(p);q.append(b)}
-  if(picked.size){const c=E('button','清空');c.type='button';c.title='取消全部勾选';c.onclick=()=>choosePreset('');q.append(c)}
+  if(picked.size){const c=E('button','清空');c.type='button';c.title='取消全部选择';c.onclick=()=>choosePreset('');q.append(c)}
   renderNav();
   if($('tally'))fillTally($('tally'));
   const all=$('pick-all');if(all&&catIndex.has(view)){const a=catStats(view).cards.filter(act);all.checked=a.length>0&&a.every(x=>picked.has(x.id))}
@@ -526,12 +620,13 @@ async function selSig(sealDigest,ids,ans){
 /*SEL-END*/
 async function agentMessage(){
   const ids=selected().map(c=>c.id).sort();
-  const ans=cards.filter(c=>c.verdict==='decide'&&picked.has(c.id)).map(c=>c.id+'=删').sort(); // 勾选的待定项即“删”；没勾的不进清单，也不会被删
+  const ans=cards.filter(c=>isDecide(c)&&picked.has(c.id)).map(c=>c.id+'='+(modeOf.get(c.id)||'删')).sort(); // 选了 删 / 归档 的待定项进清单；选“留”的与没动的一样不进清单，也不会被处理
   const note=cleanNote($('note').value);
   const sel=await selSig(seal?seal.digest:'',ids,ans);
   return ['叁笙清理选择','scan_id: '+(facts.scan_id||plan.scan_id||''),'seal: '+(seal?seal.digest:''),
     '清理: '+(ids.join(', ')||'无'),'回答: '+(ans.join(' / ')||'无'),'sel: '+sel,
-    ...(settingsTouched?[settingsLine(cfg)]:[]),
+    ...(archCards().length?[archiveLine($('arch').value)]:[]),
+    ...ruleLines(RULES.filter(r=>ruleAns.get(r.id)==='confirm').map(r=>r.id),RULES.filter(r=>ruleAns.get(r.id)==='reject').map(r=>r.id)),
     ...(ledgerEntries().length?[ledgerLine(ledgerEntries())]:[]),
     ...(hiddenKeys.size?['别再列: '+[...hiddenKeys].sort().join(', ')]:[]),
     '备注: '+(note||'无')].join('\n');
@@ -542,5 +637,6 @@ $('copy').onclick=async()=>{
   try{await navigator.clipboard.writeText(v);$('fallback').hidden=true;$('feedback').textContent='已复制。回到和 Agent 的对话里粘贴发送，它会接着清理。'}
   catch(e){$('fallback').hidden=false;$('fallback').value=v;$('fallback').select();$('feedback').textContent='浏览器没让自动复制：请按 ⌘C 复制下面已选中的内容，再粘贴给 Agent。'}
 };
-fillFoot();render();
+$('arch').oninput=update;
+fillFoot();fillSetline();render();
 </script>

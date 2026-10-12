@@ -83,3 +83,77 @@
 - **归档**：同“做完了”；并且卡里的东西全属于归档项目时，原本标成“删了找不回”的卡进推荐档（风险区例外，账号数据与用户资产仍只在“全部可删”档）。
 - **不能怎么用**：用户标的状态是 `user_stated`，**不能单独把卡升为 `clean`**，也不能替代 `merged / delivered / copy_verified`、引用核对、进程与 24 小时改动检查。标了“做完了”但没有结束证据的卡，仍然只能是 `decide`。项目各自的成品目录会并入成品目录与引用检查范围，这是让副本核对和引用检查更完整，不是放宽。
 - 项目归属拿不准（路径不在项目里、会话也对不上）时按没有台账处理，不要猜。
+- 项目状态和后面第 15 节的其他设置一样，只改"要不要问、预填什么、进哪一档"，不改"能不能放行"。
+
+## 9. 不做清单
+
+这几类不管看起来多"像垃圾"都不要碰，直接排除，不写进任何删除卡：
+
+- **不瘦身通用二进制**（`strip`、去符号、删本地化资源等）：可能破坏代码签名、让工具崩溃且难查，省下的空间通常很小。
+- **不删语言包**：删了应用会缺界面语言、菜单报错，且不是空间大头。
+- **不按版本号删 Claude Code 原生版本**（`~/.local/share/claude/versions/`）：官方安装器只保留最新两个（外加入口指向与会话在用的），删了它会自己补回来，还可能打断正跑旧版本的会话。
+
+## 10. 读取授权
+
+读用户文件一律走 `scripts/peek.py`（约定第 9 节），不直接 `cat`、`less` 或用别的方式打开。
+
+- `never` 类（钥匙串、浏览器登录与 Cookie、`~/.ssh`、凭证、`.env`、密码库等）**永远不读**，`peek.py` 也会拒绝（退出码 3）。
+- 未授权的 `extended` 只给名字、大小、日期等元信息，不返回内容；`deep`（聊天与邮件正文、图片内容）需要 `read_scope` 含 `deep`。
+- 读之前先看 `profile.read_scope`；有疑问就用 `--meta` 只取元信息。
+- 每次读取都会记进本次运行，成果页会列出"这次读了哪些文件"——读了就要留痕，别绕开。
+
+## 11. 认不出的大目录
+
+遇到来源不明的几十 GB 目录，别凭猜写卡：
+
+1. 先经 `peek.py` 抽看几个文件名和少量内容，判断"**这是谁、为哪个任务留下的**"。
+2. 判断出来就用 `python3 scripts/memory.py identity set --path <路径> --title "<它是谁>" [--producer <工具>] [--task "<哪个任务>"] [--scan-id <本次>]` 存成本机身份卡。
+3. 下次扫描这个节点会带上 `identity`（title / producer / task），不用再从头调查。
+
+## 12. 找"做完了"的证据
+
+判断某个目录的任务是否结束，用探针拿信号：
+
+```
+python3 scripts/scan.py probe done-evidence --run <run> --path <P>
+```
+
+它给几类信号：git 是否已并入主线（`git.merged_into_main`）、成品目录里的同名/近名文件数（`deliverables`）、最后改动时间（`last_modified`）、完成类文件名（`final_named_files`）、文档里的完成字样（`doc_hits`）。
+
+这些**只是信号，不是结论**：只有能现场复核、转成结束证据的才算数——`merged`（已并入目标分支）、`delivered`（成品已交付且数量对得上）、`copy_verified`（副本逐字节相同且在成品/跟踪目录里）。转不出来的，只能写 `decide`。
+
+## 13. 归档而不是删除
+
+素材有长期价值但不常用（做完项目的原片、旧录屏）：别直接删，在 `decide` 卡的问题里提供"**归档到外接硬盘**"这一项。
+
+- 用户选了归档，要填"归档到"（形如 `/Volumes/<盘名>/…`）。
+- `act.py` 会先把文件复制过去、逐个 sha256 校验一致后才处理源文件；不一致就保留源文件并记失败（约定第 8 节）。
+- 归档不是免确认：仍要用户点头，仍需结束证据。
+
+## 14. 治本闭环
+
+遇到**会持续增长**的来源（发布快照、会话日志、构建暂存、模型缓存），不要只在卡里建议"再清一次"，要写治理建议：
+
+1. 按用户的 `governance_mode` 写：`tell` 只说现象；`guide` 给出改法；`fix` 写"同意后我来改，可撤销"（约定第 7 节）。
+2. `fix` 模式下，经用户同意后再改设置或脚本；改完用 `python3 scripts/memory.py govern record --path <P> --change "<改了什么>" --undo "<怎么撤销>" --bytes <基线字节>` 记一笔。
+3. 下次扫描用 `python3 scripts/memory.py govern check --run <run>` 看是否停止增长（`stopped` / `growing` / `unknown`），结果写进成果页。
+
+## 15. 按用户设置判断
+
+用户设置**只改三件事：要不要问、预填什么、进哪一档；不改能不能放行**（约定第 0、7 节的安全不变式）。任何设置都不能把一张卡从 `decide` 升为 `clean`，也不能绕过结束证据复核、引用核对、进程与 24 小时改动检查。最激进的一整套设置取下来，也不该有任何卡从 `decide` 变 `clean`。
+
+各设置对写卡的影响：
+
+- `tools[x]=unused`：该工具的无风险 `decide` 卡预填"删"。
+- `conversation_policy=library`：含交互会话的卡整卡降 `keep`；`done`：属于做完/归档项目的会话卡可预填"删"，仍逐个确认。
+- `rejects_policy=drop`：`ai-images` 类无风险卡预填"删"；`keep`：没有结束证据的 `ai-images` 卡降 `keep`。
+- `worktree_policy=whole`：工作树卡预填"删"；`build_only`：整棵工作树根降 `decide`，只清构建产物；`ask`：至少推荐档。
+- `installer_policy=auto`：安装包卡按"删"处理（仍不适用 review / interactive）。
+- `big_file_age_days=N`：`large-old-files` 卡里不到 N 天的降 `keep`；`0`：整卡降 `keep`（"录屏和大视频别问"）。
+- `done_project_policy=archive`：做完项目的 `decide` 卡预填"归档"；`keep`：不再预填（第 8 节）。
+- `governance_mode`：治理区文案（第 14 节）。
+- `delete_mode`：`act.py` 默认直接删还是进废纸篓（约定第 8 节）。
+- `confirm_mode=board`：需要看板的卡一律给原因"你选了每次都发看板"。
+- `read_scope`：传给 `peek.py` 做读取拦截（第 10 节）。
+- `default_choice`：看板默认勾选档（同 0.5）。
+- 卡对象写了 `rebuild: "slow"`，或首卡是 `model-caches`：从稳妥档提为推荐档，慢重建缓存不进稳妥档（见 `package-managers` 卡）。

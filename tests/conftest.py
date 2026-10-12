@@ -21,3 +21,19 @@ def pytest_configure(config):
 def pytest_unconfigure(config):
     for d in _OWN:
         shutil.rmtree(d, ignore_errors=True)
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_real_claude_tmp_root(tmp_path_factory, monkeypatch):
+    """0.6：scan 默认会把 /private/tmp/claude-<uid> 加进扫描根。测试一律指向不存在的目录，
+    免得扫描夹具时顺带扫到本机真实的会话临时目录（慢，且结果不确定）。要测这条规则的用例自己再覆盖 TMP_BASE。"""
+    try:
+        import protect
+    except ImportError:
+        yield
+        return
+    monkeypatch.setattr(protect, "TMP_BASE", os.path.join(str(tmp_path_factory.getbasetemp()), "no-such-ptmp"))
+    yield

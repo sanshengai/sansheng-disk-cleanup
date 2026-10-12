@@ -58,6 +58,17 @@ h2{font-size:17px;font-weight:650;margin:0 0 14px}
 footer{max-width:960px;margin:auto;padding:18px 28px 36px;display:flex;gap:18px;font-size:13px;color:var(--muted);border-top:1px solid var(--line)}
 footer a{text-decoration:none}footer a:hover{color:var(--green)}footer .r{margin-left:auto}
 .hint{font-size:12px;color:var(--muted);margin-top:8px}
+/* 0.6 区块 */
+.disp{display:grid;gap:10px}
+.disp>div{display:flex;justify-content:space-between;gap:16px;background:var(--white);border:1px solid var(--line);border-radius:8px;padding:12px 16px}
+.disp .v{font-weight:650;white-space:nowrap}.disp .d{font-size:13px;color:var(--muted)}
+.tagline{font-size:12px;font-weight:400;border:1px solid var(--gold);color:var(--gold);border-radius:4px;padding:0 6px;margin-left:8px}
+.mem{display:grid;gap:10px}
+.mem label{display:flex;gap:10px;align-items:flex-start;background:var(--white);border:1px solid var(--line);border-radius:8px;padding:10px 16px;cursor:pointer}
+.mem input{margin-top:5px;accent-color:var(--green)}.mem .k{font-size:12px;color:var(--muted);margin-left:8px}
+.forget{margin-top:12px}.forget code{display:block;background:var(--white);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-bottom:8px;word-break:break-all}
+.paths{margin:10px 0 0;padding:0;list-style:none;font-size:13px;color:var(--muted)}.paths li{padding:2px 0;word-break:break-all}
+
 .star{margin-top:20px;font-size:13px;color:var(--muted)}.star a{color:var(--green)}
 @media (max-width:720px){
  header,.wrap{padding-left:16px;padding-right:16px}footer{padding-left:16px;padding-right:16px;flex-wrap:wrap}
@@ -76,7 +87,13 @@ footer a{text-decoration:none}footer a:hover{color:var(--green)}footer .r{margin
   <div class="bars" id="bars"></div>
 </section>
 <section id="from"><h2>腾出的空间从哪里来</h2><div id="callout"></div><div class="rows" id="rows"></div></section>
+<section id="disp-sec" hidden><h2>这些空间是怎么处理的</h2><div class="disp" id="disp"></div></section>
 <section id="gov-sec"><h2>从源头管住</h2><div class="gov" id="gov"></div></section>
+<section id="fixed-sec" hidden><h2>从源头改好的</h2><div class="gov" id="fixed"></div></section>
+<section id="mem-sec" hidden><h2>这次我记住了</h2><p class="muted">下面是这次清理里我记下来、以后会照着办的事。哪条记错了就勾上，再复制那句话发给我，我会把它忘掉。</p>
+  <div class="mem" id="mem"></div>
+  <div class="forget" id="forget" hidden><code id="forget-line"></code><button class="primary" id="forget-copy" type="button">复制「忘掉」这句话</button><span class="hint" id="forget-hint"></span></div></section>
+<section id="reads-sec" hidden><h2>这次读了哪些文件<span class="tagline">这些内容发给了你的 AI 服务商</span></h2><div id="reads"></div></section>
 <section><h2>分享这次成果</h2>
   <div class="share">
     <div><canvas class="poster" id="poster" width="1080" height="1440" aria-label="分享图预览"></canvas>
@@ -104,6 +121,7 @@ $('when').textContent=R.finished_at?'清理于 '+fmtDate(R.finished_at):'';
 {const v=$('freed');v.textContent=g1(R.freed);v.append(E('small','GB'));}
 $('sub').innerHTML='';
 $('sub').append('已用 ',E('b',g1(R.used_before)+' GB'),' → ',E('b',g1(R.used_after)+' GB'),'，可用空间从 '+g1(R.free_before)+' GB 增加到 '+g1(R.free_after)+' GB');
+if(R.disposal&&R.disposal.trash>0){$('sub').append(E('div','另有 '+gb(R.disposal.trash)+' 已移入废纸篓，清空废纸篓后才会真正腾出，上面的数字不含它。','hint'))}
 {const b=$('bars'),T=Math.max(1,R.disk_total);
  const row=(label,parts)=>{b.append(E('div',label,'lb'));const bar=E('div',null,'bar');bar.setAttribute('role','img');
    bar.setAttribute('aria-label',label+'：'+parts.map(p=>p[2]+' '+gb(p[0])).join('，'));
@@ -124,6 +142,33 @@ if(R.ai_freed>0){const c=E('div',null,'callout');c.append('其中 ',E('b',gb(R.a
 {const gv=R.governance||[];if(!gv.length)$('gov-sec').hidden=true;
  for(const g of gv){const d=E('div');const t=E('div',g.title,'t');t.append(E('span',g.done?'已改好':'建议你改','tag'+(g.done?'':' todo')));d.append(t);
    const txt=g.done?(g.how||g.suggest):(g.suggest||'');if(txt)d.append(E('p',txt));$('gov').append(d)}}
+// 处置方式口径（只在有废纸篓或归档时显示；全是直接删除时首屏的数字已经说明白了）
+{const D=R.disposal||{};const arch=D.archived||[];
+ if(D.trash>0||arch.length){$('disp-sec').hidden=false;const box=$('disp');
+   const row=(label,v,desc)=>{const d=E('div');const l=E('div');l.append(E('b',label));if(desc)l.append(E('div',desc,'d'));d.append(l,E('div',v,'v'));box.append(d)};
+   row('已腾出',gb(D.freed),'已经真正删掉，空间已经回来了（首屏的数字就是它）');
+   if(D.trash>0)row('已移入废纸篓',gb(D.trash),'清空废纸篓后才会腾出，我不会替你清空'+((D.trash_dirs||[]).length?'；在废纸篓里找「'+D.trash_dirs[0]+'」':''));
+   for(const a of arch)row('已搬到 '+a.volume,gb(a.bytes),'一份校验过的副本在外接硬盘上'+(a.source==='trash'?'，原文件在废纸篓里':'，原文件已删除'))}}
+// 从源头改好的
+{const F=R.fixed||[];if(F.length){$('fixed-sec').hidden=false;
+ const MAP={stopped:['已停止增长',''],growing:['还在涨，下次再看','todo'],unknown:['暂时看不出来','todo']};
+ for(const f of F){const d=E('div');const t=E('div',f.change,'t');const m=MAP[f.verdict]||MAP.unknown;t.append(E('span',m[0],'tag '+m[1]));d.append(t);
+   const line=[f.path,f.verdict==='unknown'?'':'改之前 '+gb(f.baseline_bytes)+' → 现在 '+gb(f.now_bytes)].filter(Boolean).join('　');if(line)d.append(E('p',line));$('fixed').append(d)}}}
+// 这次我记住了 + 勾选“忘掉”
+{const M=R.remembered||[];if(M.length){$('mem-sec').hidden=false;
+ const KIND={rule:'规则',identity:'认得的目录',setting:'设置',governance:'治理',project:'项目'};
+ const boxes=[];
+ const upd=()=>{const ids=boxes.filter(b=>b.checked).map(b=>b.value);$('forget').hidden=!ids.length;$('forget-line').textContent='忘掉: '+ids.join(',');$('forget-hint').textContent=''};
+ for(const m of M){const l=E('label');const c=document.createElement('input');c.type='checkbox';c.value=m.id;c.onchange=upd;boxes.push(c);
+   const sp=E('span',m.text);if(KIND[m.kind])sp.append(E('span',KIND[m.kind],'k'));l.append(c,sp);$('mem').append(l)}
+ $('forget-copy').onclick=async()=>{const t=$('forget-line').textContent;
+   try{await navigator.clipboard.writeText(t);$('forget-hint').textContent=' 已复制，发给我就行'}
+   catch(e){const ta=document.createElement('textarea');ta.value=t;document.body.append(ta);ta.select();
+     try{document.execCommand('copy');$('forget-hint').textContent=' 已复制，发给我就行'}catch(e2){$('forget-hint').textContent=' 没能自动复制，请手动选中上面那句话'}ta.remove()}}}}
+// 这次读了哪些文件
+if(R.reads){const r=R.reads;$('reads-sec').hidden=false;const b=$('reads');
+ b.append(E('p','读了内容 '+r.content+' 次，只看了名字和大小 '+r.meta+' 次，被拒绝 '+r.refused+' 次。'+(r.content?'':'这次没有读你文件里的内容。')));
+ if(r.paths.length){const ul=E('ul',null,'paths');for(const p of r.paths)ul.append(E('li',p));if(r.more>0)ul.append(E('li','……还有 '+r.more+' 个'));b.append(ul)}}
 // 二维码（Python 端用 MIT 的 qrcodegen 编好矩阵，这里只画）
 const Q=R.share.qr,N=Q.length,QZ=4;
 function qrSvg(){const ns='http://www.w3.org/2000/svg',s=document.createElementNS(ns,'svg');s.setAttribute('viewBox',`0 0 ${N+2*QZ} ${N+2*QZ}`);

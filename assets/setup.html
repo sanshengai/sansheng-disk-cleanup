@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>叁笙清理 · 初始设置</title>
+<style>
+:root{color-scheme:light dark;--paper:#faf7f0;--ink:#243c2d;--green:#2f5d3a;--onG:#fff;--gold:#a57924;--line:#d9ddcf;--muted:#68756a;--white:#fffefa;--amber:#88611e;--red:#8a4a3a;--track:#e8ebe0;--on:#f3f1e5}
+@media(prefers-color-scheme:dark){:root{--paper:#161d18;--ink:#e4e8dc;--green:#8fc79b;--onG:#10200f;--gold:#d4a84e;--line:#2e3a31;--muted:#9aa89c;--white:#1e2a22;--amber:#d9b06a;--red:#e0a090;--track:#26322a;--on:#1f2c23}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-variant-numeric:tabular-nums}
+button,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer;border:1px solid var(--line);border-radius:6px;padding:5px 12px;background:var(--white)}
+button:hover{border-color:var(--green)}button:disabled{opacity:.45;cursor:default}
+:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+header,.page{max-width:920px;margin:auto;padding-left:28px;padding-right:28px}
+header{display:flex;align-items:center;gap:20px;padding-top:8px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:14px;flex:none}.brand a{display:flex}.logo{width:104px;height:36px;object-fit:contain}
+.brand strong{font-size:16px;font-weight:600;border-left:1px solid var(--line);padding-left:14px}
+.page{padding-top:16px;padding-bottom:24px}
+h1{font-size:21px;font-weight:600;margin:0;line-height:1.35}
+.lead{margin:4px 0 0;color:var(--muted)}
+.modnote{margin:8px 0 0;font-size:13px;color:var(--amber)}
+.topbar{position:sticky;top:0;z-index:5;background:var(--paper);border-bottom:1px solid var(--line);margin-top:14px}
+.topbar .in{max-width:920px;margin:auto;padding:8px 28px;display:flex;align-items:center;gap:16px;font-size:13px;color:var(--muted)}
+.topbar button{margin-left:auto;white-space:nowrap}
+.grp{padding:22px 0;border-bottom:1px solid var(--line)}
+.grp>h2{font-size:16px;margin:0 0 2px}
+.grp>.gdesc{margin:0 0 10px;color:var(--muted);font-size:13px}
+.q{margin:16px 0 0;padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:var(--white)}
+.q h3{font-size:15px;margin:0 0 2px}
+.q .ctx{margin:0 0 10px;color:var(--muted);font-size:13px}
+.opts{display:flex;flex-direction:column;gap:8px}
+.opt{display:flex;align-items:flex-start;gap:10px;border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer;background:var(--white)}
+.opt:hover{border-color:var(--green)}
+.opt input{margin:3px 0 0;width:17px;height:17px;accent-color:var(--green);flex:none}
+.opt .body{min-width:0}
+.opt .lb{font-weight:600}
+.opt .tag{display:inline-block;font-size:12px;line-height:1.5;padding:0 6px;border:1px solid var(--green);color:var(--green);border-radius:4px;margin-left:8px;font-weight:400;vertical-align:1px}
+.opt .desc{color:var(--muted);font-size:13px}
+.opt .pnote{color:var(--muted);font-size:12px;margin-top:2px}
+.opt[data-on=true]{border-color:var(--green);box-shadow:inset 0 0 0 1px var(--green)}
+.opt.locked{opacity:.55;cursor:default;background:var(--track)}
+.privnote{margin:2px 0 0;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;color:var(--amber)}
+.lockmark{margin-left:auto;font-size:12px;color:var(--muted);white-space:nowrap;padding-top:2px}
+.rec{margin:0 0 8px;font-size:12px;color:var(--green)}
+.opt.locked:hover{border-color:var(--line)}
+.subopts{margin:10px 0 0;padding:10px 12px;border:1px dashed var(--line);border-radius:8px}
+.subopts .lbl{margin:0 0 6px;font-size:13px;color:var(--muted)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);border-radius:999px;padding:4px 12px;background:var(--white);font-size:13px}
+.chip[aria-pressed=true]{background:var(--green);color:var(--onG);border-color:var(--green)}
+details.why{margin-top:10px;font-size:13px}
+details.why summary{cursor:pointer;color:var(--green);font-size:12px;width:max-content}
+details.why p{margin:6px 0 0}
+details.why .lab{color:var(--muted)}
+.tools{margin-top:10px;border-top:1px solid var(--line)}
+.trow{display:grid;grid-template-columns:minmax(0,1fr) 96px 104px auto;gap:4px 14px;align-items:center;padding:10px 2px;border-bottom:1px solid var(--line)}
+.trow .nm{font-weight:600;overflow-wrap:anywhere}
+.trow .nm .sub{font-weight:400;font-size:12px;color:var(--muted)}
+.trow .sz,.trow .ago{text-align:right;white-space:nowrap;font-size:13px}
+.trow .ago{color:var(--muted)}
+.seg{display:flex;white-space:nowrap}
+.seg button{border-radius:0;margin-left:-1px;font-size:12px;padding:4px 10px}
+.seg button:first-child{border-radius:6px 0 0 6px;margin-left:0}.seg button:last-child{border-radius:0 6px 6px 0}
+.seg button[aria-pressed=true]{background:var(--green);color:var(--onG);border-color:var(--green);position:relative}
+.plist{margin-top:12px;border-top:1px solid var(--line)}
+.phead,.prow{display:grid;grid-template-columns:minmax(0,1fr) 84px 92px 214px;gap:4px 16px;align-items:start}
+.phead{padding:6px 2px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--line)}
+.phead span:nth-child(2),.phead span:nth-child(3){text-align:right}
+.prow{padding:12px 2px;border-bottom:1px solid var(--line)}
+.prow .nm{font-weight:600;font-size:15px;overflow-wrap:anywhere}
+.prow .sub{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.prow .sz,.prow .ago{text-align:right;white-space:nowrap}
+.prow .sz{font-weight:650}.prow .ago{color:var(--muted)}
+.prow .deliv{grid-column:1/-1}
+details.more{font-size:13px}details.more summary{cursor:pointer;color:var(--green);font-size:12px;width:max-content}
+details.more textarea{display:block;width:100%;height:64px;margin:6px 0 2px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--white);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}
+.hint{font-size:12px;color:var(--muted)}
+.paths .cands{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+.paths textarea{display:block;width:100%;min-height:56px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--white);font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}
+input.note{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--white)}
+.none{padding:14px 2px;color:var(--muted)}
+.selbar{position:sticky;bottom:0;background:var(--paper);border-top:1px solid var(--line);margin-top:12px}
+.selbar .in{max-width:920px;margin:auto;padding:10px 28px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.selbar strong{font-size:15px}
+.selbar .act{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.primary{background:var(--green);color:var(--onG);border-color:var(--green);padding:7px 16px}.primary:hover{border-color:var(--ink)}
+.feedback{font-size:12px;color:var(--muted);min-height:18px;margin-top:10px}
+.fallback{width:100%;height:150px;margin-top:6px}
+.sitefoot{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:16px;font-size:11px}.sitefoot a{color:var(--muted);text-decoration:none}.sitefoot a:hover{color:var(--green)}
+@media(max-width:780px){
+ header,.page,.topbar .in,.selbar .in{padding-left:16px;padding-right:16px}
+ .logo{width:92px;height:32px}.brand{gap:10px}.brand strong{font-size:15px;padding-left:10px}
+ .phead{display:none}
+ .prow{grid-template-columns:minmax(0,1fr) auto}
+ .prow .ago{grid-column:1/-1;text-align:left;font-size:12px}
+ .prow .seg{grid-column:1/-1}.seg button{flex:1}
+ .trow{grid-template-columns:minmax(0,1fr) auto;row-gap:6px}
+ .trow .sz,.trow .ago{text-align:left}
+ .trow .seg{grid-column:1/-1}
+ .selbar strong{font-size:13px}
+}
+</style>
+<header><div class="brand"><a href="https://sanshengai.top/" target="_blank" rel="noopener" title="叁笙早安 AI 官网"><img class="logo" src="__LOGO_DATA__" alt="叁笙早安 AI"></a><strong>叁笙清理</strong></div></header>
+<div class="page">
+<main>
+<h1>认识你的电脑</h1>
+<p class="lead" id="lead">第一次需要多一点时间认识你的电脑，以后会快很多。这里只保存设置，不会删任何东西。</p>
+<p class="modnote" id="modnote" hidden></p>
+</main>
+</div>
+<div class="topbar"><div class="in"><span id="prog">第 1 组，共 1 组</span><button id="rec-top" type="button">全部按推荐</button></div></div>
+<div class="page"><main id="body"></main></div>
+<div class="page">
+<div class="feedback" id="feedback" aria-live="polite"></div>
+<textarea id="fallback" class="fallback" aria-label="选中下面内容，复制给 Agent" hidden readonly></textarea>
+<div class="sitefoot" id="sitefoot"></div>
+</div>
+<div class="selbar"><div class="in"><div class="st"><strong id="status">都按推荐</strong><div class="hint">这一页只保存设置，不会动任何文件。</div></div>
+<div class="act"><button id="rec-bottom" type="button">全部按推荐</button><button class="primary" id="copy" type="button">复制，发给 Agent</button></div></div></div>
+<script type="application/json" id="setup-data">__SETUP_JSON__</script>
+<script id="export-lib">
+// 导出文本的纯函数：测试在 node 里执行这一段，再核对“答案 / 台账 / 补充”三行。
+const STATUS_ZH={active:'进行中',done:'做完了',archived:'归档',protected:'别碰'};
+// Python 的 splitlines 会在这些字符处断行；JSON 里一律写成转义，保证导出的每一行都不被拆开
+const safeLine=s=>String(s).replace(/[\u0085\u2028\u2029]/g,c=>'\\u'+c.charCodeAt(0).toString(16).padStart(4,'0'));
+function ledgerLine(entries){ // entries：[{key,name,status,deliverables(数组或 null)}]
+  const o=Object.create(null);
+  for(const e of entries){if(!STATUS_ZH[e.status])continue;
+    const v={'状态':STATUS_ZH[e.status]};
+    if(Array.isArray(e.deliverables))v['成品']=e.deliverables;
+    if(e.name)v['名称']=e.name;
+    o[e.key]=v}
+  return '台账: '+safeLine(JSON.stringify({'项目':o}));
+}
+function splitPaths(text){const seen=new Set(),out=[];for(const l of String(text||'').split(/\r?\n/)){const p=l.trim();if(p&&!seen.has(p)){seen.add(p);out.push(p)}}return out}
+const SETUP_HEAD='叁笙清理 · 初始设置';
+const SETUP_VERSION=1;
+const READ_SCOPE_ORDER=['basic','extended','deep'];   // “永不读”永远不写进答案
+const TOOL_RATINGS=['often','sometimes','unused'];
+const CONV_DAYS=[7,15,30,60,90];
+const has=(o,k)=>o!=null&&Object.prototype.hasOwnProperty.call(o,k);
+const same=(a,b)=>JSON.stringify(a===undefined?null:a)===JSON.stringify(b===undefined?null:b);
+function findQ(payload,id){for(const g of (payload&&payload.groups)||[])for(const q of (g&&g.questions)||[])if(q&&q.id===id)return q;return null}
+function scopeValues(v){const set=new Set(Array.isArray(v)?v:[]);return READ_SCOPE_ORDER.filter(x=>set.has(x))}   // never 与非法档位一律丢掉
+function projectRowsFor(rows,mode){
+  const out=[];
+  for(const r of rows||[]){
+    if(!r||!STATUS_ZH[r.status])continue;
+    if(mode==='edit'){ // 编辑模式只导出改过的项目行
+      const o=r.orig||{};
+      if(r.status===o.status&&same(r.deliverables||[],o.deliverables||[]))continue;
+    }
+    out.push({key:r.key,name:r.name,status:r.status,deliverables:Array.isArray(r.deliverables)?r.deliverables:null});
+  }
+  return out;
+}
+function toolsFor(state,payload,mode){
+  const given=(state.values&&state.values.tools)||{}, out={};
+  for(const t of payload.tools||[]){
+    if(!t||!t.key)continue;
+    const cur=has(given,t.key)?given[t.key]:null;
+    let v;
+    if(mode==='edit'){
+      if(cur===null||cur===t.current)continue;   // 没动过、或跟现值一样，都不导出
+      v=cur;
+    }else{
+      v=cur!==null?cur:(t.recommended!=null?t.recommended:null);   // 首次/升级按推荐；没答也没推荐的工具不导出
+    }
+    if(TOOL_RATINGS.indexOf(v)>=0)out[t.key]=v;
+  }
+  return out;
+}
+function buildSetupExport(state,payload){
+  state=state||{};payload=payload||{};
+  const mode=payload.mode||state.mode||'first';
+  const values=state.values||{}, answers={};
+  for(const g of payload.groups||[]){
+    for(const q of (g&&g.questions)||[]){
+      if(!q||!q.id)continue;
+      if(q.type==='projects')continue;                 // 项目台账另走“台账:”行
+      if(q.type==='note'||q.type==='text')continue;    // 自由补充另走“补充:”行
+      if(q.type==='tools'){const t=toolsFor(state,payload,mode);if(Object.keys(t).length)answers.tools=t;continue}
+      const cur=has(values,q.id)?values[q.id]:null;
+      if(q.type==='multi'){
+        let v;
+        if(cur!==null)v=scopeValues(cur);
+        else if(mode==='edit')continue;                // 编辑模式只看改动
+        else v=scopeValues(q.recommended);
+        if(mode==='edit'&&same(v,scopeValues(q.current)))continue;
+        answers[q.id]=v;continue;
+      }
+      let v;
+      if(cur!==null)v=cur;
+      else if(mode==='edit')continue;
+      else if(q.recommended!==undefined&&q.recommended!==null)v=q.recommended;
+      else if(q.type==='paths')v=[];                   // 目录题：没选就是空
+      else continue;
+      if(mode==='edit'&&same(v,q.current))continue;
+      answers[q.id]=v;
+    }
+  }
+  // “具体天数”跟着 AI 对话题：选了天数就一起写进答案
+  const cq=findQ(payload,'conversations');
+  const days=has(values,'conversation_days')?values.conversation_days:null;
+  if(cq&&CONV_DAYS.indexOf(days)>=0){
+    const curDays=cq.current_days==null?null:cq.current_days;
+    if(mode!=='edit'||days!==curDays){
+      answers.conversation_days=days;
+      if(mode==='edit'&&!has(answers,'conversations')){   // 天数变了，题本身也得跟出去
+        const cur=has(values,'conversations')?values.conversations:cq.current;
+        if(cur!=null)answers.conversations=cur;
+      }
+    }
+  }
+  const rows=projectRowsFor(state.projects,mode);
+  const lines=[SETUP_HEAD,'设置版本: '+(payload.version||SETUP_VERSION)];
+  lines.push('答案: '+safeLine(JSON.stringify(answers)));
+  if(rows.length)lines.push(ledgerLine(rows));
+  let note=has(state,'note')&&state.note!=null?String(state.note):(has(values,'note')?String(values.note):'');
+  const nq=findQ(payload,'note');
+  if(mode==='edit'&&note===(nq&&nq.current!=null?String(nq.current):''))note='';   // 编辑模式只导出改动
+  if(note.trim())lines.push('补充: '+safeLine(JSON.stringify(note)));
+  return lines.join('\n');
+}
+</script>
+<script>
+'use strict';
+const D=JSON.parse(document.getElementById('setup-data').textContent);
+const MODE=D.mode||'first', EDIT=MODE==='edit';
+const $=id=>document.getElementById(id);
+const E=(tag,text,cls)=>{const el=document.createElement(tag);if(text!=null)el.textContent=text;if(cls)el.className=cls;return el};
+const fmtBytes=n=>{n=+n||0;const a=Math.abs(n);if(a<1000)return Math.trunc(n)+' B';const sg=n<0?'-':'';
+  for(const [u,d] of [['KB',1e3],['MB',1e6],['GB',1e9],['TB',1e12]]){const v=a/d;if(Number(v.toFixed(1))<1000||u==='TB')return sg+v.toFixed(1)+' '+u}}; // 与 scripts/units.py 的 fmt_bytes 一致
+const ago=iso=>{const t=Date.parse(iso||'');if(isNaN(t))return'—';const d=Math.floor((Date.now()-t)/864e5);return d<=0?'今天':d+' 天前'};
+const short=k=>String(k||'').startsWith('env:')?'':String(k||'').replace(/^\/Users\/[^/]+/,'~');
+const SEG=[['active','进行中'],['done','做完了'],['archived','归档'],['protected','别碰']];
+const DOW={7:'最近 7 天',15:'最近 15 天',30:'最近 30 天',60:'最近 60 天',90:'最近 90 天'};
+
+const state={values:{},projects:[],note:''};
+const pm={};   // 目录题：勾选的候选 + 手写的补充
+// 编辑模式：先把现值填进去（页面显示现值，导出时只发改动）
+if(EDIT){
+  for(const g of D.groups||[])for(const q of g.questions||[]){
+    if(!q||!q.id)continue;
+    if(q.type==='tools'){state.values.tools={};for(const t of D.tools||[])if(t.current!=null)state.values.tools[t.key]=t.current;continue}
+    if(q.type==='projects'||q.type==='note'||q.type==='text')continue;
+    if(q.current!=null)state.values[q.id]=q.current;
+    if(q.id==='conversations'&&q.current_days!=null)state.values.conversation_days=q.current_days;
+  }
+}
+const rows=(D.projects||[]).map(p=>{
+  const led=p.status||null;
+  const deliv0=EDIT?(p.deliverables||[]).slice():(p.deliverables&&p.deliverables.length?p.deliverables:(p.deliverables_guess||[])).slice();
+  const status=EDIT?led:(led||(p.default_status==='active'?'active':null));
+  return {p,orig:{status,deliverables:deliv0.slice()},status,deliv:deliv0.slice()};   // orig = 打开页面时的样子
+});
+const eff=q=>has(state.values,q.id)?state.values[q.id]:(EDIT?(q.current!=null?q.current:null):(q.recommended!==undefined?q.recommended:null));
+const effTool=t=>{const g=state.values.tools||{};return has(g,t.key)?g[t.key]:(EDIT?t.current:(t.recommended!=null?t.recommended:null))};
+function setVal(id,v){state.values[id]=v}
+function syncProjects(){state.projects=rows.map(r=>({key:r.p.key,name:r.p.name,status:r.status,deliverables:r.deliv.slice(),orig:{status:r.orig.status,deliverables:r.orig.deliverables.slice()}}))}
+
+function qCard(q){
+  const el=E('div',null,'q');el.id='q-'+q.id;
+  el.append(E('h3',(q.no?q.no+'. ':'')+(q.title||q.id)));
+  if(q.context)el.append(E('p',q.context,'ctx'));
+  const body=E('div');el.append(body);
+  if(q.why||q.risk){   // 为什么问这个：默认收起
+    const d=E('details',null,'why');d.append(E('summary','为什么问这个'));
+    if(q.why)d.append(E('p','清理时用在哪：'+q.why));
+    if(q.risk)d.append(E('p','答错了会怎样：'+q.risk));
+    el.append(d);
+  }
+  return {el,body};
+}
+function renderOpts(q,multi){
+  const box=E('div',null,'opts');
+  const cur=multi?new Set(eff(q)||[]):eff(q);
+  const rec=multi?new Set(q.recommended||[]):q.recommended;
+  for(const o of q.options||[]){
+    const locked=o.locked===true||o.value==='never';   // “永不读”灰色锁定，勾不了
+    const checked=locked?true:(multi?cur.has(o.value):same(o.value,cur));
+    const lab=E('label',null,'opt'+(locked?' locked':''));
+    const i=document.createElement('input');
+    i.type=multi?'checkbox':'radio';i.name='q-'+q.id;i.checked=checked;i.disabled=locked;
+    if(!locked)i.onchange=()=>{
+      if(multi){const v=new Set(eff(q)||[]);if(i.checked)v.add(o.value);else v.delete(o.value);setVal(q.id,[...v])}
+      else setVal(q.id,o.value);
+      refresh();
+    };
+    lab.append(i);
+    const body=E('div',null,'body');
+    const lb=E('div',null,'lb');
+    lb.textContent=(o.value==='never')?(o.label||'永不读'):(o.label||o.value);
+    if(multi?rec.has(o.value):same(o.value,rec))lb.append(E('span','推荐','tag'));
+    body.append(lb);
+    if(o.desc)body.append(E('div',o.desc,'desc'));
+    const pn=o.note||o.privacy_note;
+    if(pn)body.append(E('div',pn,'pnote'));
+    lab.append(body);
+    lab.dataset.on=String(checked&&!locked);if(locked)lab.append(E('span','已锁定','lockmark'));
+    box.append(lab);
+  }
+  if(multi&&q.id==='read_scope'&&D.privacy_note)box.append(E('p','提醒：'+D.privacy_note+'。“永不读”里的东西不会被读，也不会发给任何人。','privnote'));
+  return box;
+}
+function qSingle(q){
+  const card=qCard(q);
+  card.body.append(renderOpts(q,false));
+  if(q.id==='conversations'&&eff(q))card.body.append(daysBox(q));       // 选中后才出现“具体天数”
+  if(q.id==='delete_mode'&&!/Time Machine/.test(q.context||''))card.body.append(tmLine());                    // 处置方式旁显示最近一次备份
+  return card;
+}
+function qMulti(q){const card=qCard(q);card.body.append(renderOpts(q,true));return card}
+function daysBox(q){
+  const box=E('div',null,'subopts');
+  box.append(E('p','具体留多久？（可选）','lbl'));
+  const chips=E('div',null,'chips');
+  const cur=has(state.values,'conversation_days')?state.values.conversation_days:null;
+  for(const d of (q.days||CONV_DAYS)){
+    const b=E('button',DOW[d]||('最近 '+d+' 天'));b.type='button';b.className='chip';
+    b.setAttribute('aria-pressed',String(cur===d));
+    b.onclick=()=>{state.values.conversation_days=(cur===d?null:d);refresh()};
+    chips.append(b);
+  }
+  box.append(chips,E('p','不选就按上面的答案来。','hint'));
+  return box;
+}
+function tmLine(){
+  const t=Date.parse(D.time_machine_last||'');
+  return E('p',isNaN(t)?'没有找到 Time Machine 备份':'最近一次 Time Machine 备份：'+Math.max(0,Math.floor((Date.now()-t)/864e5))+' 天前','hint');
+}
+function qTools(q){
+  const card=qCard(q),box=E('div',null,'tools');
+  card.body.append(E('p','推荐：30 天内用过的，已选“常用”；其余你来选，不选就按“偶尔”。','rec'));
+  for(const t of D.tools||[]){
+    const row=E('div',null,'trow');
+    const nm=E('div',null,'nm');nm.append(document.createTextNode(t.name||t.key));
+    if((t.paths||[]).length)nm.append(E('div',t.paths.join('、'),'sub'));
+    row.append(nm,E('div',fmtBytes(t.bytes),'sz'),E('div',t.last_used?ago(t.last_used):'没用过','ago'));
+    const seg=E('div',null,'seg');seg.setAttribute('role','group');seg.setAttribute('aria-label',(t.name||t.key)+' 的使用频率');
+    const cur=effTool(t);
+    for(const [v,name] of [['often','常用'],['sometimes','偶尔'],['unused','不用了']]){
+      const b=E('button',name);b.type='button';b.setAttribute('aria-pressed',String(cur===v));
+      b.onclick=()=>{state.values.tools=state.values.tools||{};state.values.tools[t.key]=v;refresh()};
+      seg.append(b);
+    }
+    row.append(seg);box.append(row);
+  }
+  card.body.append(box);
+  return card;
+}
+function qProjects(q){
+  const card=qCard(q),box=E('div',null,'plist');
+  card.body.append(E('p','推荐：最近有改动的，已选“进行中”；看起来做完了的只提示，要你自己点。','rec'));
+  if(!rows.length){box.append(E('div','这次扫描没有认出项目。','none'));card.body.append(box);return card}
+  const hd=E('div',null,'phead');hd.append(E('span','项目'),E('span','体积'),E('span','最后活动'),E('span','状态'));box.append(hd);
+  for(const r of rows){
+    const p=r.p,el=E('div',null,'prow');
+    const nm=E('div',null);nm.append(E('div',p.name,'nm'));
+    const sub=[short(p.key),p.sessions>0?p.sessions+' 个 AI 会话':''].filter(Boolean).join(' · ');
+    if(sub)nm.append(E('div',sub,'sub'));
+    el.append(nm,E('div',fmtBytes(p.bytes),'sz'),E('div',p.last_active?ago(p.last_active):'—','ago'));
+    const seg=E('div',null,'seg');seg.setAttribute('role','group');seg.setAttribute('aria-label',(p.name||'项目')+' 的状态');
+    for(const [k,name] of SEG){const b=E('button',name);b.type='button';b.setAttribute('aria-pressed',String(r.status===k));
+      b.onclick=()=>{r.status=r.status===k?null:k;syncProjects();refresh()};seg.append(b)}
+    el.append(seg);
+    const d=E('details',null,'more deliv'),n=r.deliv.length;
+    const sm=E('summary','成品在哪'+(n?'（'+n+' 处）':''));
+    d.append(sm);
+    const ta=document.createElement('textarea');ta.value=r.deliv.join('\n');ta.placeholder='一行一个目录，例如 ~/Projects/短剧/成品';ta.setAttribute('aria-label',(p.name||'项目')+' 的成品目录');
+    ta.oninput=()=>{r.deliv=splitPaths(ta.value);sm.textContent='成品在哪'+(r.deliv.length?'（'+r.deliv.length+' 处）':'');syncProjects();updateStatus()};
+    d.append(ta,E('p','清理时，有副本的才放心清；清理前也会在这里查有没有文档引用了要清的东西。','hint'));
+    el.append(d);box.append(el);
+  }
+  card.body.append(box);
+  return card;
+}
+function candsOf(q){return (q.id==='deliverables'?(D.deliverable_candidates||[]):(D.top_dirs||[])).filter(c=>c&&c.path)}
+function pmOf(q){
+  if(!pm[q.id]){
+    const cands=candsOf(q),set=new Set(cands.map(c=>c.path));
+    const cur=(has(state.values,q.id)?state.values[q.id]:(EDIT?(q.current||[]):(q.recommended||[])))||[];
+    pm[q.id]={picked:cur.filter(p=>set.has(p)),text:cur.filter(p=>!set.has(p)).join('\n')};
+  }
+  return pm[q.id];
+}
+function qPaths(q){
+  const card=qCard(q),wrap=E('div',null,'paths'),m=pmOf(q),cands=candsOf(q);
+  card.body.append(E('p',q.id==='deliverables'?'推荐：先不选。不确定就空着，只是少放行一些副本。':'推荐：不勾。大多数人不用填，不填也不会碰重要文件。','rec'));
+  const box=E('div',null,'cands');
+  for(const c of cands){
+    const lab=E('label',null,'opt');
+    const i=document.createElement('input');i.type='checkbox';i.checked=m.picked.indexOf(c.path)>=0;
+    i.onchange=()=>{const j=m.picked.indexOf(c.path);if(i.checked){if(j<0)m.picked.push(c.path)}else if(j>=0)m.picked.splice(j,1);pathsSync(q);refresh()};
+    lab.append(i);
+    const body=E('div',null,'body');body.append(E('div',c.path,'lb'));
+    const dd=[c.why,c.bytes!=null?fmtBytes(c.bytes):''].filter(Boolean).join(' · ');if(dd)body.append(E('div',dd,'desc'));
+    lab.append(body);lab.dataset.on=String(i.checked);box.append(lab);
+  }
+  if(!cands.length)box.append(E('div','这次没有发现候选目录，直接在下面写也行。','hint'));
+  wrap.append(box);
+  const ta=document.createElement('textarea');ta.value=m.text;ta.placeholder='一行一个目录，例如 ~/Movies/成片';
+  ta.setAttribute('aria-label',(q.title||'目录')+' 补充');
+  ta.oninput=()=>{pmOf(q).text=ta.value;pathsSync(q)};
+  wrap.append(ta,E('p','一行一个目录。~ 代表你的家目录。','hint'));
+  card.body.append(wrap);
+  return card;
+}
+function pathsSync(q){const m=pmOf(q);setVal(q.id,[...m.picked,...splitPaths(m.text)]);updateStatus()}
+function qText(q){
+  const card=qCard(q);
+  card.body.append(E('p','推荐：没有就空着。','rec'));
+  const i=document.createElement('input');i.type='text';i.className='note';i.value=state.note||'';
+  i.placeholder='例如：下载里的视频都是课程，别动';
+  i.oninput=()=>{state.note=i.value;updateStatus()};
+  card.body.append(i);
+  return card;
+}
+function render(){
+  const body=$('body');body.replaceChildren();
+  for(const g of D.groups||[]){
+    const sec=E('section',null,'grp');sec.id='g-'+g.id;
+    sec.append(E('h2',g.title||''));
+    if(g.desc)sec.append(E('p',g.desc,'gdesc'));
+    for(const q of g.questions||[]){
+      let v=null;
+      if(q.type==='single')v=qSingle(q);
+      else if(q.type==='multi')v=qMulti(q);
+      else if(q.type==='tools')v=qTools(q);
+      else if(q.type==='projects')v=qProjects(q);
+      else if(q.type==='paths')v=qPaths(q);
+      else if(q.type==='text')v=qText(q);
+      if(v)sec.append(v.el);
+    }
+    body.append(sec);
+  }
+}
+function updateProg(){
+  const secs=[...document.querySelectorAll('.grp')];
+  if(!secs.length){$('prog').textContent='';return}
+  let n=1;const y=window.scrollY+150;
+  secs.forEach((s,i)=>{if(s.offsetTop<=y)n=i+1});
+  $('prog').textContent='第 '+n+' 组，共 '+secs.length+' 组';
+}
+function updateStatus(){
+  let n=0;
+  for(const k in state.values){
+    if(k==='conversation_days')continue;
+    if(k==='tools'){const t=state.values.tools||{};for(const key in t){const q=D.tools||[];const cur=q.find(x=>x.key===key);if(!EDIT||!cur||t[key]!==cur.current){n++;break}}continue}
+    const q=findQ(D,k);if(EDIT&&q&&same(state.values[k],q.current))continue;n++;
+  }
+  for(const r of rows)if(r.status!==r.orig.status||!same(r.deliv,r.orig.deliverables))n++;
+  if(String(state.note||'').trim()&&(!EDIT||String(state.note)!==String((findQ(D,'note')||{}).current||'')))n++;
+  $('status').textContent=n?('已改 '+n+' 处'):(EDIT?'还没改动':'都按推荐');
+}
+function refresh(){const y=window.scrollY;render();syncProjects();updateStatus();updateProg();window.scrollTo(0,y)}
+function resetRec(){
+  state.values={};state.note='';for(const k in pm)delete pm[k];
+  for(const r of rows){r.status=EDIT?r.orig.status:(r.orig.status||(r.p.default_status==='active'?'active':null));r.deliv=r.orig.deliverables.slice()}
+  refresh();
+}
+$('rec-top').onclick=resetRec;$('rec-bottom').onclick=resetRec;
+$('copy').onclick=async()=>{
+  syncProjects();
+  const v=buildSetupExport(state,D);
+  try{await navigator.clipboard.writeText(v);$('fallback').hidden=true;$('feedback').textContent='已复制。回到和 Agent 的对话里粘贴发送，它会保存你的设置。'}
+  catch(e){$('fallback').hidden=false;$('fallback').value=v;$('fallback').select();$('feedback').textContent='浏览器没让自动复制：请按 ⌘C 复制下面已选中的内容，再粘贴给 Agent。'}
+};
+if(MODE==='upgrade'){$('modnote').textContent='新版本多问几个问题，之前的设置都保留。';$('modnote').hidden=false}
+else if(MODE==='edit'){$('modnote').textContent='修改设置：下面是你现在的设置，只改想改的题，没改的不会重复发送。';$('modnote').hidden=false;
+  $('lead').textContent='这里只保存设置，不会删任何东西。';$('rec-top').textContent=$('rec-bottom').textContent='恢复成现在的设置'}
+for(const [n,u] of [['GitHub','https://github.com/sanshengai/sansheng-disk-cleanup'],['反馈问题','https://github.com/sanshengai/sansheng-disk-cleanup/issues'],['公众号','https://sanshengai.top/about/'],['小红书','https://www.xiaohongshu.com/user/profile/5c716b6d000000001000f5c4?xsec_token=YB0ZibE9n6PQ4ZFwQ-T84w0MA0FnGi_yFDgtAGhNHlE70%3D&xsec_source=app_share'],['小宇宙','https://namecard.xiaoyuzhoufm.com/nnl8x']]){
+  const a=E('a',n);a.href=u;a.target='_blank';a.rel='noopener';$('sitefoot').append(a)}
+window.addEventListener('scroll',updateProg,{passive:true});
+window.addEventListener('resize',updateProg);
+refresh();
+</script>

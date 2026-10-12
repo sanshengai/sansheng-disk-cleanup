@@ -1,4 +1,5 @@
-"""0.5 P3 看板：①「认识你的电脑」台账看板（plan.py onboard）与 ②清理看板的“我的项目”改版。
+"""0.5 P3 看板：①「认识你的电脑」台账看板（0.6 起由 plan.py setup 的设置页取代，onboard 是别名）与 ②清理看板。
+0.6：清理看板不再带台账表和全局设置；设置页的模板由别人并行编写，这里的 plan.py setup 用例用临时假模板。
 
 页面里的导出文本由 <script id="export-lib"> 里的纯函数拼出；这里用 node 执行那段，
 再用 scripts/prefs.py 的 parse_ledger / parse_settings / apply_settings 解析，保证页面写出的和 Agent 读到的是同一种格式。
@@ -46,6 +47,15 @@ def projects_file(env, scan_id="scan1", extra=None):
     return projs
 
 
+def fake_setup_template(env):
+    """assets/setup.html 由别处编写；这里只验证 plan.py 注入的数据，用一个带占位符的临时模板。"""
+    t = env.run.parent / "fake-setup.html"
+    t.write_text('<html><body><img src="__LOGO_DATA__"><script type="application/json" id="setup-data">__SETUP_JSON__</script>'
+                 '</body></html>', encoding="utf-8")
+    env.mp.setattr(plan, "SETUP_TEMPLATE", str(t))
+    return t
+
+
 def injected(html, script_id):
     m = re.search(r'<script type="application/json" id="%s">(.*?)</script>' % script_id, html, re.S)
     assert m, script_id
@@ -67,55 +77,53 @@ def run_node(page, expr_js, tmp_path):
 
 
 # ------------------------------------------------------------ ① 台账看板
-def test_onboard_injects_shown_projects_only_and_hides_internals(env):
+def test_setup_injects_shown_projects_only_and_hides_internals(env):
+    fake_setup_template(env)
     projects_file(env)
     env.write([], [])
-    assert plan.main(["onboard", "--run", str(env.run)]) == 0
-    html = (env.run / "onboard.html").read_text(encoding="utf-8")
-    data = injected(html, "onboard-data")
-    assert data["scan_id"] == "scan1"
+    assert plan.main(["onboard", "--run", str(env.run)]) == 0                      # onboard 是 setup 的别名
+    html = (env.run / "setup.html").read_text(encoding="utf-8")
+    data = injected(html, "setup-data")
+    assert data["scan_id"] == "scan1" and data["mode"] == "first" and data["version"] == 1
     assert [p["name"] for p in data["projects"]] == ["短剧", "旧稿", "不确定"]           # 只列 shown，保持体积降序
     assert data["projects"][0]["deliverables_guess"] == ["~/短剧/成品"] and data["projects"][2]["default_status"] == "unknown"
-    assert data["settings"]["retention_choices"] == [0, 7, 15, 30]
+    assert "settings" not in data
     assert all(set(p) <= {*plan.PROJECT_ROW_FIELDS, "status", "deliverables", "in_ledger"} for p in data["projects"])
     for sentinel in ("ROOT-SENTINEL", "CLAUDEDIR-SENTINEL", "SESSION-SENTINEL", "session_ids", "claude_dirs", "roots"):
         assert sentinel not in html, sentinel
-    assert "__ONBOARD_JSON__" not in html and "__LOGO_DATA__" not in html and "data:image/png;base64," in html
+    assert "__SETUP_JSON__" not in html and "__LOGO_DATA__" not in html and "data:image/png;base64," in html
 
 
-def test_onboard_page_offers_no_delete_action():
-    html = (ASSETS / "onboard.html").read_text(encoding="utf-8")
-    assert "删除" not in html and "删" not in html                    # 整页不出现任何“删”字：不是清理页
-    assert "复制，发给 Agent" in html and html.count('class="primary"') == 1  # 底部唯一主按钮
-    for s in ("进行中", "做完了", "归档", "别碰", "成品在哪", "AI 对话留多久", "稳妥", "推荐"):
-        assert s in html, s
-    assert "这是从扫描里认出来的项目。标一下状态，下次清理就按你的习惯来。" in html
-    assert "https://github.com/sanshengai/sansheng-disk-cleanup/issues" in html
-
-
-def test_onboard_requires_projects_json_and_matching_scan(env, capsys):
+def test_setup_missing_template_is_a_chinese_error(env, capsys):
+    projects_file(env)
     env.write([], [])
-    assert plan.main(["onboard", "--run", str(env.run)]) == 2
-    assert "probe projects" in capsys.readouterr().err and not (env.run / "onboard.html").exists()
+    env.mp.setattr(plan, "SETUP_TEMPLATE", str(env.run / "missing.html"))
+    assert plan.main(["setup", "--run", str(env.run)]) == 2
+    assert "文件不存在" in capsys.readouterr().err and not (env.run / "setup.html").exists()
+
+
+def test_setup_requires_projects_json_and_matching_scan(env, capsys):
+    fake_setup_template(env)
+    env.write([], [])
+    assert plan.main(["setup", "--run", str(env.run)]) == 2
+    assert "probe projects" in capsys.readouterr().err and not (env.run / "setup.html").exists()
     projects_file(env, scan_id="另一次扫描")
-    assert plan.main(["onboard", "--run", str(env.run)]) == 2
-    assert "scan_id" in capsys.readouterr().err and not (env.run / "onboard.html").exists()
-    env.mp.setattr(plan, "ONBOARD_TEMPLATE", str(env.run / "missing.html"))
-    assert plan.main(["onboard", "--run", str(env.run)]) == 2
+    assert plan.main(["setup", "--run", str(env.run)]) == 2
+    assert "scan_id" in capsys.readouterr().err and not (env.run / "setup.html").exists()
 
 
-def test_onboard_prefills_from_existing_ledger(env):
+def test_setup_prefills_from_existing_ledger(env):
+    fake_setup_template(env)
     projs = projects_file(env)
     env.write([], [])
     os.makedirs(projs[0]["key"], exist_ok=True)
     write_profile(env, retention_days=7, default_choice="safe",
                   projects={projs[0]["key"]: {"name": "短剧", "status": "archived", "deliverables": ["~/短剧/发布"],
                                               "updated_at": "2026-10-11T00:00:00Z", "source": "board"}})
-    assert plan.main(["onboard", "--run", str(env.run)]) == 0
-    data = injected((env.run / "onboard.html").read_text(encoding="utf-8"), "onboard-data")
+    assert plan.main(["setup", "--run", str(env.run), "--mode", "first"]) == 0
+    data = injected((env.run / "setup.html").read_text(encoding="utf-8"), "setup-data")
     first = data["projects"][0]
     assert first["status"] == "archived" and first["deliverables"] == ["~/短剧/发布"] and first["in_ledger"]
-    assert data["settings"]["retention_days"] == 7 and data["settings"]["default_choice"] == "safe"
     assert data["projects"][1]["status"] is None and not data["projects"][1]["in_ledger"]
 
 
@@ -130,7 +138,7 @@ TRICKY = [
 
 
 @pytest.mark.skipif(not HAS_NODE, reason="本机没有 node")
-@pytest.mark.parametrize("page", ["onboard.html", "dashboard.html"])
+@pytest.mark.parametrize("page", ["setup.html", "dashboard.html"])
 def test_ledger_line_round_trips_through_prefs_parser(page, tmp_path):
     line = run_node(page, "ledgerLine(%s)" % json.dumps(TRICKY, ensure_ascii=False), tmp_path)
     assert line.startswith("台账: ") and "\n" not in line and " " not in line and "\u0085" not in line
@@ -148,41 +156,12 @@ def test_ledger_line_round_trips_through_prefs_parser(page, tmp_path):
 
 
 @pytest.mark.skipif(not HAS_NODE, reason="本机没有 node")
-@pytest.mark.parametrize("page", ["onboard.html", "dashboard.html"])
-def test_settings_line_parses_with_prefs(page, tmp_path):
-    line = run_node(page, "settingsLine({days:30,def:'all'})", tmp_path)
-    settings, hide, errs = prefs.parse_settings("叁笙清理选择\n" + line)
-    assert errs == [] and hide == []
-    assert settings == {"保留天数": 30, "默认": "all"}                       # 只有这两项：别碰 / 成品不再是全局设置
-
-
-@pytest.mark.skipif(not HAS_NODE, reason="本机没有 node")
-def test_onboard_text_is_a_ledger_export_and_applies(env, tmp_path):
-    """整段导出文本：抬头被认成台账导出（没有清理授权），apply_settings 把台账与设置写进 profile，并记下 onboarded_at。"""
-    proj = env.home / "短剧"
-    deliv = env.home / "成品|a;b"
-    proj.mkdir()
-    deliv.mkdir()
-    entries = [{"key": str(proj), "name": "短剧", "status": "done", "deliverables": ["~/成品|a;b"]}]
-    text = run_node("onboard.html", "onboardText('scan1',%s,{days:7,def:'safe'})" % json.dumps(entries, ensure_ascii=False), tmp_path)
-    assert text.splitlines()[0] == "叁笙清理 · 项目台账" and text.splitlines()[1] == "scan_id: scan1"
-    assert prefs.is_ledger_export(text)
-    assert not any(l.startswith(("清理:", "回答:", "sel:", "seal:")) for l in text.splitlines())     # 不含任何清理授权行
-    done, errs = prefs.apply_settings(text)
-    assert errs == [], errs
-    p = json.loads(Path(protect.PROFILE).read_text(encoding="utf-8"))
-    key = os.path.realpath(proj)
-    assert p["projects"][key]["status"] == "done" and p["projects"][key]["deliverables"] == ["~/成品|a;b"]
-    assert p["retention_days"] == 7 and p["default_choice"] == "safe" and p["onboarded_at"]
-
-
-@pytest.mark.skipif(not HAS_NODE, reason="本机没有 node")
 def test_export_lib_rejects_unknown_status_and_empty_ledger(tmp_path):
     """反例：状态不在四种里的项目不进台账行（不会写出 Agent 读不懂的值）；没有项目也是合法的空台账（全默认）。"""
-    line = run_node("onboard.html", "ledgerLine([{key:'/k',name:'n',status:'delete'},{key:'/m',name:'n2',status:null}])", tmp_path)
+    line = run_node("dashboard.html", "ledgerLine([{key:'/k',name:'n',status:'delete'},{key:'/m',name:'n2',status:null}])", tmp_path)
     got, errs = prefs.parse_ledger(line)
     assert errs == [] and got == {}
-    assert run_node("onboard.html", "splitPaths(' ~/a \\n\\n~/a\\r\\n~/b|c ')", tmp_path) == ["~/a", "~/b|c"]
+    assert run_node("setup.html", "splitPaths(' ~/a \\n\\n~/a\\r\\n~/b|c ')", tmp_path) == ["~/a", "~/b|c"]
 
 
 # ------------------------------------------------------------ ② 清理看板
@@ -190,14 +169,16 @@ def dashboard_data(env):
     return injected((env.run / "board.html").read_text(encoding="utf-8"), "plan-data")
 
 
-def test_board_injects_projects_settings_and_proposal_fields(env):
+def test_board_injects_setup_summary_questions_and_proposal_fields(env):
     projs = projects_file(env)
     proj, build = one_card_env(env, "done", verdict="decide")
     (env.run / "projects.json").write_text(json.dumps(
         {"schema": "projects/1", "scan_id": "scan1", "created_at": "x", "shown_limit": 15,
          "projects": [dict(projs[0], key=os.path.realpath(proj), name="proj", roots=["/ROOT-SENTINEL"]), projs[1]], "skipped": []},
         ensure_ascii=False), encoding="utf-8")
-    write_profile(env, projects=ledger(proj, "done"), retention_days=30, default_choice="all", onboarded_at="2026-10-01T00:00:00Z")
+    write_profile(env, projects=ledger(proj, "done"), retention_days=30, default_choice="all", onboarded_at="2026-10-01T00:00:00Z",
+                  conversation_policy="sometimes", delete_mode="trash",
+                  pending_rules=[{"id": "p1", "text": "下载里的视频都是课程，别动", "kind": "protect"}, {"id": "bad"}])
     env.check()
     env.seal()
     assert plan.main(["propose", "--run", str(env.run)]) == 0
@@ -209,13 +190,13 @@ def test_board_injects_projects_settings_and_proposal_fields(env):
     q = next(x for x in pr["project_questions"] if x["type"] == "new_projects")
     assert q["count"] == 1 and q["projects"][0]["name"] == "旧稿"
     assert d["plan"]["cards"][0]["prefill"] == "删" and d["plan"]["cards"][0]["projects"][0]["key"] == os.path.realpath(proj)
-    by = {p["name"]: p for p in d["projects"]}
-    assert set(by) == {"proj", "旧稿"} and by["proj"]["status"] == "done" and by["proj"]["in_ledger"]
-    assert by["旧稿"]["status"] is None and not by["旧稿"]["in_ledger"]
-    assert d["settings"] == {"retention_days": 30, "default_choice": "all", "retention_choices": [0, 7, 15, 30]}
+    assert "projects" not in d and "settings" not in d                          # 台账表和全局设置不再放进清理看板
+    assert d["project_questions"] == pr["project_questions"]                      # 新项目 / 久没动的项目：单题卡
+    assert d["pending_rules"] == [{"id": "p1", "text": "下载里的视频都是课程，别动"}]   # 不合法的条目丢掉
+    assert d["archive_enabled"] is True
+    assert "旧对话：偶尔回去接着做（30 天内用过的留着）" in d["setup_summary"] and "删掉的东西：先放进废纸篓" in d["setup_summary"]
     for sentinel in ("ROOT-SENTINEL", "SESSION-SENTINEL", "CLAUDEDIR-SENTINEL", "session_ids"):
         assert sentinel not in html, sentinel
-    assert "setup" not in d
 
 
 def test_board_without_proposal_has_none_and_still_lists_ledger(env):
@@ -224,7 +205,7 @@ def test_board_without_proposal_has_none_and_still_lists_ledger(env):
     assert plan.main(["board", "--run", str(env.run)]) == 0
     d = dashboard_data(env)
     assert d["proposal"] is None                                           # 没有 proposal.json：页面不显示新项目提示
-    assert [p["name"] for p in d["projects"]] == ["proj"] and d["projects"][0]["status"] == "active"
+    assert d["project_questions"] == [] and d["pending_rules"] == [] and d["setup_summary"] == []
 
 
 def test_board_ignores_proposal_from_another_scan(env):
@@ -241,10 +222,11 @@ def test_board_ignores_proposal_from_another_scan(env):
 
 def test_dashboard_template_new_design():
     html = (ASSETS / "dashboard.html").read_text(encoding="utf-8")
-    for gone in ("第一次设置", "我的设置", "setup-tip", "renderSetup", "firstTime", "SETUP", "你在用的 AI 工具", "哪些目录永远别碰", "你的成品放在哪", "dock-foot"):
+    for gone in ("第一次设置", "我的设置", "setup-tip", "renderSetup", "firstTime", "SETUP", "你在用的 AI 工具", "哪些目录永远别碰", "你的成品放在哪", "dock-foot",
+                 "我的项目", "回到清单", "AI 对话留多久", "平时默认清到哪一档", "settingsLine", "projRow", "renderProjects"):      # 0.6：台账整表与全局设置区已删
         assert gone not in html, gone
-    for want in ("我的项目", "回到清单", "这个项目做完了", "还在做", "新发现 ", "标一下状态", "改了项目状态，Agent 会先重新核对再执行",
-                 "prefillOf", "ledgerLine(ledgerEntries())", "settingsLine(cfg)"):
+    for want in ("这个项目做完了", "还在做", "改了项目状态，Agent 会先重新核对再执行", "是进行中还是做完了？", "做完了吗？",
+                 "prefillOf", "ledgerLine(ledgerEntries())", "要改就跟我说“改设置”"):
         assert want in html, want
     assert "'GitHub','https://github.com/sanshengai/sansheng-disk-cleanup'" in html
     assert "'反馈问题','https://github.com/sanshengai/sansheng-disk-cleanup/issues'" in html
@@ -307,49 +289,17 @@ def test_dashboard_downgraded_markup_has_no_red_paragraph():
 
 # ------------------------------------------------------------ 发布前评审 中4 / 低6 / 低7
 
-@pytest.mark.skipif(not HAS_NODE, reason="本机没有 node")
-def test_onboard_preselects_only_active_never_done(tmp_path):
-    """扫描猜测的“做完了”不能当成用户标注预选；只有“进行中”预选，台账里已有的状态优先。"""
-    js = ("[initialStatus({default_status:'active'}),initialStatus({default_status:'done'}),"
-          "initialStatus({default_status:'unknown'}),initialStatus({}),"
-          "initialStatus({status:'archived',default_status:'done'}),initialStatus({status:'protected',default_status:'active'})]")
-    assert run_node("onboard.html", js, tmp_path) == ["active", None, None, None, "archived", "protected"]
-
-
-@pytest.mark.skipif(not HAS_NODE, reason="本机没有 node")
-@pytest.mark.parametrize("page", ["onboard.html", "dashboard.html"])
-def test_done_guess_is_only_a_small_hint(page, tmp_path):
-    now = "Date.parse('2026-10-12T00:00:00Z')"
-    js = (f"[doneHint({{default_status:'done',last_active:'2026-08-13T00:00:00Z'}},{now}),"
-          f"doneHint({{default_status:'done'}},{now}),doneHint({{default_status:'active',last_active:'2026-08-13T00:00:00Z'}},{now}),"
-          f"doneHint({{status:'active',default_status:'done',last_active:'2026-08-13T00:00:00Z'}},{now})]")
-    assert run_node(page, js, tmp_path) == ["看起来做完了（60 天没动）", "看起来做完了", "", ""]
-
-
-def test_onboard_export_only_has_marked_projects():
-    html = (ASSETS / "onboard.html").read_text(encoding="utf-8")
-    assert "status:initialStatus(p)" in html                          # 初始状态只走 initialStatus（不再把 done 预选）
-    assert "default_status==='active'||p.default_status==='done'" not in html
-    assert "entries(){return rows.filter(r=>r.status)" in html        # 导出只含有状态的（点过的或预选 active 的）
-
-
 def test_dashboard_has_no_done_preselect():
     html = (ASSETS / "dashboard.html").read_text(encoding="utf-8")
     assert "orig:p.status||null,status:p.status||null" in html and "default_status===" not in html.replace("p.default_status!=='done'", "")
 
 
-def test_settings_default_retention_is_zero_when_unset(env):
-    """低6：profile 没设保留天数时，页面数据是 0（不保留），不能让页面自己编一个 15 天。"""
-    projects_file(env)
-    env.write([], [])
-    assert plan.main(["onboard", "--run", str(env.run)]) == 0
-    assert injected((env.run / "onboard.html").read_text(encoding="utf-8"), "onboard-data")["settings"]["retention_days"] == 0
-    for page in ("onboard.html", "dashboard.html"):
-        html = (ASSETS / page).read_text(encoding="utf-8")
-        assert "S.retention_days>0?S.retention_days:0" in html and "retention_days:15" not in html
-    for bad in (None, 0, -3, True, "15"):
-        assert plan.settings_payload({"retention_days": bad})["retention_days"] == 0
-    assert plan.settings_payload({"retention_days": 30})["retention_days"] == 30
+def test_setup_summary_only_lists_what_was_set():
+    """没设过的项不写进“按你的设置”（页面不能替用户编一个默认值）。"""
+    import setup_q
+    assert setup_q.summary_lines({}) == []
+    assert setup_q.summary_lines({"retention_days": 30}) == []                      # 只有天数、没选过策略：不写
+    assert setup_q.summary_lines({"conversation_policy": "library"}) == ["旧对话：当资料库，都留着"]
 
 
 @pytest.mark.skipif(not HAS_NODE, reason="本机没有 node")

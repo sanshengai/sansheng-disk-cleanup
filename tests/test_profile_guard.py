@@ -120,3 +120,90 @@ def test_profile_apply_and_propose_remind_about_stale_seal(env, capsys, monkeypa
     assert "plan.py check 和 plan.py seal" in capsys.readouterr().err
     assert plan.main(["propose", "--run", str(env.run)]) == 0
     assert "设置在封存后改过" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------- 0.6：初始设置里会改变 check 结果的项也进闸门
+
+GUARDED_SETTINGS = {
+    "tools": {"codex": "unused"},
+    "conversation_policy": "library",
+    "rejects_policy": "keep",
+    "worktree_policy": "whole",
+    "big_file_age_days": 30,
+    "done_project_policy": "archive",
+    "installer_policy": "auto",
+}
+
+
+@pytest.mark.parametrize("key", sorted(GUARDED_SETTINGS))
+def test_new_setting_changed_after_seal_blocks_run(env, capsys, key):
+    """封存后改了任一会影响 check 的新设置：预演/正式执行都拒绝，什么都不删。"""
+    d, digest = setup(env)
+    write_profile(env, **{key: GUARDED_SETTINGS[key]})
+    assert act.main(run_argv(env, digest, "--dry-run")) == 2
+    assert "设置在封存后改过" in capsys.readouterr().err
+    assert act.main(run_argv(env, digest, "--skip-pilot", "--reason", "x")) == 2
+    capsys.readouterr()
+    assert (d / "a.bin").exists()
+    assert not list(env.run.glob("receipt*.json"))
+
+
+@pytest.mark.parametrize("key", sorted(GUARDED_SETTINGS))
+def test_new_setting_unchanged_runs(env, key):
+    write_profile(env, **{key: GUARDED_SETTINGS[key]})
+    d, digest = setup(env)
+    write_profile(env, **{key: GUARDED_SETTINGS[key]})
+    assert env.act("c01", digest=digest) == 0
+    assert not d.exists()
+
+
+def test_non_judging_settings_do_not_block(env):
+    """read_scope / delete_mode / governance_mode / confirm_mode / cloud_policy 与“常用 / 偶尔用”不影响放行，改了照常执行。"""
+    d, digest = setup(env)
+    write_profile(env, read_scope=["basic", "deep"], delete_mode="delete", governance_mode="tell",
+                  confirm_mode="board", cloud_policy="offline", default_choice="all",
+                  tools={"codex": "often", "claude-code": "sometimes"}, conversation_policy="sometimes",
+                  rejects_policy="until_done", installer_policy="ask", done_project_policy="intermediate")
+    assert env.act("c01", digest=digest) == 0
+    assert not d.exists()
+
+
+def test_guard_new_fields_default_equivalence_and_old_digest():
+    """没设 = 设成“等于没设”的值（含非法值）；0.5 的旧封存（没有这些字段）摘要不变。"""
+    import hashlib
+    base = protect.profile_guard({})
+    equal = protect.profile_guard({
+        "tools": {"codex": "often", "grok": "sometimes", "nope": "unused"}, "conversation_policy": "sometimes",
+        "rejects_policy": "until_done", "done_project_policy": "intermediate", "installer_policy": "ask",
+        "big_file_age_days": 45, "worktree_policy": "bogus", "read_scope": ["deep"], "delete_mode": "delete"})
+    assert equal["digest"] == base["digest"] and equal["fields"] == base["fields"]
+    # 0.5 旧封存摘要：只有旧七个字段
+    old_blob = json.dumps({"roots": ["~"], "extra_roots": [], "reference_roots": [], "protect": [],
+                           "deliverable_roots": [], "retention_days": 0},
+                          sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    assert base["digest"] == hashlib.sha256(old_blob.encode("utf-8")).hexdigest()[:12]
+    for key, val in GUARDED_SETTINGS.items():
+        assert protect.profile_guard({key: val})["digest"] != base["digest"], key
+    # 取值不同也算不同；tools 只看“不用了”，与顺序无关
+    assert protect.profile_guard({"tools": {"a": "x"}})["digest"] == base["digest"]
+    assert protect.profile_guard({"tools": {"codex": "unused", "grok": "unused"}})["digest"] == \
+        protect.profile_guard({"tools": {"grok": "unused", "codex": "unused"}})["digest"]
+    assert protect.profile_guard({"conversation_policy": "library"})["digest"] != \
+        protect.profile_guard({"conversation_policy": "done"})["digest"]
+    assert protect.profile_guard({"big_file_age_days": 0})["digest"] != protect.profile_guard({"big_file_age_days": 90})["digest"]
+
+
+def test_guard_values_match_setup_q():
+    """闸门里的允许值与题库一致：题库新增会影响判断的取值时，这里必须同步。"""
+    import setup_q
+    assert set(protect.GUARD_TOOL_KEYS) == set(setup_q.TOOL_KEYS)
+    assert tuple(protect.GUARD_BIG_DAYS) == tuple(setup_q.BIG_FILE_DAYS)
+    ids = {"conversation_policy": "conversations", "rejects_policy": "rejects", "worktree_policy": "worktrees",
+           "done_project_policy": "done_projects", "installer_policy": "installers"}
+    for field, qid in ids.items():
+        assert set(protect.GUARD_EFFECTIVE[field]) <= set(setup_q.SINGLE[qid][1]), field
+        assert setup_q.SINGLE[qid][0] == field
+    # 所有进闸门的新字段名都是题库的真字段
+    new = {k for k, _ in protect.PROFILE_GUARD_FIELDS} - {"roots", "extra_roots", "reference_roots", "protect",
+                                                           "deliverable_roots", "retention_days", "projects"}
+    assert new == set(ids) | {"tools", "big_file_age_days"}

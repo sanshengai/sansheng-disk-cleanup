@@ -2,20 +2,25 @@
 """复核并执行已封存的清理计划（契约第 8 节）。
 
 用法：
-  act.py run --run DIR --seal DIGEST --cards c01,c03 [--answers c02=删] [--sel SEL] [--dry-run | --pilot | --skip-pilot --reason 原因]
+  act.py run --run DIR --seal DIGEST --cards c01,c03 [--answers c02=删 c04=归档] [--sel SEL] [--dry-run | --pilot | --skip-pilot --reason 原因]
+             [--trash | --no-trash] [--archive-to /Volumes/盘名/目录]
   act.py go --run DIR (--choice safe|recommended|all | --from-board 看板导出文本文件)
   act.py status --run DIR
 
-只信 seal.json（digest 必须与 --seal 及内容重算一致）。删除一律 os.unlink / os.rmdir
-逐个进行，不用 rm -rf，不用 shutil.rmtree；每个条目删除前再做一次保护检查，
+只信 seal.json（digest 必须与 --seal 及内容重算一致）。处置方式三种（0.6）：delete 直接删（os.unlink）、
+trash 同盘 os.rename 进 ~/.Trash/叁笙清理-<scan_id>-<UTC>/、archive 复制到外接硬盘并 sha256 校验一致后再处置原文件。
+默认读 profile.delete_mode（缺省 delete）；一律逐个文件、os.rmdir 清空目录，
+不用 rm -rf，不用 shutil.rmtree；每个条目删除前再做一次保护检查，
 只用 lstat，绝不跟随符号链接。native 命令不经过 shell。
 """
 import argparse
 import errno
 import glob
 import os
+import hashlib
 import re
 import shlex
+import shutil
 import stat
 import subprocess
 import sys
@@ -39,6 +44,10 @@ GIT_TIMEOUT = 120
 LIST_CAP = 1000
 SAMPLE = 20
 DELETE_WORD = "删"
+ARCHIVE_WORD = "归档"
+VOLUMES_ROOT = "/Volumes"      # 归档目标必须在这下面（外接硬盘）；测试里可替换
+ARCHIVE_MARGIN = 1.05          # 目标盘剩余空间至少是本卡字节的 1.05 倍
+HASH_CHUNK = 1 << 20
 VACUUM_PAGES = 5000       # 每批回收的页数（4KB 页约 20MB），批间释放写锁，不长时间挡住正在运行的 Codex
 VACUUM_MAX_BATCHES = 20000
 VACUUM_FLAT_BATCHES = 20  # 主文件 + -wal 合计体积连续这么多批不降就停
@@ -156,6 +165,187 @@ def list_ignored(real_path):
     return [os.path.join(cwd, p) for p in _split_z(raw)]
 
 
+# ----------------------------------------------------------------- 处置方式（删除 / 废纸篓 / 归档）
+
+def _dev(path):
+    return os.stat(path).st_dev
+
+
+def _free_of(path):
+    st = os.statvfs(path)
+    return st.f_bavail * st.f_frsize
+
+
+def rel_for_store(path):
+    """搬到废纸篓或归档盘时保持的目录结构：家目录内用相对家目录的路径，家目录外放 _root/ 下。"""
+    home = protect.HOME.rstrip("/")
+    if path.startswith(home + "/"):
+        return path[len(home) + 1:]
+    return os.path.join("_root", path.lstrip("/"))
+
+
+def file_sha256(path):
+    """符号链接比较它指向的目标文本，不跟随；普通文件分块算 sha256。"""
+    if os.path.islink(path):
+        return "link:" + os.readlink(path)
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(HASH_CHUNK), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def resolve_delete_mode(args, profile):
+    """--trash / --no-trash 优先，其次读 profile.delete_mode，缺省 delete（与 0.5 行为一致）。"""
+    if getattr(args, "trash", False):
+        return "trash"
+    if getattr(args, "no_trash", False):
+        return "delete"
+    mode = (profile or {}).get("delete_mode")
+    return mode if mode in ("trash", "delete") else "delete"
+
+
+def check_archive_target(path, needed):
+    """归档目标是否合格。返回 None 或中文原因。要求：在 /Volumes/<盘名>/ 下、目录存在可写、
+    和家目录不是同一块盘、剩余空间不小于所需的 1.05 倍。"""
+    if not path:
+        return "要归档，但没有给归档目录（--archive-to，或看板里“归档到”）"
+    d = os.path.abspath(path)
+    root = VOLUMES_ROOT.rstrip("/")
+    if not d.startswith(root + "/") or d == root + "/":
+        return f"归档目录必须在外接硬盘上（{root}/<盘名>/…），收到 {path}"
+    if not os.path.isdir(d):
+        return f"归档目录 {d} 不存在（硬盘没插好，或路径写错了）"
+    rp = os.path.realpath(d)
+    if not rp.startswith(root + "/"):
+        return f"归档目录 {d} 实际指向 {rp}，不在外接硬盘上"
+    try:
+        same = _dev(d) == _dev(protect.HOME)
+    except OSError as exc:
+        return f"读不到归档目录所在的盘：{exc.strerror or exc}"
+    if same:
+        return "归档目录和你的电脑在同一块盘上，搬过去不会腾出空间"
+    if not os.access(d, os.W_OK):
+        return f"没有往 {d} 写入的权限"
+    try:
+        free = _free_of(d)
+    except OSError as exc:
+        return f"读不到归档盘剩余空间：{exc.strerror or exc}"
+    if free < needed * ARCHIVE_MARGIN:
+        return f"归档盘剩余空间不够（需要约 {fmt_bytes(int(needed * ARCHIVE_MARGIN))}，只剩 {fmt_bytes(free)}）"
+    return None
+
+
+class Disposer:
+    """统一的“处置一个文件”步骤。mode：delete / trash / archive；archive 逐个复制并校验一致后，
+    原文件再按 source_mode（trash 或 delete）处置。error 非空 = 这张卡整卡跳过（归档目标不合格）。"""
+
+    def __init__(self, mode="delete", source_mode="delete", scan_id="", stamp="", archive_to=None, error=None):
+        self.mode, self.source_mode, self.error = mode, (source_mode if mode == "archive" else mode), error
+        safe = (scan_id or "scan").replace("/", "_")
+        self.trash_dir = (os.path.join(protect.HOME, ".Trash", f"叁笙清理-{safe}-{stamp}")
+                          if "trash" in (mode, self.source_mode) else None)
+        self.archive_root = os.path.join(os.path.abspath(archive_to), f"叁笙归档-{safe}") if mode == "archive" and archive_to else None
+        self.volume = None
+        if self.archive_root:
+            tail = os.path.abspath(archive_to)[len(VOLUMES_ROOT.rstrip("/")) + 1:]
+            self.volume = tail.split("/", 1)[0] or None
+
+    def describe(self):
+        d = {"mode": self.mode, "dir": self.archive_root if self.mode == "archive" else self.trash_dir}
+        if self.mode == "archive":
+            d["source"] = self.source_mode
+            d["volume"] = self.volume
+            if self.trash_dir:
+                d["source_dir"] = self.trash_dir
+        return d
+
+    def plan_text(self):
+        if self.mode == "trash":
+            return "将移入废纸篓"
+        if self.mode == "archive":
+            after = "再移入废纸篓" if self.source_mode == "trash" else "再删除原文件"
+            return f"将搬到 {self.archive_root}（逐个校验一致后{after}）"
+        return "将删除"
+
+    def dispose(self, path):
+        """处置一个文件。返回 (None, None) 成功；("skip", 原因) 或 ("fail", 原因)。"""
+        if self.mode == "archive":
+            bad = self._archive_copy(path)
+            if bad:
+                return bad
+        return self._remove_source(path)
+
+    def _remove_source(self, path):
+        if self.source_mode == "trash":
+            dest = os.path.join(self.trash_dir, rel_for_store(path))
+            if os.path.lexists(dest):
+                return "fail", "废纸篓里已有同名文件，没有覆盖"
+            try:
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                os.rename(path, dest)
+            except OSError as exc:
+                if exc.errno == errno.EXDEV:
+                    self._prune(os.path.dirname(dest), os.path.dirname(self.trash_dir))
+                    extra = "（已复制到归档盘并校验一致，原文件保留）" if self.mode == "archive" else ""
+                    return "skip", "不在同一块盘，没法放进废纸篓" + extra
+                return "fail", f"移入废纸篓失败：{exc.strerror or exc}"
+            return None, None
+        try:
+            os.unlink(path)
+        except OSError as exc:
+            return "fail", f"unlink 失败：{exc.strerror or exc}"
+        return None, None
+
+    @staticmethod
+    def _prune(d, stop):
+        """EXDEV 时 makedirs 留下的空目录（含本次的废纸篓文件夹）顺手收掉：只 rmdir，非空自然失败，stop 本身不动。"""
+        while d and d != stop and d.startswith(stop + "/"):
+            try:
+                os.rmdir(d)
+            except OSError:
+                return
+            d = os.path.dirname(d)
+
+    def _archive_copy(self, path):
+        dest = os.path.join(self.archive_root, rel_for_store(path))
+        tmp = dest + ".part"
+        try:
+            want = file_sha256(path)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            if os.path.lexists(dest):
+                if file_sha256(dest) == want:
+                    return None          # 上次复制过且一致（中断后重跑），直接认
+                return "fail", "归档盘上已有同名但内容不同的文件，没有覆盖，原文件保留"
+            if os.path.lexists(tmp):
+                os.unlink(tmp)
+            shutil.copy2(path, tmp, follow_symlinks=False)
+            if file_sha256(tmp) != want:
+                os.unlink(tmp)
+                return "fail", "复制到归档盘后校验不一致，原文件保留"
+            os.replace(tmp, dest)
+        except OSError as exc:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            return "fail", f"复制到归档盘失败，原文件保留：{exc.strerror or exc}"
+        return None
+
+
+def disposal_flags(it):
+    """回执条目 → (已腾出, 在废纸篓里, 搬到了归档盘)。没有 disposal 字段的旧回执、native 都按“已删除”算。
+    归档且原文件已删 = 既腾出又在归档盘；归档且原文件进废纸篓 = 在废纸篓（清空后才腾出）又在归档盘。"""
+    d = it.get("disposal") if isinstance(it, dict) else None
+    mode = (d or {}).get("mode") or "delete"
+    if mode == "trash":
+        return False, True, False
+    if mode == "archive":
+        in_trash = (d or {}).get("source") == "trash"
+        return (not in_trash), in_trash, True
+    return True, False, False
+
+
 # ----------------------------------------------------------------- 目录树与 keep
 
 def walk_tree(root):
@@ -217,8 +407,9 @@ def alloc_bytes(st):
 
 
 class ItemResult:
-    def __init__(self, index, item):
+    def __init__(self, index, item, disp=None):
         self.d = {"index": index, "path": item.get("path"), "method": item.get("method"),
+                  "disposal": (disp or Disposer()).describe(),
                   "scope": item.get("scope"), "status": None, "reason": None,
                   "removed": {"files": 0, "dirs": 0, "bytes": 0, "sample": []},
                   "skipped": [], "skipped_count": 0, "failed": [], "failed_count": 0,
@@ -250,7 +441,8 @@ class ItemResult:
                 d["status"] = "removed"
             else:
                 d["status"] = "skipped"
-                d["reason"] = d["reason"] or "没有可删除的内容"
+                first = d["skipped"][0]["reason"] if d["skipped"] else None
+                d["reason"] = d["reason"] or (f"没有可处理的内容（{first}）" if first else "没有可删除的内容")
         return d
 
 
@@ -398,7 +590,8 @@ def collect_candidates(item, rp, profile, res):
     return files, [], False
 
 
-def delete_files(files, res, parent_cache):
+def delete_files(files, res, parent_cache, disp=None):
+    disp = disp or Disposer()
     for p, st0 in files:
         parent = os.path.dirname(p)
         expect = parent_cache.setdefault(parent, os.path.realpath(parent))
@@ -416,10 +609,12 @@ def delete_files(files, res, parent_cache):
         if (st.st_ino, st.st_dev) != (st0.st_ino, st0.st_dev):
             res.add_skip(p, "删除前被替换（ino 变化）")
             continue
-        try:
-            os.unlink(p)
-        except OSError as exc:
-            res.add_fail(p, f"unlink 失败：{exc.strerror or exc}")
+        kind, why = disp.dispose(p)
+        if kind == "skip":
+            res.add_skip(p, why)
+            continue
+        if kind == "fail":
+            res.add_fail(p, why)
             continue
         r = res.d["removed"]
         r["files"] += 1
@@ -447,7 +642,7 @@ def delete_dirs(dirs, res, profile):
         res.d["removed"]["dirs"] += 1
 
 
-def execute_item(index, item, profile, dry_run, now, run=None):
+def execute_item(index, item, profile, dry_run, now, run=None, disp=None):
     """进程闸门（知识卡“运行中只报告不执行”）：producer 声明的 blocked_by_processes 任一在运行或无法确认，
     正式执行（含试点）直接 skipped；预演照常算清单，但在结果里标 blocked_by 和提示，不改变“不删任何东西”。"""
     running, unknown = blocking_processes(item)
@@ -457,17 +652,18 @@ def execute_item(index, item, profile, dry_run, now, run=None):
         else:
             why = "无法确认 " + "、".join(unknown) + " 是否在运行（pgrep 超时或出错），保守跳过"
         if not dry_run:
-            return ItemResult(index, item).skip_item(why)
-        d = _execute_item(index, item, profile, dry_run, now, run)
+            return ItemResult(index, item, disp).skip_item(why)
+        d = _execute_item(index, item, profile, dry_run, now, run, disp)
         d["blocked_by"] = running + unknown
         d["blocked_reason"] = why
         d["reason"] = f"{d['reason'] or ''}；正式执行时会跳过：{why}".lstrip("；")
         return d
-    return _execute_item(index, item, profile, dry_run, now, run)
+    return _execute_item(index, item, profile, dry_run, now, run, disp)
 
 
-def _execute_item(index, item, profile, dry_run, now, run=None):
-    res = ItemResult(index, item)
+def _execute_item(index, item, profile, dry_run, now, run=None, disp=None):
+    disp = disp or Disposer()
+    res = ItemResult(index, item, disp)
     if item.get("method") not in ("delete", "native") or (
             item["method"] == "delete" and item.get("scope") not in plan.SCOPES):
         return res.skip_item("封存条目的 method/scope 不合法")
@@ -476,7 +672,11 @@ def _execute_item(index, item, profile, dry_run, now, run=None):
         return res.skip_item(why)
 
     if item["method"] == "native":
+        res.d["disposal"] = {"mode": "native", "dir": None}      # 原生命令按各工具自己的方式清，不走废纸篓和归档
         return run_native(item, rp, res, dry_run, now, run)
+
+    if disp.error:                  # 归档目标不合格：整卡不动
+        return res.skip_item(disp.error)
 
     cand = collect_candidates(item, rp, profile, res)
     if cand is None:
@@ -498,11 +698,11 @@ def _execute_item(index, item, profile, dry_run, now, run=None):
         r["files"], r["bytes"] = len(files), sum(alloc_bytes(st) for _, st in files)
         r["sample"] = [p for p, _ in files[:SAMPLE]]
         res.d["status"] = "planned"
-        res.d["reason"] = f"dry-run：将删除 {len(files)} 个文件"
+        res.d["reason"] = f"dry-run：{disp.plan_text()} {len(files)} 个文件"
         return res.finish()
 
     parent_cache = {}
-    delete_files(files, res, parent_cache)
+    delete_files(files, res, parent_cache, disp)
     if item["scope"] == "ignored-only":
         # 只清理因删除而变空的目录（根目录自身保留）
         touched = set()
@@ -651,10 +851,10 @@ def load_seal(run, digest):
 
 
 def select_cards(seal, requested, answers):
-    """返回 [(card_id, 是否执行, 原因)]。decide 卡只在答复「删」时执行（即使没出现在 --cards 里）。"""
+    """返回 [(card_id, 是否执行, 原因)]。decide 卡只在答复「删」或「归档」时执行（即使没出现在 --cards 里）。"""
     order = list(requested)
     for cid, ans in answers.items():
-        if ans == DELETE_WORD and cid not in order:
+        if ans in (DELETE_WORD, ARCHIVE_WORD) and cid not in order:
             order.append(cid)
     out = []
     for cid in order:
@@ -663,14 +863,14 @@ def select_cards(seal, requested, answers):
         if card is None:
             out.append((cid, False, "不在封存内（未通过校验、被降级或编号错误）"))
         elif card["verdict"] == "decide":
-            if ans == DELETE_WORD:
+            if ans in (DELETE_WORD, ARCHIVE_WORD):
                 out.append((cid, True, None))
             elif ans is None:
                 out.append((cid, False, "decide 卡片没有收到答复，不执行"))
             else:
                 out.append((cid, False, f"答复为「{ans}」，不执行"))
         else:
-            if ans is not None and ans != DELETE_WORD:
+            if ans is not None and ans not in (DELETE_WORD, ARCHIVE_WORD):
                 out.append((cid, False, f"答复为「{ans}」，不执行"))
             else:
                 out.append((cid, True, None))
@@ -769,20 +969,50 @@ def pilot_order(seal, selection):
     return [(cid, idx) for _, _, _, idx, cid in cand]
 
 
-def run_plan(run, seal, selection, dry_run, pilot=False):
+def make_disposer(card, archive, opts, scan_id, stamp):
+    """这张卡怎么处置：答复「归档」→ archive（目标先整体校验，不合格整卡跳过）；否则按 delete_mode。"""
+    base = opts.get("delete_mode") or "delete"
+    if not archive:
+        return Disposer(base, scan_id=scan_id, stamp=stamp)
+    target = opts.get("archive_to")
+    needed = 0
+    for it in card.get("items") or []:
+        try:
+            needed += int(it.get("bytes") or 0)
+        except (TypeError, ValueError):
+            pass
+    err = check_archive_target(target, needed)
+    return Disposer("archive", source_mode=base, scan_id=scan_id, stamp=stamp, archive_to=target, error=err)
+
+
+def run_plan(run, seal, selection, dry_run, pilot=False, opts=None, answers=None):
+    """opts：{"delete_mode": delete|trash, "archive_to": 目录或 None}；answers：{卡号: 答复}，答复「归档」的卡走归档。
+    缺省（都不给）= 0.5 行为：直接删除。"""
+    opts = opts or {}
+    answers = answers or {}
     profile = plan.load_profile()
     now = time.time()
     before = free_bytes()
-    receipt = {"schema": "receipt/1", "scan_id": seal["scan_id"], "seal": seal["digest"],
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    scan_id = seal["scan_id"]
+    disposers = {}
+
+    def disp_for(cid):
+        if cid not in disposers:
+            disposers[cid] = make_disposer(seal["cards"][cid], answers.get(cid) == ARCHIVE_WORD, opts, scan_id, stamp)
+        return disposers[cid]
+
+    receipt = {"schema": "receipt/1", "scan_id": scan_id, "seal": seal["digest"],
                "started_at": now_iso(), "dry_run": dry_run, "cards": [],
-               "mode": "dry_run" if dry_run else ("pilot" if pilot else "full")}
+               "mode": "dry_run" if dry_run else ("pilot" if pilot else "full"),
+               "delete_mode": opts.get("delete_mode") or "delete"}
     pilot_results = {}
     if pilot:
         # 试点：全局按 pilot_order 逐条尝试，直到有一条真正执行（removed/partial/failed）；其余条目不执行也不记录。
         # 试点证明执行路径可用，不证明每条都安全
         for cid, idx in pilot_order(seal, selection):
             it = seal["cards"][cid]["items"][idx]
-            r = execute_item(it.get("index", idx), it, profile, dry_run, now, run)
+            r = execute_item(it.get("index", idx), it, profile, dry_run, now, run, disp_for(cid))
             pilot_results.setdefault(cid, []).append(r)
             if r["status"] in ("removed", "partial", "failed"):
                 receipt["pilot_done"] = True
@@ -795,14 +1025,22 @@ def run_plan(run, seal, selection, dry_run, pilot=False):
         if pilot:
             items = pilot_results.get(cid, [])
         else:
-            items = [execute_item(it.get("index", i), it, profile, dry_run, now, run)
+            d = disp_for(cid)
+            items = [execute_item(it.get("index", i), it, profile, dry_run, now, run, d)
                      for i, it in enumerate(card["items"])]
         entry = {"id": cid, "title": card.get("title"), "verdict": card["verdict"],
                  "status": "planned" if dry_run else ("pilot" if pilot else "executed"), "items": items}
+        if answers.get(cid) == ARCHIVE_WORD:
+            entry["archive"] = True
         if pilot and not items:
             entry["status"] = "skipped"
             entry["reason"] = "试点模式只执行一条"
         receipt["cards"].append(entry)
+    if any(d.mode == "archive" for d in disposers.values()):
+        receipt["archive_to"] = opts.get("archive_to")
+    trash_dirs = sorted({d.trash_dir for d in disposers.values() if d.trash_dir})
+    if trash_dirs:
+        receipt["trash_dir"] = trash_dirs[0]
     if pilot:
         receipt["pilot"] = True
     if not dry_run and codex_deleted(receipt):
@@ -810,7 +1048,7 @@ def run_plan(run, seal, selection, dry_run, pilot=False):
     after = free_bytes()
     summary = {"removed_files": 0, "removed_dirs": 0, "skipped_items": 0, "skipped_entries": 0,
                "failed_items": 0, "failed_entries": 0, "removed_items": 0, "bytes_by_files": 0,
-               "bytes_native": 0}
+               "bytes_native": 0, "bytes_freed_now": 0, "bytes_trash": 0, "bytes_archived": 0}
     for c in receipt["cards"]:
         for it in c["items"]:
             summary["removed_files"] += it["removed"]["files"]
@@ -822,16 +1060,22 @@ def run_plan(run, seal, selection, dry_run, pilot=False):
                 summary["removed_items"] += 1
                 if it["method"] == "native":
                     summary["bytes_native"] += it["removed"]["bytes"]
+                freed, in_trash, archived = disposal_flags(it)
+                b = it["removed"]["bytes"]
+                summary["bytes_freed_now"] += b if freed else 0
+                summary["bytes_trash"] += b if in_trash else 0
+                summary["bytes_archived"] += b if archived else 0
             elif it["status"] == "skipped":
                 summary["skipped_items"] += 1
             elif it["status"] == "failed":
                 summary["failed_items"] += 1
     measured = after - before
     reclaimed = sum(max(0, r.get("reclaimed", 0)) for r in receipt.get("history_reclaim", []))
-    # bytes_by_files 已包含原生命令条目的实测字节（removed.bytes），bytes_native 只是其中的原生命令部分
+    # bytes_by_files 已包含原生命令条目的实测字节（removed.bytes），bytes_native 只是其中的原生命令部分。
+    # 放进废纸篓的字节要清空废纸篓才腾出，不计入“按条目释放”（否则会和磁盘余量变化对不上）
     summary.update({"free_before": before, "free_after": after, "freed_measured": measured,
                     "history_reclaimed": reclaimed,
-                    "freed_by_items": summary["bytes_by_files"] + reclaimed})
+                    "freed_by_items": summary["bytes_freed_now"] + reclaimed})
     if not dry_run:
         diff = measured - summary["freed_by_items"]
         summary["difference"] = diff
@@ -863,9 +1107,12 @@ def print_receipt(rc):
             r = it["removed"]
             if r["files"] or r["dirs"]:
                 print(f"        文件 {r['files']}、目录 {r['dirs']}、{fmt_bytes(r['bytes'])}")
+            for sk in it["skipped"][:3]:
+                if "废纸篓" in sk["reason"] or "归档" in sk["reason"]:
+                    print(f"        跳过 {sk['path']}：{sk['reason']}")
             for f in it["failed"][:5]:
                 print(f"        失败 {f['path']}：{f['error']}")
-    print(f"合计：删除文件 {s['removed_files']}、目录 {s['removed_dirs']}，跳过条目 {s['skipped_entries']}，"
+    print(f"合计：处理文件 {s['removed_files']}、目录 {s['removed_dirs']}，跳过条目 {s['skipped_entries']}，"
           f"失败条目 {s['failed_entries']}；按文件 {fmt_bytes(s['bytes_by_files'])}", end="")
     if rc["dry_run"]:
         print("（预计）")
@@ -874,9 +1121,13 @@ def print_receipt(rc):
         for r in rc.get("history_reclaim", []):
             print(f"  历史库回收 {r['db']}：{fmt_bytes(r['size_before'])} → {fmt_bytes(r['size_after'])}"
                   + (f"；{r['error']}" if r.get("error") else f"，完整性 {r.get('integrity')}"))
-        print(f"按条目核算释放 {fmt_bytes(s['freed_by_items'])}（删除的文件 {fmt_bytes(s['bytes_by_files'])}，"
+        print(f"按条目核算释放 {fmt_bytes(s['freed_by_items'])}（直接删除的文件 {fmt_bytes(s.get('bytes_freed_now', s['bytes_by_files']))}，"
               f"其中原生命令 {fmt_bytes(s['bytes_native'])}；历史库回收 {fmt_bytes(s['history_reclaimed'])}）；"
               f"磁盘余量变化 {fmt_bytes(s['freed_measured'])}")
+        if s.get("bytes_trash"):
+            print(f"已移入废纸篓 {fmt_bytes(s['bytes_trash'])}（{rc.get('trash_dir')}）：清空废纸篓后才会真正腾出，我不会替你清空")
+        if s.get("bytes_archived"):
+            print(f"已搬到归档盘 {fmt_bytes(s['bytes_archived'])}（{rc.get('archive_to')}）")
         if s.get("difference") and abs(s["difference"]) >= 64 * 1024 * 1024:
             print(f"  差异 {fmt_bytes(s['difference'])}：{s['difference_note']}")
         if rc.get("pilot"):
@@ -968,13 +1219,14 @@ def gate_command(args, sel, flag):
     return " ".join(shlex.quote(c) for c in cmd)
 
 
-def record_choices(run, seal, chosen):
-    """飞轮：正式执行完，按 cardkeys.json（propose / board 写出）记下这次每一类删了没有。记录失败不影响清理结果。"""
+def record_choices(run, seal, chosen, skip=()):
+    """飞轮：正式执行完，按 cardkeys.json（propose / board 写出）记下这次每一类删了没有。记录失败不影响清理结果。
+    skip：答复「归档」的卡——搬走不等于删掉，也不是拒绝，不记进“删没删”的偏好里。"""
     try:
         keys = plan.read_json(os.path.join(run, "cardkeys.json"))
     except (OSError, ValueError):
         return
-    offered = [{"id": cid, **v} for cid, v in keys.items() if isinstance(v, dict) and cid in (seal.get("cards") or {})]
+    offered = [{"id": cid, **v} for cid, v in keys.items() if isinstance(v, dict) and cid in (seal.get("cards") or {}) and cid not in skip]
     try:
         plan.prefs.record_choices(seal.get("scan_id"), offered, set(chosen))
     except OSError as exc:
@@ -1066,7 +1318,9 @@ def cmd_run(args):
         gate = {"dry_run_receipt": dry_rc, "pilot_receipt": pilot_rc, "skip_pilot": bool(args.skip_pilot)}
         if args.skip_pilot:
             gate["skip_reason"] = args.reason.strip()
-    receipt = run_plan(run, seal, selection, args.dry_run, pilot=args.pilot)
+    opts = {"delete_mode": resolve_delete_mode(args, plan.load_profile()),
+            "archive_to": getattr(args, "archive_to", None)}
+    receipt = run_plan(run, seal, selection, args.dry_run, pilot=args.pilot, opts=opts, answers=answers)
     receipt["sel"] = sel
     receipt["cards_requested"] = requested
     receipt["answers"] = answers
@@ -1086,7 +1340,8 @@ def cmd_run(args):
     if not args.dry_run and not args.pilot:
         path = os.path.join(run, "receipt.json")
         plan.write_json(path, receipt)
-        record_choices(run, seal, [cid for cid, do, _ in selection if do])
+        record_choices(run, seal, [cid for cid, do, _ in selection if do],
+                       skip=[cid for cid, a in answers.items() if a == ARCHIVE_WORD])
     print(f"回执：{path}")
     if not args.dry_run and not args.pilot and not getattr(args, "no_report", False):
         finish_report(run)          # 看板路径（手动 run）正式执行后同样自动出成果页；go 自己在全部步骤结束后生成，传 no_report 避免重复
@@ -1102,6 +1357,7 @@ def cmd_go(args):
     """按 proposal.json 里用户回复的那一档，连着跑 预演 → 试点 → 正式执行；任何一步有异常就停下，什么都不往下做。
     用户在对话里回的那一句（如“好”）就是本轮的明确选择；卡号、答复、sel 一律从提案读，Agent 不转抄。
     --from-board <导出文本文件>：用户从看板复制回来的清单就是本轮的明确选择，见 cmd_go_from_board。"""
+    started = plan.prefs.now_iso()
     if getattr(args, "from_board", None):
         if args.choice:
             print("拒绝执行：--choice 与 --from-board 只能给一个", file=sys.stderr)
@@ -1128,13 +1384,49 @@ def cmd_go(args):
         print(f"拒绝执行：提案里没有“{args.choice}”这一档，或这一档是空的", file=sys.stderr)
         return 2
     base = dict(run=run, seal=proposal.get("seal") or "", cards=",".join(opt["cards"]), answers=list(opt.get("answers") or []),
-                sel=opt.get("sel"), skip_pilot=False, reason=None, no_report=True)
-    return _go_steps(run, base)
+                sel=opt.get("sel"), skip_pilot=False, reason=None, no_report=True, **_dispose_args(args))
+    return _go_steps(run, base, since=started)
 
 
-def _go_steps(run, base):
+def _dispose_args(args, archive_to=None):
+    """go 传给 cmd_run 的处置方式参数：--trash / --no-trash / --archive-to（看板导出的“归档到:”优先于命令行）。"""
+    return {"trash": bool(getattr(args, "trash", False)), "no_trash": bool(getattr(args, "no_trash", False)),
+            "archive_to": archive_to or getattr(args, "archive_to", None)}
+
+
+def board_archive_to(ex, text):
+    """看板导出里的“归档到:”。parse_board_export 若已解析出 archive_to 就用它，否则这里自己认这一行
+    （接口约定里该字段由 prefs.py 提供，这是兼容读法）。返回 (路径或 None, 错误或 None)。"""
+    if ex.get("archive_to"):
+        return ex["archive_to"], None
+    vals = []
+    for ln in (text or "").splitlines():
+        m = re.match(r"^\s*归档到\s*[:：]\s*(.*?)\s*$", ln)
+        if m and m.group(1) and m.group(1) != "无":
+            vals.append(m.group(1))
+    if len(set(vals)) > 1:
+        return None, "“归档到:”出现了多个不同的路径"
+    return (vals[0] if vals else None), None
+
+
+def _memory_wrapup(run, since, tag="【go】"):
+    """成果页之前：汇总这次记住的（remembered.json）；有“从源头改好的”记录就复查一遍（governance-check.json）。
+    都是锦上添花：任何一步出问题只提示，不影响已完成的清理，也不挡成果页。"""
+    try:
+        import memory
+        rows = memory.remembered(run, since=since)
+        print(f"{tag}这次我记住了 {len(rows)} 条", flush=True)
+        if plan.load_profile().get("governance"):
+            checked = memory.govern_check(run)
+            print(f"{tag}复查了 {len(checked)} 处从源头改好的设置", flush=True)
+    except (OSError, ValueError, ImportError) as exc:
+        print(f"{tag}记忆汇总没做完：{exc}", file=sys.stderr, flush=True)
+
+
+def _go_steps(run, base, since=None):
     """预演 → 试点 → 正式执行 → 成果页。对话确认（--choice）与看板清单（--from-board）共用，闸门一步不少：
-    每一步都是 cmd_run，sel、profile_guard、预演与试点回执的核对都在 cmd_run 里。"""
+    每一步都是 cmd_run，sel、profile_guard、预演与试点回执的核对都在 cmd_run 里。
+    since：本次 go 开始的时间（ISO），“这次我记住了”据此认出这次保存的设置与规则。"""
     steps = (("预演", dict(dry_run=True, pilot=False)), ("试点", dict(dry_run=False, pilot=True)),
              ("正式执行", dict(dry_run=False, pilot=False)))
     for name, flags in steps:
@@ -1168,6 +1460,7 @@ def _go_steps(run, base):
               f"（python3 scripts/act.py status --run {run}）", file=sys.stderr)
     else:
         print("【go】完成", flush=True)
+    _memory_wrapup(run, since)
     finish_report(run, "【go】")
     return 4 if failed else 0
 
@@ -1202,6 +1495,7 @@ def cmd_go_from_board(args):
     退出码：2 = 拒绝（清单不合格、台账导出、scan_id/seal/sel 对不上，什么都没删）；3 = 停下请用户看（设置/台账让判断变了需要
     用新看板重新确认、设置没保存全、重新封存失败、预演或试点异常）；4 = 正式执行有条目没删成功。
     sel 只来自清单：清单里的卡号或答复被改过，cmd_run 重算 sel 对不上就拒绝，本函数不重新生成 sel。"""
+    started = plan.prefs.now_iso()
     run = os.path.realpath(args.run)
     try:
         with open(args.from_board, encoding="utf-8") as f:
@@ -1233,8 +1527,10 @@ def cmd_go_from_board(args):
         return _board_stop("清单里没有选中任何卡片，什么都没有删除；若只想保存设置，请用 plan.py profile --apply")
     print(f"【go】读取看板清单：scan_id {ex['scan_id']}，seal {seal['digest']}，选中 {len(selection)} 张卡片", flush=True)
 
-    if settings or hide or ledger is not None:
-        done, perrs = plan.prefs.apply_settings(text)
+    # 只有“确认规则: / 不要规则:”行的清单也要先保存规则，且在任何删除之前
+    confirm_ids, reject_ids, _ = plan.prefs.parse_rule_decisions(text)
+    if settings or hide or ledger is not None or confirm_ids or reject_ids:
+        done, perrs = plan.prefs.apply_settings(text, scan_id=ex["scan_id"])
         for d in done:
             print(f"【go】已保存：{d}", flush=True)
         for e in perrs:
@@ -1273,9 +1569,12 @@ def cmd_go_from_board(args):
         seal, err = load_seal(run, ex["seal"])
         if err:
             return _board_stop(f"拒绝：{err}", 3)
+    archive_to, aerr = board_archive_to(ex, text)
+    if aerr:
+        return _board_stop(f"拒绝：{aerr}，什么都没有删除")
     base = dict(run=run, seal=seal["digest"], cards=",".join(ex["cards"]), answers=list(ex["answers"]),
-                sel=ex["sel"], skip_pilot=False, reason=None, no_report=True)
-    return _go_steps(run, base)
+                sel=ex["sel"], skip_pilot=False, reason=None, no_report=True, **_dispose_args(args, archive_to))
+    return _go_steps(run, base, since=started)
 
 
 def cmd_reclaim(args):
@@ -1300,6 +1599,14 @@ def cmd_status(args):
     return 0
 
 
+def _add_dispose_args(p):
+    grp = p.add_mutually_exclusive_group()
+    grp.add_argument("--trash", action="store_true", help="删除改为移入废纸篓（不腾出空间，清空废纸篓后才腾出）；缺省读 profile.delete_mode")
+    grp.add_argument("--no-trash", dest="no_trash", action="store_true", help="强制直接删除，忽略 profile.delete_mode=trash")
+    p.add_argument("--archive-to", dest="archive_to", default=None, metavar="DIR",
+                   help="答复「归档」的卡搬到这里（必须在 /Volumes/<盘名>/ 下的外接硬盘）；go --from-board 时看板导出的“归档到:”优先")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="叁笙清理：复核并执行")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1313,11 +1620,13 @@ def main(argv=None):
     r.add_argument("--pilot", action="store_true", help="只真正执行一条（decide 卡优先、再取字节最大的可执行条目），用于正式执行前试点；必须带 --sel")
     r.add_argument("--skip-pilot", action="store_true", help="正式执行时跳过试点要求（预演仍必须有），必须同时给 --reason")
     r.add_argument("--reason", default=None, help="跳过试点的原因，写进正式回执")
+    _add_dispose_args(r)
     g = sub.add_parser("go", help="连跑 预演 → 试点 → 正式执行 → 成果页，异常即停；--choice 按提案的一档，--from-board 按看板清单")
     g.add_argument("--run", required=True)
     g.add_argument("--choice", default=None, choices=plan.PRESETS, help="safe=稳妥 / recommended=好 / all=都删（对话确认）")
     g.add_argument("--from-board", default=None, metavar="FILE",
                    help="看板导出文本文件：校验 → 保存设置/台账 → 必要时重新封存 → 预演 → 试点 → 正式执行 → 成果页；与 --choice 二选一")
+    _add_dispose_args(g)
     sub.add_parser("reclaim", help="单独重跑 Codex 历史库回收（执行中断后补做）")
     s = sub.add_parser("status")
     s.add_argument("--run", required=True)

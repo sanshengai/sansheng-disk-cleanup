@@ -1298,6 +1298,10 @@ def pick_roots(profile):
         if any(rp == x or rp.startswith(x + "/") for x in roots):
             continue
         roots = [x for x in roots if not x.startswith(rp + "/")] + [rp]
+    # 0.6：Claude Code 会话临时目录（存在时）默认也扫；根本身受保护，只有其下会话目录可清
+    ct = protect.real(protect.claude_tmp_root())
+    if os.path.isdir(ct) and not any(ct == x or ct.startswith(x + "/") for x in roots):
+        roots = [x for x in roots if not x.startswith(ct + "/")] + [ct]
     return roots
 
 
@@ -1442,6 +1446,21 @@ def do_scan(opts):
             **({"project_marker": n["project_marker"]} if "project_marker" in n else {}),
             **({"project_marker_checked": True} if n.get("project_marker_checked") else {}),
         })
+
+    # 0.6：用户/Agent 登记过的目录身份（profile.identities，键为 realpath）：同路径或最近祖先匹配，只作事实附注
+    idents = {protect.real(k): v for k, v in (profile.get("identities") or {}).items() if isinstance(v, dict)}
+    if idents:
+        for n in nodes_out:
+            cur = os.path.realpath(n["path"])
+            while True:
+                if cur in idents:
+                    v = idents[cur]
+                    n["identity"] = {"title": v.get("title"), "producer": v.get("producer"), "task": v.get("task")}
+                    break
+                parent = os.path.dirname(cur)
+                if parent == cur:
+                    break
+                cur = parent
 
     try:
         du = shutil.disk_usage(HOME)
@@ -3086,6 +3105,23 @@ def probe_projects(opts):
         item["shown"] = i < PROJECTS_SHOWN
     result = {"schema": PROJECTS_SCHEMA, "scan_id": (facts or {}).get("scan_id"), "kind": "projects",
               "created_at": iso(now), "shown_limit": PROJECTS_SHOWN, "projects": out, "skipped": skipped}
+    # 0.6：设置页要用的事实。全部有时间预算与异常兜底，任何一项失败只留空，不拖垮探针。
+    ext_deadline = time.monotonic() + 40.0
+    try:
+        result["tools"] = collect_tools(nodes, ext_deadline)
+    except Exception as exc:   # noqa: BLE001
+        result["tools"] = []
+        skipped.append({"source": "tools", "reason": str(exc)[:120]})
+    try:
+        result["deliverable_candidates"] = collect_deliverable_candidates()
+    except Exception as exc:   # noqa: BLE001
+        result["deliverable_candidates"] = []
+        skipped.append({"source": "deliverable_candidates", "reason": str(exc)[:120]})
+    try:
+        result["setup_facts"] = collect_setup_facts(nodes, out, ext_deadline)
+    except Exception as exc:   # noqa: BLE001
+        result["setup_facts"] = {}
+        skipped.append({"source": "setup_facts", "reason": str(exc)[:120]})
     if run and facts is not None:
         tmp = os.path.join(run, f"projects.json.tmp-{os.getpid()}")
         with open(tmp, "w", encoding="utf-8") as f:
@@ -3100,6 +3136,592 @@ def probe_projects(opts):
         sys.stderr.write(f"跳过 {sk['source']}：{sk['reason']}\n")
     return {k: ([{kk: vv for kk, vv in p.items() if kk != "session_ids"} for p in v] if k == "projects" else v)
             for k, v in result.items()}
+
+
+# ───────────────────────── 0.6：设置页要用的机器事实（tools / 成品候选 / setup_facts）─────────────────────────
+
+TOOL_NAMES = {
+    "android": "Android 模拟器与开发包", "xcode": "Xcode 与 iOS 模拟器", "docker": "Docker",
+    "model-caches": "本地 AI 模型与缓存", "creative-media": "剪辑、音乐等创作软件缓存",
+    "codex": "Codex", "claude-code": "Claude Code", "grok": "Grok", "gemini-antigravity": "Gemini / Antigravity",
+    "cursor": "Cursor",
+}
+# 没有扫描事实时按这些位置估算（家目录相对路径）
+TOOL_PATHS = {
+    "android": [".android", "Library/Android"],
+    "xcode": ["Library/Developer"],
+    "docker": ["Library/Containers/com.docker.docker", ".docker"],
+    "model-caches": [".cache/huggingface", ".ollama", ".lmstudio", ".cache/whisper", ".cache/torch"],
+    "creative-media": ["Movies/CacheClip", "Library/Caches/Adobe"],
+    "codex": [".codex"], "claude-code": [".claude", ".local/share/claude"], "grok": [".grok"],
+    "gemini-antigravity": [".gemini", ".antigravity"], "cursor": [".cursor", "Library/Application Support/Cursor"],
+}
+AI_TOOL_KEYS = ("codex", "claude-code", "grok", "gemini-antigravity", "cursor")
+# 各 AI 工具的会话（对话记录）位置：节点路径等于或落在其下才算会话
+AI_SESSION_PATHS = [".codex/sessions", ".codex/archived_sessions", ".claude/projects", ".grok/sessions",
+                    ".gemini/antigravity/conversations", ".gemini/antigravity/brain", ".cursor/projects"]
+AI_IMAGE_PATHS = [".codex/generated_images"]
+INSTALLER_EXTS = (".dmg", ".pkg", ".iso", ".xip", ".ipa", ".apk", ".msi", ".exe", ".mpkg")
+RECORDING_EXTS = (".mov", ".mp4", ".m4v", ".mkv", ".webm")
+RECORDING_NAME_HINTS = ("录屏", "屏幕录制", "screen recording", "screen_recording")
+DELIVERABLE_CAND_WORDS = ("成品", "成片", "导出", "交付", "final", "output", "export", "release")
+MEDIA_EXTS = (".mp4", ".mov", ".png", ".jpg", ".jpeg")
+DELIVERABLE_CAND_MAX = 20
+DELIVERABLE_MEDIA_MIN = 30        # 目录里直接放这么多视频/图片，也当成品候选
+DELIVERABLE_SCAN_DEPTH = 3
+DELIVERABLE_SCAN_SECONDS = 6.0
+SKIP_TOP_DIRS = {"Library", "Applications", "Public"}
+SKIP_NAMES = {"node_modules", ".git", "venv", ".venv", "__pycache__", "site-packages", "Pods"}
+
+
+def _under(path, base):
+    return path == base or path.startswith(base.rstrip("/") + "/")
+
+
+def _topmost(items):
+    """items: [(realpath, node)]；去掉被同组其他路径包含的子路径（避免体积重复计）。"""
+    items = sorted(items, key=lambda x: len(x[0]))
+    kept = []
+    for p, n in items:
+        if not any(_under(p, k) and p != k for k, _ in kept):
+            kept.append((p, n))
+    return kept
+
+
+def _node_by_path(nodes):
+    return {os.path.realpath(n["path"]): n for n in nodes}
+
+
+def _est_bytes(path, deadline):
+    """没有扫描事实时的有限估算，返回 (bytes, newest_mtime, partial)。"""
+    try:
+        if os.path.isfile(path):
+            st = os.lstat(path)
+            return st.st_blocks * 512, st.st_mtime, False
+        return _capped_walk(path, deadline)
+    except OSError:
+        return 0, 0.0, False
+
+
+def collect_tools(nodes, deadline):
+    """工具键 → 占用。facts 节点的 producer.card 优先（取最上层，不重复计），没有节点才按已知位置有限估算。"""
+    out = []
+    for key, name in TOOL_NAMES.items():
+        try:
+            items = _topmost([(os.path.realpath(n["path"]), n) for n in nodes
+                              if (n.get("producer") or {}).get("card") == key])
+            total, newest, paths = 0, 0.0, []
+            if items:
+                for p, n in sorted(items, key=lambda x: -int(x[1].get("bytes") or 0)):
+                    total += int(n.get("bytes") or 0)
+                    newest = max(newest, _iso_to_ts(n.get("newest_mtime")))
+                    paths.append(tilde(p))
+            else:
+                for rel in TOOL_PATHS.get(key, []):
+                    p = os.path.join(HOME, rel)
+                    if not os.path.exists(p):
+                        continue
+                    b, nw, _ = _est_bytes(p, deadline)
+                    total, newest = total + b, max(newest, nw)
+                    paths.append(tilde(p))
+            if not paths:
+                continue
+            out.append({"key": key, "name": name, "bytes": total,
+                        "last_used": iso(newest) if newest else None, "paths": paths[:5]})
+        except Exception:   # noqa: BLE001  单个工具失败不拖垮探针
+            continue
+    out.sort(key=lambda t: -t["bytes"])
+    return out
+
+
+def _media_count(path, limit=2000):
+    """目录下（递归、限条目）的视频与图片数，只数不读。"""
+    n = seen = 0
+    stack = [path]
+    while stack and seen < limit:
+        d = stack.pop()
+        try:
+            it = os.scandir(d)
+        except OSError:
+            continue
+        with it:
+            for e in it:
+                seen += 1
+                if seen > limit:
+                    break
+                try:
+                    if e.is_dir(follow_symlinks=False):
+                        if e.name not in SKIP_NAMES:
+                            stack.append(e.path)
+                    elif e.name.lower().endswith(MEDIA_EXTS):
+                        n += 1
+                except OSError:
+                    continue
+    return n
+
+
+def collect_deliverable_candidates(budget=DELIVERABLE_SCAN_SECONDS):
+    """家目录下像“成品”的目录：名字含成品/成片/导出/交付/final/output/export/release，或直接放了一大堆视频图片。
+    限深度、限时间；不进隐藏目录、Library、依赖目录、git 仓库内部（仓库属于项目，不当成品目录）。"""
+    t_end = time.monotonic() + budget
+    found = {}
+    stack = [(HOME, 0)]
+    while stack and time.monotonic() < t_end:
+        d, depth = stack.pop()
+        try:
+            entries = list(itertools.islice(os.scandir(d), 600))
+        except OSError:
+            continue
+        direct_media = 0
+        for e in entries:
+            try:
+                if e.is_dir(follow_symlinks=False):
+                    if (e.name.startswith(".") or e.name in SKIP_NAMES or (depth == 0 and e.name in SKIP_TOP_DIRS)
+                            or e.name.endswith((".app", ".photoslibrary", ".imovielibrary", ".fcpbundle"))):
+                        continue
+                    if os.path.lexists(os.path.join(e.path, ".git")):
+                        continue
+                    low = e.name.lower()
+                    if any(w in low for w in DELIVERABLE_CAND_WORDS):
+                        found.setdefault(e.path, ("名字含成品类字样", None))
+                    if depth + 1 < DELIVERABLE_SCAN_DEPTH:
+                        stack.append((e.path, depth + 1))
+                elif e.name.lower().endswith(MEDIA_EXTS):
+                    direct_media += 1
+            except OSError:
+                continue
+        if depth > 0 and direct_media >= DELIVERABLE_MEDIA_MIN:
+            found.setdefault(d, ("里面放了很多视频或图片", direct_media))
+    cands = []
+    for path, (why, direct) in found.items():
+        if path == HOME:
+            continue
+        if any(_under(path, o) and path != o for o in found):
+            # 外层已是候选时，内层不重复列，除非内层自己名字就像成品
+            if why != "名字含成品类字样":
+                continue
+        files = _media_count(path)
+        if files == 0 and why != "名字含成品类字样":
+            continue
+        b, _, partial = _capped_walk(path, time.monotonic() + 1.0)
+        base = os.path.basename(path)
+        if why == "名字含成品类字样":
+            hit = next((w for w in DELIVERABLE_CAND_WORDS if w in base.lower()), "")
+            why_txt = "名字含“%s”" % hit + ("，有 %d 个视频或图片" % files if files else "")
+        else:
+            why_txt = "里面放了 %d 个视频或图片" % files
+        item = {"path": tilde(path), "why": why_txt, "bytes": b, "files": files}
+        if partial:
+            item["bytes_partial"] = True
+        cands.append(item)
+    cands.sort(key=lambda c: (-c["files"], -c["bytes"], c["path"]))
+    return cands[:DELIVERABLE_CAND_MAX]
+
+
+def _sum_ext_files(dirs, matcher, budget, max_depth=3):
+    """dirs 下（限深、限时）符合 matcher(name) 的普通文件字节合计；dataless 占位不计。"""
+    t_end = time.monotonic() + budget
+    total = seen = 0
+    for base in dirs:
+        stack = [(base, 0)]
+        while stack:
+            d, depth = stack.pop()
+            if time.monotonic() > t_end:
+                return total
+            try:
+                it = os.scandir(d)
+            except OSError:
+                continue
+            with it:
+                for e in it:
+                    seen += 1
+                    try:
+                        if e.is_dir(follow_symlinks=False):
+                            if depth + 1 < max_depth and e.name not in SKIP_NAMES and not e.name.endswith(".app"):
+                                stack.append((e.path, depth + 1))
+                        elif matcher(e.name):
+                            st = e.stat(follow_symlinks=False)
+                            if not (getattr(st, "st_flags", 0) & SF_DATALESS):
+                                total += st.st_blocks * 512
+                    except OSError:
+                        continue
+    return total
+
+
+def _cloud_local_bytes(budget):
+    """iCloud 与 CloudStorage 里已下载到本地的字节；只 stat，不读内容（读了会触发下载）。dataless 与块数为 0 的不计。"""
+    t_end = time.monotonic() + budget
+    total = 0
+    for base in (os.path.join(HOME, "Library", "Mobile Documents"), os.path.join(HOME, "Library", "CloudStorage")):
+        stack = [base]
+        while stack:
+            if time.monotonic() > t_end:
+                return total
+            d = stack.pop()
+            try:
+                it = os.scandir(d)
+            except OSError:
+                continue
+            with it:
+                for e in it:
+                    try:
+                        st = e.stat(follow_symlinks=False)
+                        if getattr(st, "st_flags", 0) & SF_DATALESS:
+                            continue
+                        if e.is_dir(follow_symlinks=False):
+                            stack.append(e.path)
+                        else:
+                            total += st.st_blocks * 512
+                    except OSError:
+                        continue
+    return total
+
+
+CLOUD_FOLDERS_LIMIT = 12            # 最多报告几个
+CLOUD_WALK_ENTRIES = 60000          # 单个文件夹最多看多少个条目（大文件夹只报告已看到的部分，体积偏小而不是偏大）
+CLOUD_LAYER2_TRANSPARENT = ("my drive", "我的云端硬盘")      # Google Drive 的这一层只是个壳，再往下一层才是用户的文件夹
+_CLOUD_PROVIDERS = (("dropbox", "Dropbox"), ("onedrive", "OneDrive"), ("googledrive", "Google Drive"),
+                    ("google drive", "Google Drive"), ("icloud", "iCloud Drive"), ("com~apple~clouddocs", "iCloud Drive"))
+
+
+def _cloud_provider(name, icloud_base=False):
+    low = name.lower()
+    for key, label in _CLOUD_PROVIDERS:
+        if low.startswith(key):
+            return label
+    return "iCloud Drive" if icloud_base else "其他"
+
+
+def _subdirs(path):
+    """path 下的第一层真目录（不跟符号链接、不进占位目录）。读不了返回空。"""
+    out = []
+    try:
+        with os.scandir(path) as it:
+            for e in it:
+                try:
+                    if e.is_dir(follow_symlinks=False) and not (getattr(e.stat(follow_symlinks=False), "st_flags", 0) & SF_DATALESS):
+                        out.append(e.path)
+                except OSError:
+                    continue
+    except OSError:
+        return []
+    return sorted(out)
+
+
+def _cloud_walk(root, t_end):
+    """文件夹里已下载到本机的体积与文件数：只 stat，不读内容（读了会触发下载）；占位文件 / 占位目录一律跳过，
+    不进符号链接。条目数、时间都有上限，超了就报告已看到的部分。"""
+    total, files, seen = 0, 0, 0
+    stack = [root]
+    while stack and seen < CLOUD_WALK_ENTRIES and time.monotonic() < t_end:
+        try:
+            it = os.scandir(stack.pop())
+        except OSError:
+            continue
+        with it:
+            for e in it:
+                seen += 1
+                try:
+                    st = e.stat(follow_symlinks=False)
+                    if getattr(st, "st_flags", 0) & SF_DATALESS or e.is_symlink():
+                        continue
+                    if e.is_dir(follow_symlinks=False):
+                        stack.append(e.path)
+                    else:
+                        total += st.st_blocks * 512
+                        files += 1
+                except OSError:
+                    continue
+    return total, files
+
+
+def _cloud_folders(budget=8.0, limit=CLOUD_FOLDERS_LIMIT):
+    """iCloud 云盘与 ~/Library/CloudStorage 里网盘的第二层文件夹，哪些在本机占的地方最大（给第 11 题“只留云端”的建议用）。
+    只读：不执行任何释放动作，不调 brctl。返回 [{path, provider, local_bytes, files}]，按本机体积从大到小。"""
+    t_end = time.monotonic() + budget
+    cands = []          # (路径, provider)
+    mobile = os.path.join(HOME, "Library", "Mobile Documents")
+    for c in _subdirs(mobile):
+        name = os.path.basename(c)
+        if name == "com~apple~CloudDocs":             # iCloud 云盘本体：看它里面的文件夹；其余是各 App 自己的 iCloud 数据，按一个整体报告
+            cands += [(d, "iCloud Drive") for d in _subdirs(c)]
+        else:
+            cands.append((c, "iCloud Drive"))
+    for root in _subdirs(os.path.join(HOME, "Library", "CloudStorage")):
+        prov = _cloud_provider(os.path.basename(root))
+        for d in _subdirs(root):
+            if prov == "Google Drive" and os.path.basename(d).lower() in CLOUD_LAYER2_TRANSPARENT:
+                cands += [(x, prov) for x in _subdirs(d)]
+            else:
+                cands.append((d, prov))
+    out = []
+    for path, prov in cands:
+        if time.monotonic() > t_end:
+            break
+        b, n = _cloud_walk(path, t_end)
+        if b > 0:
+            out.append({"path": tilde(path), "provider": prov, "local_bytes": b, "files": n})
+    out.sort(key=lambda r: (-r["local_bytes"], r["path"]))
+    return out[:limit]
+
+
+_TM_DIR_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})-(\d{6})$")
+_TM_PREF_RE = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \+0000")
+
+
+def time_machine_last():
+    """最近一次时间机器备份（UTC ISO）；没配置或读不到返回 None。只读命令，失败不报错。"""
+    rc, out, _ = run(["tmutil", "latestbackup"], timeout=8)
+    if rc == 0 and out.strip():
+        m = _TM_DIR_RE.search(decode(out).strip())
+        if m:
+            y, mo, d, hms = m.groups()
+            # 目录名是本地时间；按本地时区换成 UTC
+            try:
+                local = datetime(int(y), int(mo), int(d), int(hms[:2]), int(hms[2:4]), int(hms[4:6]))
+                return iso(local.timestamp())
+            except ValueError:
+                pass
+    rc, out, _ = run(["defaults", "read", "/Library/Preferences/com.apple.TimeMachine"], timeout=8)
+    if rc == 0:
+        dates = _TM_PREF_RE.findall(decode(out))
+        if dates:
+            return max(dates).replace(" ", "T") + "Z"
+    return None
+
+
+def _worktree_count(nodes, project_items, budget=8.0):
+    """git 链接工作树数（不含主仓库）：facts 节点 git.role=="worktree"、项目的额外根、各主仓库的 git worktree list。"""
+    found = set()
+    for n in nodes:
+        if (n.get("git") or {}).get("role") == "worktree":
+            found.add(os.path.realpath(n["path"]))
+    repos = set()
+    for it in project_items:
+        for r in it.get("roots") or []:
+            if os.path.isfile(os.path.join(r, ".git")):
+                found.add(os.path.realpath(r))
+        if "git" in (it.get("sources") or []):
+            repos.add((it.get("roots") or [it.get("key")])[0])
+    for n in nodes:
+        repo = (n.get("git") or {}).get("repo")
+        if repo:
+            repos.add(repo)
+    t_end = time.monotonic() + budget
+    for repo in sorted(repos):
+        if time.monotonic() > t_end:
+            break
+        if not os.path.isdir(repo):
+            continue
+        rc, out, _ = git(["worktree", "list", "--porcelain"], repo, timeout=5)
+        if rc != 0:
+            continue
+        paths = [ln[9:] for ln in decode(out).splitlines() if ln.startswith("worktree ")]
+        for p in paths[1:]:
+            if os.path.isdir(p):
+                found.add(os.path.realpath(p))
+    return len(found)
+
+
+def _paths_bytes(rels, by_path, nodes, deadline):
+    """家目录相对路径列表的合计字节：有节点用节点（最上层），没有就有限估算。"""
+    total = 0
+    for rel in rels:
+        p = os.path.realpath(os.path.join(HOME, rel))
+        if not os.path.exists(p):
+            continue
+        if p in by_path:
+            total += int(by_path[p].get("bytes") or 0)
+        else:
+            total += _est_bytes(p, deadline)[0]
+    return total
+
+
+def collect_setup_facts(nodes, project_items, deadline):
+    by_path = _node_by_path(nodes)
+    facts = {"ai_sessions_bytes": 0, "ai_images_bytes": 0, "worktrees": 0, "installers_bytes": 0,
+             "recordings_bytes": 0, "cloud_local_bytes": 0, "time_machine_last": None, "top_dirs": [],
+             "cloud_folders": [], "pipelines": False}
+
+    def safe(key, fn):
+        try:
+            facts[key] = fn()
+        except Exception:   # noqa: BLE001  任何一项失败都保持默认值
+            pass
+    safe("ai_sessions_bytes", lambda: _paths_bytes(AI_SESSION_PATHS, by_path, nodes, deadline))
+
+    def images():
+        total = _paths_bytes(AI_IMAGE_PATHS, by_path, nodes, deadline)
+        for _, n in _topmost([(os.path.realpath(n["path"]), n) for n in nodes
+                              if (n.get("producer") or {}).get("card") == "pipelines"
+                              and not any(_under(os.path.realpath(n["path"]), os.path.realpath(os.path.join(HOME, r)))
+                                          for r in AI_IMAGE_PATHS)]):
+            total += int(n.get("bytes") or 0)
+        return total
+    safe("ai_images_bytes", images)
+    safe("worktrees", lambda: _worktree_count(nodes, project_items))
+    dl = [os.path.join(HOME, d) for d in ("Downloads", "Desktop")]
+    safe("installers_bytes", lambda: _sum_ext_files(dl, lambda nm: nm.lower().endswith(INSTALLER_EXTS), 4.0, 2))
+    rec = [os.path.join(HOME, d) for d in ("Desktop", "Movies", "Downloads")]
+    safe("recordings_bytes", lambda: _sum_ext_files(
+        rec, lambda nm: nm.lower().endswith(RECORDING_EXTS) or any(h in nm.lower() for h in RECORDING_NAME_HINTS), 5.0, 3))
+    safe("cloud_local_bytes", lambda: _cloud_local_bytes(5.0))
+    safe("cloud_folders", lambda: _cloud_folders(8.0))
+    safe("pipelines", lambda: any((n.get("producer") or {}).get("card") == "pipelines" for n in nodes))
+    safe("time_machine_last", time_machine_last)
+
+    def top():
+        rows = []
+        for e in os.scandir(HOME):
+            if not e.is_dir(follow_symlinks=False):
+                continue
+            p = os.path.realpath(e.path)
+            if p in by_path:
+                b = int(by_path[p].get("bytes") or 0)
+            else:
+                b = _est_bytes(p, min(deadline, time.monotonic() + 2.0))[0]
+            rows.append({"path": tilde(e.path), "bytes": b})
+        rows.sort(key=lambda r: (-r["bytes"], r["path"]))
+        return rows[:12]
+    safe("top_dirs", top)
+    return facts
+
+
+# ───────────────────────── 0.6：probe done-evidence（找“做完了”的证据，只给信号不下结论）─────────────────────────
+
+DONE_FILE_WORDS = ("完成", "交付", "final", "release", "上线", "成品", "delivered", "published")
+DONE_TEXT_RE = re.compile(r"完成|已上线|\bdone\b", re.I)
+DONE_DOC_RE = re.compile(r"^(readme|进度|progress|status|todo|changelog|工作日志|日志|交接|handoff)", re.I)
+DONE_DOC_EXTS = (".md", ".txt", ".rst", "")
+DONE_DOC_MAX_BYTES = 2 * 1024 * 1024
+NEVER_NAME_HINTS = ("password", "密码", ".env", "secret", "credential")
+
+
+def _near_name(a, b):
+    a, b = a.casefold(), b.casefold()
+    return len(a) >= 3 and len(b) >= 3 and (a == b or a in b or b in a)
+
+
+def probe_done_evidence(opts):
+    path = os.path.realpath(os.path.expanduser(opts.path))
+    base = os.path.basename(path.rstrip("/"))
+    out = {"path": tilde(path), "exists": os.path.isdir(path), "git": {"is_repo": False},
+           "deliverables": {"count": 0, "samples": []}, "last_modified": None,
+           "final_named_files": [], "doc_hits": []}
+    skipped = []
+    if not out["exists"]:
+        out["skipped"] = [{"source": "path", "reason": "路径不存在或不是目录"}]
+        return out
+    # git
+    try:
+        rc, top, _ = git(["rev-parse", "--show-toplevel"], path, timeout=10)
+        if rc == 0 and os.path.realpath(decode(top).strip()) == path:
+            g = out["git"]
+            g["is_repo"] = True
+            rc, br, _ = git(["symbolic-ref", "-q", "--short", "HEAD"], path, timeout=10)
+            g["branch"] = decode(br).strip() if rc == 0 and br.strip() else "(detached)"
+            g["merged_into_main"] = None
+            for ref in ("origin/main", "main", "origin/master", "master"):
+                rc, _, _ = git(["rev-parse", "-q", "--verify", ref], path, timeout=10)
+                if rc == 0:
+                    rc2, _, _ = git(["merge-base", "--is-ancestor", "HEAD", ref], path, timeout=20)
+                    g["merged_into_main"] = True if rc2 == 0 else (False if rc2 == 1 else None)
+                    g["compared_with"] = ref
+                    break
+            rc, st, _ = git(["status", "--porcelain"], path, timeout=60)
+            g["dirty_files"] = len([x for x in st.split(b"\n") if x]) if rc == 0 else None
+            rc, lg, _ = git(["log", "-1", "--format=%ct"], path, timeout=10)
+            try:
+                g["last_commit_at"] = iso(int(decode(lg).strip())) if rc == 0 and lg.strip() else None
+            except ValueError:
+                g["last_commit_at"] = None
+    except Exception as exc:   # noqa: BLE001
+        skipped.append({"source": "git", "reason": str(exc)[:120]})
+    # 成品目录里同名/近名
+    try:
+        prof = protect.load_profile(getattr(opts, "profile", None) or protect.PROFILE)
+        t_end = time.monotonic() + 6.0
+        count, samples = 0, []
+        for root in prof.get("deliverable_roots", []) or []:
+            rr = protect.real(root)
+            if not os.path.isdir(rr) or _under(path, rr):
+                continue
+            stack = [(rr, 0, False)]
+            seen = 0
+            while stack and time.monotonic() < t_end and seen < 5000:
+                d, depth, matched = stack.pop()
+                try:
+                    it = os.scandir(d)
+                except OSError:
+                    continue
+                with it:
+                    for e in it:
+                        seen += 1
+                        stem = os.path.splitext(e.name)[0]
+                        m = matched or _near_name(base, stem)
+                        try:
+                            if e.is_dir(follow_symlinks=False):
+                                if depth + 1 < 4 and e.name not in SKIP_NAMES:
+                                    stack.append((e.path, depth + 1, m))
+                            elif m:
+                                count += 1
+                                if len(samples) < 5:
+                                    samples.append(tilde(e.path))
+                        except OSError:
+                            continue
+        out["deliverables"] = {"count": count, "samples": samples}
+    except Exception as exc:   # noqa: BLE001
+        skipped.append({"source": "deliverables", "reason": str(exc)[:120]})
+    # 目录里的文件名与文档
+    try:
+        t_end = time.monotonic() + 6.0
+        newest, seen = 0.0, 0
+        final_files, docs = [], []
+        stack = [(path, 0)]
+        while stack and seen < 4000 and time.monotonic() < t_end:
+            d, depth = stack.pop()
+            try:
+                it = os.scandir(d)
+            except OSError:
+                continue
+            with it:
+                for e in it:
+                    seen += 1
+                    try:
+                        st = e.stat(follow_symlinks=False)
+                        newest = max(newest, st.st_mtime)
+                        if e.is_dir(follow_symlinks=False):
+                            if depth + 1 < 4 and e.name not in SKIP_NAMES:
+                                stack.append((e.path, depth + 1))
+                            continue
+                        low = e.name.lower()
+                        if len(final_files) < 10 and any(w in low for w in DONE_FILE_WORDS):
+                            final_files.append(os.path.relpath(e.path, path))
+                        stem, ext = os.path.splitext(low)
+                        if (depth <= 2 and DONE_DOC_RE.match(low) and ext in DONE_DOC_EXTS
+                                and st.st_size <= DONE_DOC_MAX_BYTES and not any(h in low for h in NEVER_NAME_HINTS)
+                                and not (getattr(st, "st_flags", 0) & SF_DATALESS)):
+                            docs.append(e.path)
+                    except OSError:
+                        continue
+        out["last_modified"] = iso(newest) if newest else None
+        out["final_named_files"] = final_files
+        hits = []
+        for fp in sorted(docs)[:10]:
+            try:
+                with open(fp, "rb") as f:
+                    text = f.read(DONE_DOC_MAX_BYTES).decode("utf-8", "replace")
+            except OSError:
+                continue
+            lines = [ln.strip()[:160] for ln in text.splitlines() if DONE_TEXT_RE.search(ln)][:3]
+            if lines:
+                hits.append({"file": os.path.relpath(fp, path), "lines": lines})
+        out["doc_hits"] = hits
+    except Exception as exc:   # noqa: BLE001
+        skipped.append({"source": "files", "reason": str(exc)[:120]})
+    if skipped:
+        out["skipped"] = skipped
+    return out
 
 
 # ───────────────────────── CLI ─────────────────────────
@@ -3137,6 +3759,10 @@ def build_parser():
     ppj.add_argument("--runs-dir", default=DEFAULT_RUNS)
     psub.add_parser("android")
     psub.add_parser("grok")
+    pde = psub.add_parser("done-evidence", help="找“做完了”的证据：git 状态、成品目录同名文件、完成类文件名与文档字样（只给信号，不下结论）")
+    pde.add_argument("--run", help="运行目录（保留参数，便于和其他探针同形；不读写其中文件）")
+    pde.add_argument("--path", required=True)
+    pde.add_argument("--profile")
     pb = psub.add_parser("bigfiles", help="下载、桌面、文稿、影片里长期没动的大文件（只报告）")
     pb.add_argument("--min-mb", type=int, default=200, help="单个文件至少多大（MB），默认 200")
     pb.add_argument("--min-age-days", type=int, default=90, help="修改与访问都早于多少天，默认 90")
@@ -3175,7 +3801,7 @@ def main(argv=None):
         return 0
     fn = {"codex": probe_codex, "codex-groups": probe_codex_groups, "claude": probe_claude, "android": probe_android,
           "worktrees": probe_worktrees, "grok": probe_grok, "item-refs": probe_item_refs,
-          "bigfiles": probe_bigfiles, "projects": probe_projects}[opts.kind]
+          "bigfiles": probe_bigfiles, "projects": probe_projects, "done-evidence": probe_done_evidence}[opts.kind]
     print(dump_json(fn(opts)))
     return 0
 

@@ -73,7 +73,7 @@ def _js_fn(html_name, name):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="本机没有 node")
-@pytest.mark.parametrize("html,name", [("dashboard.html", "fmtBytes"), ("onboard.html", "fmtBytes"), ("report.html", "gb")])
+@pytest.mark.parametrize("html,name", [("dashboard.html", "fmtBytes"), ("setup.html", "fmtBytes"), ("report.html", "gb")])
 def test_js_formatter_matches_python(tmp_path, html, name):
     js = _js_fn(html, name)
     cases = [n for n, _ in VECTORS] + [1, 4096, 8_192, 123_456_789, 55_555_555_555]

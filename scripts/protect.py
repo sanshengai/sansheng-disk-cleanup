@@ -43,8 +43,27 @@ VOLUMES_ROOT = "/Volumes"
 # 任意卷、任意深度按名称保护的系统/备份目录（Time Machine、Spotlight 索引、文件事件、文档版本、本地备份）
 VOLUME_META = (".trashes", "backups.backupdb", ".spotlight-v100", ".fseventsd", ".documentrevisions-v100",
                ".mobilebackups")
+# Claude Code 会话临时目录：TMP_BASE/claude-<uid>。测试用 monkeypatch 覆盖 TMP_BASE，生产里是固定值。
+# 其下的会话子目录允许清理；根本身、TMP_BASE 其他内容、当前会话（环境变量里的会话 id）一律保护。
+TMP_BASE = "/private/tmp"
+SESSION_ENV_VARS = ("CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID")
 # 只保护目录本身及其直接子项，深层子目录可由用户点名（契约第 5 节的 Movies 例外）
 SHALLOW = ["Movies"]
+
+
+def claude_tmp_root():
+    """/private/tmp/claude-<uid>（词法路径，不要求存在）。"""
+    return os.path.join(TMP_BASE, "claude-%d" % os.getuid())
+
+
+def current_session_ids():
+    """当前 Claude 会话 id（环境变量给出；太短的值不当 id 用，免得误伤）。"""
+    out = []
+    for k in SESSION_ENV_VARS:
+        v = os.environ.get(k, "").strip()
+        if len(v) >= 8 and v not in out:
+            out.append(v)
+    return out
 
 
 def expand(path):
@@ -194,7 +213,24 @@ PROFILE_GUARD_FIELDS = (
     ("roots", "扫描根目录"), ("extra_roots", "额外扫描根"), ("reference_roots", "引用检查目录"),
     ("protect", "永不触碰的路径"), ("deliverable_roots", "成品目录"), ("retention_days", "AI 对话保留天数"),
     ("projects", "项目台账"),
+    # 0.6 初始设置里会改变 check 结果（降 keep、预填、进哪一档）的项；缺省与“等于没设”的取值都不进摘要，
+    # 所以没有这些字段的 0.5 旧封存摘要不变。read_scope / delete_mode / governance_mode / confirm_mode / cloud_policy
+    # 不影响放行，不在其内。允许值与 setup_q 一致（tests/test_profile_guard.py 有一致性测试）。
+    ("tools", "常用工具的设置"), ("conversation_policy", "旧对话的处理方式"), ("rejects_policy", "没挑中图片的处理方式"),
+    ("worktree_policy", "工作树的处理方式"), ("big_file_age_days", "录屏和大视频的天数"),
+    ("done_project_policy", "做完项目的处理方式"), ("installer_policy", "安装包的处理方式"),
 )
+# 字段 → 会改变判断的取值（其余取值与没设等价）。tools 单独处理：只有“不用了”会改变判断。
+GUARD_EFFECTIVE = {
+    "conversation_policy": ("done", "library"),
+    "rejects_policy": ("drop", "keep"),
+    "worktree_policy": ("whole", "build_only", "ask"),
+    "done_project_policy": ("archive", "keep"),
+    "installer_policy": ("auto",),
+}
+GUARD_BIG_DAYS = (30, 90, 0)
+GUARD_TOOL_KEYS = ("android", "xcode", "docker", "model-caches", "creative-media", "codex", "claude-code", "grok",
+                   "gemini-antigravity", "cursor")
 
 
 def guard_projects(v):
@@ -222,6 +258,17 @@ def profile_guard(profile):
             gp = guard_projects(v)
             if gp:                      # 没有台账时不进摘要：与 0.5 之前的封存摘要保持一致
                 fields[key] = gp
+        elif key == "tools":
+            unused = sorted(k for k, x in (v if isinstance(v, dict) else {}).items()
+                            if x == "unused" and k in GUARD_TOOL_KEYS)
+            if unused:                  # 只有“不用了”会预填删除；常用 / 偶尔用 / 没设等价
+                fields[key] = unused
+        elif key == "big_file_age_days":
+            if isinstance(v, int) and not isinstance(v, bool) and v in GUARD_BIG_DAYS:
+                fields[key] = v
+        elif key in GUARD_EFFECTIVE:
+            if v in GUARD_EFFECTIVE[key]:
+                fields[key] = v
         else:
             fields[key] = sorted({x for x in (v if isinstance(v, list) else []) if isinstance(x, str)})
     blob = json.dumps(fields, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
@@ -304,6 +351,20 @@ def _reasons(p, profile=None):
             yield "self", "卷废纸篓 .Trashes"
         elif part in VOLUME_META:
             yield "self", f"系统/备份目录 {part}"
+    # 临时目录：只放开 claude-<uid> 下的会话子目录
+    base = TMP_BASE.casefold()
+    if cf == base:
+        yield "self", "临时目录 %s 本身" % TMP_BASE
+    elif _within(p, TMP_BASE):
+        croot = claude_tmp_root().casefold()
+        if cf == croot:
+            yield "self", "Claude 会话临时目录本身"
+        elif not _within(p, croot):
+            yield "self", "临时目录里不属于 Claude 会话的内容"
+    for sid in current_session_ids():
+        if sid.casefold() in cf:
+            yield "self", "当前会话正在用的目录（会话 id）"
+            break
     if cf == HOME.casefold():
         yield "self", "家目录本身"
     if cf in {x.casefold() for x in SYSTEM}:

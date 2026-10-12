@@ -377,7 +377,7 @@ def test_stage_onboarding_then_cleanup(env):
     env.seal()
     assert plan.main(["propose", "--run", str(env.run)]) == 0
     prop = json.loads((env.run / "proposal.json").read_text())
-    assert prop["stage"] == "onboarding" and "台账" in prop["onboarding_hint"]
+    assert prop["stage"] == "onboarding" and "设置页" in prop["onboarding_hint"] and prop["setup_upgrade"] is False
     f = env.run / "ledger.txt"
     f.write_text('台账: {"项目":{}}\n', encoding="utf-8")
     assert plan.main(["profile", "--apply", str(f)]) == 0

@@ -9,7 +9,7 @@ import sys
 PATTERNS = {
     'google-key': rb'AIza[0-9A-Za-z_-]{20,}',
     'vertex-key': rb'AQ\.[A-Za-z0-9_-]{20,}',
-    'api-key': rb'sk-[A-Za-z0-9_-]{20,}',
+    'api-key': rb'(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}',   # 前面不能紧挨字母数字：避免 disk-space-… 这类网址误报
     'github-token': rb'gh[pousr]_[A-Za-z0-9]{30,}',
     'firecrawl-key': rb'fc-[0-9a-f]{32}',
     'private-key': rb'-----BEGIN [A-Z ]*PRIVATE KEY-----',

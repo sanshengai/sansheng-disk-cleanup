@@ -13,6 +13,7 @@
 | `~/.cache/uv`（`archive-v0`、`wheels-v6`、`sdists-v9`、`environments-v2`、`builds-v0`、`simple-v25`…） | uv 的 wheel、源码包、集中式项目环境、索引缓存 | 可再生缓存 |
 | `~/Library/Caches/pip` | pip 的 HTTP 缓存与 wheel 缓存 | 可再生缓存 |
 | `~/Library/Caches/Homebrew`（`downloads/`、`Cask/`、`api/`） | 下载的 bottle、Cask 安装包、元数据 | 可再生缓存 |
+| `~/Library/Caches/clang` | 编译器模块缓存（Clang / 编译工具链的 `.pcm` 等） | 可再生缓存，下次编译自动重建，稍慢 |
 | `/opt/homebrew/Cellar/<包>/<版本>` | 已安装的各版本包 | 工具状态（旧版本由 `brew cleanup` 处理） |
 | `~/.gradle/caches/{modules-2,build-cache-1,journal-1,…}` | 依赖工件、构建缓存、访问时间索引 | 可再生缓存，`journal-1` 是索引不能删 |
 | `~/.gradle/wrapper/dists/`、`~/.gradle/jdks/`、`~/.gradle/daemon/` | Wrapper 下载的 Gradle 发行包、下载的 JDK、守护进程注册与日志 | 工具状态（含运行程序） |
@@ -28,6 +29,14 @@
 - **uv**：`uv cache size` / `uv cache dir`；集中式项目环境被 `uv prune` 清理后下次自动重建。
 - **Homebrew**：`brew cleanup -n` 先看会删什么；`brew autoremove -n` 看孤儿依赖。
 - **增长视角**：缓存会长回来。清一次后记录体积，治理建议是设自动清理或定期 prune，而不是反复手删。
+- **`~/Library/Caches/clang`**：编译器模块缓存，删了下次编译自动重建，只是第一次编译会慢一些；没有编译任务在跑时可作建议。
+
+## 快缓存与慢缓存（写卡时的 rebuild 标记）
+
+清掉以后"能不能很快回来"决定进哪一档，不能一律当稳妥项：
+
+- **快缓存**（npm/pnpm/yarn/bun/uv/pip/Homebrew 的下载缓存、Clang 模块缓存）：重新下载或重编译通常几分钟内完成，可以进稳妥档。
+- **重建慢的缓存要显式标慢**：Gradle 构建缓存与依赖、本地模型（`model-caches` 卡）、大型依赖缓存这类，重建可能几十分钟到几小时。给它们写卡时在卡对象里加 `rebuild: "slow"`；`plan.py` 据此把它们从稳妥档提为推荐档，不默认帮你清。
 
 只读命令速查：
 

@@ -268,14 +268,6 @@ def test_settings_line_json_rejects_bad_values_like_legacy(env):
         assert not p.get("protect"), bad
 
 
-def test_dashboard_exports_settings_as_json_line():
-    html = (Path(__file__).resolve().parent.parent / "assets" / "dashboard.html").read_text(encoding="utf-8")
-    # 0.5：设置区只剩保留天数、默认档位两项（别碰 / 成品改为每个项目各自的台账），仍是一行 JSON
-    assert "JSON.stringify({'保留天数':s.days,'默认':s.def})" in html and "settingsLine(cfg)" in html
-    assert "cfg.protect" not in html and "cfg.deliver" not in html
-    assert "别碰='+" not in html                                      # 旧的 | 拼接导出已去掉
-
-
 # ---------------------------------------------------------------- 发布前评审 低9：成品目录拒绝太宽泛的位置
 
 BROAD = ["~/Library", "~/Library/Caches", "~/Downloads", "~/Desktop", "~/Documents", "~/Applications", "~/.cache"]
@@ -330,3 +322,75 @@ def test_profile_apply_missing_file_is_a_clean_chinese_error(env, tmp_path, caps
     assert plan.main(["profile", "--apply", str(tmp_path / "nope.txt")]) == 2
     err = capsys.readouterr().err
     assert "读不了" in err and "nope.txt" in err and "Traceback" not in err
+
+
+# ---------------------------------------------------------------- 0.6：保留天数扩展、归档 / 待确认规则行
+
+D12 = "0123456789ab"
+BOARD = f"叁笙清理选择\nscan_id: s1\nseal: {D12}\n清理: c01, c03\n回答: c02=删 / c05=归档\nsel: {D12}\n"
+
+
+def test_retention_choices_include_60_and_90(env):
+    assert prefs.RETENTION_CHOICES == (0, 7, 15, 30, 60, 90)
+    for d in (60, 90):
+        done, errs = prefs.apply_settings(f"设置: 保留天数={d}")
+        assert not errs and profile(env)["retention_days"] == d
+    done, errs = prefs.apply_settings("设置: 保留天数=45")
+    assert errs and "60" in errs[0] and profile(env)["retention_days"] == 90
+
+
+def test_parse_board_export_archive_and_rule_lines():
+    ex, errs = prefs.parse_board_export(BOARD + "归档到: /Volumes/备份盘/叁笙归档\n确认规则: p1, p2\n不要规则: p3\n备注: x")
+    assert not errs and ex["answers"] == ["c02=删", "c05=归档"] and ex["cards"] == ["c01", "c03"]
+    assert ex["archive_to"] == "/Volumes/备份盘/叁笙归档" and ex["confirm_rules"] == ["p1", "p2"] and ex["reject_rules"] == ["p3"]
+    ex, errs = prefs.parse_board_export(BOARD)                                  # 三行都可缺
+    assert not errs and ex["archive_to"] is None and ex["confirm_rules"] == [] and ex["reject_rules"] == []
+    ex, errs = prefs.parse_board_export(BOARD + "确认规则: 无\n不要规则: 无\n归档到: 无")
+    assert not errs and ex["confirm_rules"] == [] and ex["archive_to"] is None
+
+
+@pytest.mark.parametrize("extra, frag", [
+    ("归档到: /Volumes/a\n归档到: /Volumes/b\n", "多次"), ("确认规则: p1\n不要规则: p1\n", "既确认又不要"),
+    ("确认规则: p 1;x\n", "不合法"), ("确认规则: p1\n确认规则: p2\n", "多次")])
+def test_parse_board_export_rejects_bad_new_lines(extra, frag):
+    ex, errs = prefs.parse_board_export(BOARD + extra)
+    assert ex is None and any(frag in e for e in errs), errs
+
+
+def test_setup_export_is_not_a_board_export():
+    ex, errs = prefs.parse_board_export("叁笙清理 · 初始设置\n设置版本: 1\n答案: {}")
+    assert ex is None and any("首行" in e for e in errs)
+
+
+def test_apply_settings_hands_rule_decisions_to_memory(env, monkeypatch):
+    import types
+    calls = []
+    fake = types.SimpleNamespace(confirm=lambda ids: (calls.append(("confirm", list(ids))) or [f"已确认 {i}" for i in ids], []),
+                                 reject=lambda ids: (calls.append(("reject", list(ids))) or [f"已丢掉 {i}" for i in ids], ["p9 不存在"]))
+    monkeypatch.setitem(sys.modules, "memory", fake)
+    done, errs = prefs.apply_settings(BOARD + "设置: 默认=safe\n确认规则: p1,p2\n不要规则: p3\n")
+    assert calls == [("confirm", ["p1", "p2"]), ("reject", ["p3"])]
+    assert "已确认 p1" in done and "已丢掉 p3" in done and errs == ["p9 不存在"]
+    assert profile(env)["default_choice"] == "safe"                          # 同一份文本里的设置照存，且先于规则存好
+    calls.clear()
+    done, errs = prefs.apply_settings("确认规则: p1\n")                            # 只有规则行也算有内容
+    assert calls == [("confirm", ["p1"])] and not errs
+
+
+def test_apply_settings_survives_missing_or_broken_memory_module(env, monkeypatch):
+    import types
+    monkeypatch.setitem(sys.modules, "memory", None)                        # import memory → ImportError
+    done, errs = prefs.apply_settings("设置: 默认=all\n确认规则: p1\n")
+    assert profile(env)["default_choice"] == "all" and any("没保存" in e and "memory" in e for e in errs)
+    boom = types.SimpleNamespace(confirm=lambda ids: 1 / 0, reject=lambda ids: ([], []))
+    monkeypatch.setitem(sys.modules, "memory", boom)
+    done, errs = prefs.apply_settings("确认规则: p1\n")
+    assert not done and any("没保存" in e for e in errs)
+    monkeypatch.setitem(sys.modules, "memory", types.SimpleNamespace())      # 模块在但没有函数
+    done, errs = prefs.apply_settings("不要规则: p1\n")
+    assert any("没保存" in e for e in errs)
+
+
+def test_apply_settings_still_errors_when_nothing_to_apply(env):
+    done, errs = prefs.apply_settings("叁笙清理选择\n备注: x")
+    assert not done and "确认规则" in errs[0]

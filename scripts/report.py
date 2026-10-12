@@ -6,6 +6,10 @@
 数字一律来自回执的实测值：同一 seal 下全部正式执行回执（中断后重跑会有多份）加上试点回执
 （试点先删掉的那一条，在正式执行里记为“路径已不存在”跳过，不加回来就会少算）；预演不计，同一路径不重复计。
 分享链接只带几个汇总数字（GB，保留一位小数），不带任何路径、用户名或文件信息。
+
+0.6：移入废纸篓的字节不计入“已腾出”（清空废纸篓后才腾出），单列；搬到外接硬盘的单列。另有三个可选区块，
+数据文件不存在时对应区块不显示：reads.jsonl（这次读了哪些文件）、remembered.json（这次我记住了）、
+governance-check.json（从源头改好的）。
 """
 import argparse
 import base64
@@ -21,7 +25,9 @@ if HERE not in sys.path:
 
 import plan  # noqa: E402
 import prefs  # noqa: E402
+import protect  # noqa: E402
 import units  # noqa: E402
+from act import disposal_flags  # noqa: E402
 from vendor.qrcodegen import QrCode  # noqa: E402
 
 TEMPLATE = os.path.join(os.path.dirname(HERE), "assets", "report.html")
@@ -72,25 +78,116 @@ def load_receipts(run):
     return full, found
 
 
-def freed_by_card(receipts):
-    """每张卡释放的字节。同一路径的整体删除（delete 方法、状态 removed）最多只可能发生一次，同一路径在多份回执里
+def _sum_by(receipts, flag, group):
+    """按 group(卡, 条目) 汇总某一口径的字节。flag：disposal_flags 的下标（0=已腾出，1=在废纸篓，2=搬到归档盘）。
+    同一路径的整体删除（delete 方法、状态 removed）最多只可能发生一次，同一路径在多份回执里
     都记为已删除时只取最大的那份，不重复计；部分删除（partial）和原生命令（每次清的是不同的内容）逐份累加。"""
     whole, rest = {}, {}
     for rc in receipts:
         for c in rc.get("cards", []):
             for it in c.get("items", []):
-                if it.get("status") not in ("removed", "partial"):
+                if it.get("status") not in ("removed", "partial") or not disposal_flags(it)[flag]:
                     continue
                 b = int((it.get("removed") or {}).get("bytes") or 0)
+                g = group(c, it)
                 if it.get("status") == "removed" and it.get("method") == "delete":
-                    k = (c["id"], it.get("path"))
+                    k = (g, c["id"], it.get("path"))
                     whole[k] = max(whole.get(k, 0), b)
                 else:
-                    rest[c["id"]] = rest.get(c["id"], 0) + b
+                    rest[g] = rest.get(g, 0) + b
     out = dict(rest)
-    for (cid, _), b in whole.items():
-        out[cid] = out.get(cid, 0) + b
+    for (g, _, _), b in whole.items():
+        out[g] = out.get(g, 0) + b
     return out
+
+
+def freed_by_card(receipts):
+    """每张卡真正腾出的字节（移入废纸篓的不算，归档但原文件已删的算）。"""
+    return _sum_by(receipts, 0, lambda c, it: c["id"])
+
+
+def trashed_total(receipts):
+    return sum(_sum_by(receipts, 1, lambda c, it: c["id"]).values())
+
+
+def archived_by_volume(receipts):
+    """{(盘名, 原文件去向 trash|delete): 字节}"""
+    def key(c, it):
+        d = it.get("disposal") or {}
+        return (d.get("volume") or "外接硬盘", "trash" if d.get("source") == "trash" else "delete")
+    return _sum_by(receipts, 2, key)
+
+
+def _short(path):
+    home = protect.HOME.rstrip("/")
+    if isinstance(path, str) and (path == home or path.startswith(home + "/")):
+        return "~" + path[len(home):]
+    return path
+
+
+def load_reads(run, cap=20):
+    """这次读了哪些文件：读 <run>/reads.jsonl（peek.py 每次读取追加一行），口径同 peek.py --summary。
+    文件不存在 = 没有这份数据，返回 None（成果页不显示这一块）。"""
+    path = os.path.join(run, "reads.jsonl")
+    if not os.path.isfile(path):
+        return None
+    counts = {"content": 0, "meta": 0, "refused": 0}
+    paths = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(e, dict) or e.get("mode") not in counts:
+                    continue
+                counts[e["mode"]] += 1
+                p = e.get("path")
+                if e["mode"] == "content" and isinstance(p, str) and p not in paths:
+                    paths.append(p)
+    except OSError:
+        return None
+    return {**counts, "paths": paths[:cap], "more": max(0, len(paths) - cap)}
+
+
+def _load_json_list(run, name):
+    try:
+        data = plan.read_json(os.path.join(run, name))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, list) else None
+
+
+def load_remembered(run):
+    """这次我记住了：<run>/remembered.json（memory.py remembered 写）。没有、读不了、或为空都返回 None。"""
+    data = _load_json_list(run, "remembered.json")
+    rows = [{"id": x["id"], "kind": x.get("kind") or "", "text": x["text"]} for x in data or []
+            if isinstance(x, dict) and isinstance(x.get("id"), str) and re.match(r"^[A-Za-z0-9_\-]+$", x["id"])
+            and isinstance(x.get("text"), str) and not x.get("forgotten")]
+    return rows or None
+
+
+def load_fixed(run):
+    """从源头改好的：<run>/governance-check.json（memory.py govern check 写）。"""
+    data = _load_json_list(run, "governance-check.json")
+    rows = []
+    for x in data or []:
+        if not isinstance(x, dict) or not isinstance(x.get("change"), str):
+            continue
+        v = x.get("verdict") if x.get("verdict") in ("stopped", "growing") else "unknown"
+        rows.append({"path": _short(x.get("path")), "change": x["change"], "verdict": v,
+                     "baseline_bytes": int(x.get("baseline_bytes") or 0), "now_bytes": int(x.get("now_bytes") or 0),
+                     "delta": int(x.get("delta") or 0)})
+    return rows or None
+
+
+def build_disposal(receipts, freed):
+    """处置方式口径：已腾出 / 已移入废纸篓（清空后才腾出）/ 已搬到外接硬盘（按盘名）。"""
+    trash_dirs = sorted({os.path.basename(rc["trash_dir"]) for rc in receipts if rc.get("trash_dir")})
+    return {"freed": freed, "trash": trashed_total(receipts), "trash_dirs": trash_dirs,
+            "archived": [{"volume": v, "source": src, "bytes": b}
+                         for (v, src), b in sorted(archived_by_volume(receipts).items()) if b > 0]}
 
 
 def share_url(freed, used_before, used_after, ai_freed):
@@ -136,7 +233,7 @@ def build_report(run):
 
     governance = [{"title": g.get("title"), "suggest": g.get("suggest"), "how": g.get("how"), "done": bool(g.get("done"))}
                   for g in pl.get("governance") or [] if isinstance(g, dict) and g.get("title")]
-    url = share_url(freed, used_before, used_after, ai_freed)
+    url = share_url(freed, used_before, used_after, ai_freed)       # 分享链接里的数字一律是“已腾出”口径（废纸篓里的不算）
     return {
         "schema": "report/1", "scan_id": full.get("scan_id"), "created_at": plan.now_iso(),
         "finished_at": full.get("finished_at"),
@@ -146,6 +243,8 @@ def build_report(run):
         "ai_freed": ai_freed, "categories": categories, "category_order": order,
         "cards": sorted(card_rows, key=lambda x: -x["bytes"]),
         "governance": governance, "share": {"url": url, "qr": qr_rows(url)},
+        "disposal": build_disposal(receipts, freed),
+        "reads": load_reads(run), "remembered": load_remembered(run), "fixed": load_fixed(run),
     }
 
 
@@ -207,6 +306,8 @@ def main(argv=None):
     fb = units.fmt_bytes
     print(f"腾出 {fb(report['freed'])}（其中 AI 工作 {fb(report['ai_freed'])}）；"
           f"已用 {fb(report['used_before'])} → {fb(report['used_after'])}")
+    if report["disposal"]["trash"]:
+        print(f"另有 {fb(report['disposal']['trash'])} 已移入废纸篓，清空后才会腾出")
     return 0
 
 
