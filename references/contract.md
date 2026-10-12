@@ -355,7 +355,7 @@
 3. `seal` 必须与 run 目录里的 `seal.json` digest 一致，`scan_id` 必须与封存的一致；按清单里的卡片与回答重算 `selection_sig` 必须等于清单的 `sel`（先于保存设置，对不上的清单不改动本机设置）；没有选中任何卡片也拒绝。`sel` 只来自清单，本命令从不重新生成它。
 4. 有 `设置:` / `台账:` / `别再列:` / `确认规则:` / `不要规则:` 行 → 调 `prefs.apply_settings`（与 `plan.py profile --apply` 同一实现；规则编号交给 `memory.confirm` / `memory.reject`）保存，且在任何删除之前；有路径没保存成功 → 停。
 5. 保存后（或本来就是）封存的 `profile_guard` 与现在的设置不一致 → 在进程内调 `plan.py seal`（内含 `check`，同样写 `plan.check.json`）重新封存；新 digest 与清单里的不同 → 停，打印原因（设置/台账让哪些卡的判断变了，或判断没变但卡里目录的内容在封存之后又变了：实测体积、文件大小、修改时间都是封存内容的一部分，不沿用旧值）、“需要用新看板重新确认”和 `plan.py propose` / `plan.py board` 的命令；相同则继续。
-6. 预演 → 试点 → 正式执行，与 `--choice` 共用同一段 `_go_steps` → `cmd_run`：`sel`、`profile_guard`、预演与成功试点的回执核对一步不少；清单里的 `归档到:`（优先）或命令行 `--archive-to`、`--trash` / `--no-trash` 一并传下去（第 8 节）；结束时先汇总“这次我记住了”并复查“从源头改好的”，再自动生成成果页。每步打印 `【go】…`，适合 `nohup` 后台运行。
+6. 预演 → 试点 → 正式执行，与 `--choice` 共用同一段 `_go_steps` → `cmd_run`：`sel`、`profile_guard`、预演与成功试点的回执核对一步不少；清单里的 `归档到:`（优先）或命令行 `--archive-to`、`--trash` / `--no-trash [--trash-reason]` 一并传下去（第 8 节）；结束时先汇总“这次我记住了”并复查“从源头改好的”，再自动生成成果页。每步打印 `【go】…`，适合 `nohup` 后台运行。
 
 退出码：`0` 完成；`2` 拒绝（台账导出、清单格式不对、scan_id / seal / sel 对不上、没有选中卡片、闸门拒绝，什么都没删）；`3` 停下请用户看（设置/台账让判断变了需要重新确认、设置没保存全、重新封存没通过、预演有失败或没有可执行条目、试点没成功）；`4` 正式执行有条目没删成功，其余已完成。
 
@@ -462,7 +462,7 @@
 
 `prefill` 只是预填，仍要用户确认；有风险提示的卡、含交互会话的卡（任何设置下）不预填。`tools[x]=often` 没有对应的 `check` 行为，只是提示 Agent 第二轮跳过深查（SKILL.md）。
 
-## 8. 执行 `act.py run --run <目录> --seal <digest> --cards c01,c03 [--answers c05=归档] [--dry-run | --pilot | --skip-pilot --reason <原因>] [--trash | --no-trash] [--archive-to /Volumes/盘名/目录]`（`go` 同样接受 `--trash` / `--no-trash` / `--archive-to`）
+## 8. 执行 `act.py run --run <目录> --seal <digest> --cards c01,c03 [--answers c05=归档] [--dry-run | --pilot | --skip-pilot --reason <原因>] [--trash | --no-trash [--trash-reason <用户原话>]] [--archive-to /Volumes/盘名/目录]`（`go` 同样接受 `--trash` / `--no-trash` / `--trash-reason` / `--archive-to`，但没有 `--reason`）
 
 1. 读取 `seal.json`，`digest` 必须一致；`profile_guard` 与现在的本机设置不一致（或旧封存没有）就拒绝，退出码 2；只处理指定卡片中封存过的 items。
    `--sel <12位>`：按上面的公式，用 seal digest、本次选中的卡（`--cards` 并上答复“删”的卡）和全部 `--answers` 重算，不符直接拒绝（退出码 2，不做任何删除）。**从看板导出文本来的运行必须带上其 `sel:` 值**，用来防止转抄时写错卡号、多加卡或改了回答。**试点与正式执行必须带 `--sel`**，缺省直接退出码 2、什么都不删；只有预演可以不带（用户还没选时 Agent 自己核对清单），此时 stderr 提示一行。
@@ -475,8 +475,8 @@
    任一项不满足就跳过并写明原因。
 3a. **处置方式（0.6）**：三种——`delete` 直接删（`os.unlink`）、`trash` 移入废纸篓、`archive` 复制到外接硬盘再处置原文件。选择顺序：答复“归档”的卡走 `archive`；其余的 `--trash` 强制废纸篓、`--no-trash` 强制直接删，都没给读 `profile.delete_mode`，缺省 `delete`（与 0.5 一致）。`native` 条目不受影响（照常由原生命令处理，回执 `disposal.mode` 记 `native`），回执里标明。
    - **`trash`**：文件 `os.rename` 到 `~/.Trash/叁笙清理-<scan_id>-<UTC 时间>/<相对家目录的路径>`（家目录外的路径放 `_root/<绝对路径去掉开头 />`），保持目录结构，先建父目录；原有的身份检查（inode / 设备）与保护检查照旧；目标已存在则该文件记失败、不覆盖；跨卷 `rename` 失败（`EXDEV`）→ 该文件 `skip`，原因“不在同一块盘，没法放进废纸篓”（并清掉为它建的空目录）。
-   - **`archive`**：需要归档目录（`--archive-to` 或看板导出的 `归档到:`，后者优先）。执行前整体校验，任一不满足整卡 `skip` 并写清原因：必须在 `/Volumes/<盘名>/` 下且真实路径仍在 `/Volumes` 下；目录存在、可写；与家目录不在同一块盘；剩余空间不小于本次全部归档卡封存字节合计的 1.05 倍（原生命令条目不算，见下）。通过后逐文件 `shutil.copy2` 到 `<归档目录>/叁笙归档-<scan_id>/<相对家目录的路径>`（先写进同目录里本次独有的 `.叁笙-tmp-*` 临时目录，数据 `F_FULLFSYNC`（不支持则 `fsync`）落盘并校验，再改名为目标名，目标目录同步落盘，再回读校验），**全部通过才处置原文件**（原文件再按删除方式 `trash` 或 `delete` 处理）；每个目标文件的真实路径必须仍在归档根之内、所在设备与源文件不同，否则该文件失败、原件保留。校验不一致、同名但内容不同、复制失败，原文件保留并记失败；只会删除本次自己创建的临时文件，绝不 unlink 目标位置已有的文件。重跑时目标已有逐字节相同的副本直接认。含 `native`（原生命令）条目的卡答复“归档”时，该条目一律跳过（“原生命令没法归档，先留着”），看板对这类卡不给“归档”选项。`sel` 在选了归档时多带 `archive_to`（规范化后的路径），为空时与 0.5 的签名逐位一致；预演/试点回执记录 `delete_mode` 与 `archive_to`，正式执行与之不同即拒绝；`--no-trash` 与设置 `delete_mode=trash` 冲突时必须同时给 `--reason "<用户原话>"`（写进回执 `no_trash_reason`）。归档不免除结束证据、引用检查和其他任何复核，看板上“归档”只是 `decide` 卡的第三个答复。
-   - `go --choice` 的对话确认没有“归档到”，要归档在 `go` 上加 `--archive-to`；记飞轮选择时，答复“归档”的卡不算“删”也不算“留”，不计入“以后都这样吗”。
+   - **`archive`**：需要归档目录（`--archive-to` 或看板导出的 `归档到:`，后者优先）。执行前整体校验，任一不满足整卡 `skip` 并写清原因：必须在 `/Volumes/<盘名>/` 下且真实路径仍在 `/Volumes` 下；目录存在、可写；与家目录不在同一块盘；剩余空间不小于本次全部归档卡封存字节合计的 1.05 倍（原生命令条目不算，见下）。通过后逐文件 `shutil.copy2` 到 `<归档目录>/叁笙归档-<scan_id>/<相对家目录的路径>`（先写进同目录里本次独有的 `.叁笙-tmp-*` 临时目录，数据 `F_FULLFSYNC`（不支持则 `fsync`）落盘并校验，再用 `os.link` 硬链接成目标名（目标已存在即 EEXIST，同哈希认、不同判失败，绝不覆盖；文件系统不支持硬链接——EPERM / ENOTSUP / EXDEV 等——才退回 `os.rename`），目标目录同步落盘，再回读校验），**全部通过才处置原文件**（原文件再按删除方式 `trash` 或 `delete` 处理）；每个目标文件的真实路径必须仍在归档根之内、所在设备与源文件不同，否则该文件失败、原件保留。校验不一致、同名但内容不同、复制失败，原文件保留并记失败；归档开始时顺手清理归档根下超过 24 小时的 `.叁笙-tmp-*` 残留目录（只清这个前缀、只在本次归档根内）；只会删除本次自己创建的临时文件，绝不 unlink 目标位置已有的文件。重跑时目标已有逐字节相同的副本直接认。含 `native`（原生命令）条目的卡答复“归档”时，该条目一律跳过（“原生命令没法归档，先留着”），看板对这类卡不给“归档”选项。`sel` 在选了归档时多带 `archive_to`（规范化后的路径），为空时与 0.5 的签名逐位一致；预演/试点回执记录 `delete_mode` 与 `archive_to`，正式执行与之不同即拒绝；`--no-trash` 与设置 `delete_mode=trash` 冲突时必须同时给 `--trash-reason "<用户原话>"`（写进回执 `no_trash_reason`；`--reason` 只给 `--skip-pilot`，两者不互相顶替）。归档不免除结束证据、引用检查和其他任何复核，看板上“归档”只是 `decide` 卡的第三个答复。
+   - 对话确认不支持归档，归档只走看板（`go --choice` 不用于归档）；记飞轮选择时，答复“归档”的卡不算“删”也不算“留”，不计入“以后都这样吗”。
 3. 删除规则（在 3a 选定的处置方式下逐个文件进行）：
    - `scope=ignored-only`：现场重新运行 `git ls-files -o -i --exclude-standard -z -- <path>`，逐个删除文件，删完再清理空目录；绝不删除 `git ls-files` 中的跟踪文件。
    - `scope=all`：先确认路径内没有跟踪文件；有就拒绝，并提示改用 `ignored-only`。
@@ -508,7 +508,7 @@ python3 scripts/peek.py --run <run目录> --summary
 
 **分类**（`classify`，先取真实路径，按家目录相对路径与文件名匹配，不区分大小写；优先级 never > extended > deep > basic）：
 
-- `never`：钥匙串（`~/Library/Keychains/**`、`*.keychain*`）、浏览器登录与 Cookie（`Login Data*`、`Cookies*`、`Web Data`、`key4.db`、`logins.json`）、`~/.ssh/**`、`~/.gnupg/**`、`.env` 与 `.env.*`、`*.pem`、`*.key`、`*.p12`、`*.kdbx`、`id_rsa*`、`id_ed25519*`、`.netrc`、`~/.aws/credentials`、`~/.config/gh/hosts.yml`、`~/.codex/auth.json`、`~/.claude/.credentials.json`、文件名含 password / 密码、1Password / Bitwarden / KeePass 的数据目录。
+- `never`：钥匙串（`~/Library/Keychains/**`、`*.keychain*`）、浏览器登录与 Cookie（`Login Data*`、`Cookies*`、`Web Data`、`key4.db`、`logins.json`）、`~/.ssh/**`、`~/.gnupg/**`、`.env` 与 `.env.*`、`*.pem`、`*.key`、`*.p12`、`*.kdbx`、任意 `id_*` 私钥（`*.pub` 公钥除外）、`*.ppk`、`*.pfx`、`*.jks`、`*.keystore`、`~/.android/adbkey*`、任意目录的 `.npmrc` / `.envrc` / `.mcp.json` / `*mcp*.json`、`claude_desktop_config.json`、Chrome 系 `Local State`、路径里含 `Local Storage` / `Session Storage` / `IndexedDB` / `tdata` 的内容、`state.vscdb*`、`wallet.dat`、`~/.config/github-copilot/**`、`.pgpass`、`.my.cnf`、`.s3cfg`、`.boto`、`.terraformrc`、`*.tfstate*`、`~/.m2/settings.xml`、`~/.gradle/gradle.properties`、`service-account*.json`、文件名切词后相邻的 api+key / private+key / access+key / secret+key（按整词，author.md、tokenizer.json、keyboard.md 不误伤）、`.netrc`、`~/.aws/credentials`、`~/.config/gh/hosts.yml`、`~/.codex/auth.json`、`~/.claude/.credentials.json`、文件名含 password / 密码、1Password / Bitwarden / KeePass 的数据目录。
 - `extended`：聊天软件收到的文件（微信 `msg/file`、`msg/video`）、邮件附件（`~/Library/Mail` 下叫 `Attachments` 的目录）、照片图库（`*.photoslibrary`）、桌面与 `~/Pictures/Screenshots` 下的截图（`截屏*`、`Screenshot*`）。
 - `deep`：聊天与邮件正文（`~/Library/Messages`、`~/Library/Mail` 的 `*.emlx`、微信 `Message` 与 `db_storage`、QQ `nt_msg`、Telegram `postbox/db`）、图片内容（png / jpg / jpeg / heic / webp）。
 - `basic`：其余。

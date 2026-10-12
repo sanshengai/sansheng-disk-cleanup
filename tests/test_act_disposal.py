@@ -104,7 +104,7 @@ def test_profile_delete_mode_trash_is_default_and_no_trash_overrides(env):
     digest, dirs = setup(env, spec=(("c01", "clean"), ("c02", "clean")))
     assert run_full(env, digest, "c01") == 0
     assert item_of(env)["disposal"]["mode"] == "trash" and trash_dirs(env)
-    assert run_full(env, digest, "c02", "--no-trash", "--reason", "别放废纸篓，直接删") == 0   # 覆盖“先放废纸篓”必须带用户原话
+    assert run_full(env, digest, "c02", "--no-trash", "--trash-reason", "别放废纸篓，直接删") == 0   # 覆盖“先放废纸篓”必须带用户原话
     assert item_of(env, "c02")["disposal"]["mode"] == "delete" and not dirs["c02"].exists()
     assert env.receipt()["no_trash_reason"]                    # 原话写进回执（with_gate 追加的 --reason test 排在后面，所以这里只验非空；精确值见 test_review_fixes_act）
 

@@ -3,7 +3,7 @@
 
 用法：
   act.py run --run DIR --seal DIGEST --cards c01,c03 [--answers c02=删 c04=归档] [--sel SEL] [--dry-run | --pilot | --skip-pilot --reason 原因]
-             [--trash | --no-trash] [--archive-to /Volumes/盘名/目录]
+             [--trash | --no-trash [--trash-reason 用户原话]] [--archive-to /Volumes/盘名/目录]
   act.py go --run DIR (--choice safe|recommended|all | --from-board 看板导出文本文件)
   act.py status --run DIR
 
@@ -256,6 +256,12 @@ def check_archive_target(path, needed):
     return None
 
 
+TMP_PREFIX = ".叁笙-tmp-"
+STALE_TMP_SECONDS = 24 * 3600
+# 硬链接不可用的错误码（FAT/exFAT/SMB 等常见）：退回 rename
+LINK_UNSUPPORTED = {errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EXDEV, errno.ENOSYS, errno.EMLINK, errno.EACCES}
+
+
 class Disposer:
     """统一的“处置一个文件”步骤。mode：delete / trash / archive；archive 逐个复制并校验一致后，
     原文件再按 source_mode（trash 或 delete）处置。error 非空 = 这张卡整卡跳过（归档目标不合格）。"""
@@ -267,6 +273,7 @@ class Disposer:
                           if "trash" in (mode, self.source_mode) else None)
         self.archive_root = os.path.join(os.path.abspath(archive_to), f"叁笙归档-{safe}") if mode == "archive" and archive_to else None
         self.volume = None
+        self._stale_swept = False
         if self.archive_root:
             tail = os.path.abspath(archive_to)[len(VOLUMES_ROOT.rstrip("/")) + 1:]
             self.volume = tail.split("/", 1)[0] or None
@@ -344,10 +351,36 @@ class Disposer:
             return f"读不到归档目标所在的盘：{exc.strerror or exc}，没有复制，原文件保留"
         return None
 
+    def sweep_stale_tmp(self, max_age=STALE_TMP_SECONDS):
+        """归档开始时清理归档根下超过 24 小时的 .叁笙-tmp-* 残留目录（上次中断留下的）。
+        只认这个前缀、只在本次归档根内、只处理真目录（不跟随符号链接）；只 unlink 里面的普通文件再 rmdir，不用 rmtree。"""
+        if self._stale_swept or not self.archive_root:
+            return
+        self._stale_swept = True
+        root = self.archive_root
+        now = time.time()
+        for cur, dirs, _files in os.walk(root, followlinks=False):
+            for name in list(dirs):
+                if not name.startswith(TMP_PREFIX):
+                    continue
+                dirs.remove(name)                      # 不再深入残留目录本身
+                d = os.path.join(cur, name)
+                try:
+                    st = os.lstat(d)
+                    if not stat.S_ISDIR(st.st_mode) or now - st.st_mtime <= max_age:
+                        continue
+                    for e in os.scandir(d):
+                        if e.is_file(follow_symlinks=False) or e.is_symlink():
+                            os.unlink(e.path)
+                    os.rmdir(d)
+                except OSError:
+                    pass
+
     def _archive_copy(self, path):
         """复制到归档盘：同目录里用 mkdtemp 建一个本次独有的临时目录，副本先写在里面，
         数据落盘 → 校验 → 改名为目标名 → 目标目录落盘 → 回读校验，全部通过才返回成功（调用方随后才处置原件）。
         只会删除本次自己创建的临时文件；目标位置已有同名文件时只比较内容（一致认、不一致判失败），绝不 unlink。"""
+        self.sweep_stale_tmp()
         dest = os.path.join(self.archive_root, rel_for_store(path))
         bad = self._dest_problem(path, dest)
         if bad:
@@ -361,7 +394,7 @@ class Disposer:
                 if file_sha256(dest) == want:
                     return None          # 上次复制过且一致（中断后重跑），直接认
                 return "fail", "归档盘上已有同名但内容不同的文件，没有覆盖，原文件保留"
-            tmpdir = tempfile.mkdtemp(dir=ddir, prefix=".叁笙-tmp-")
+            tmpdir = tempfile.mkdtemp(dir=ddir, prefix=TMP_PREFIX)
             tmp = os.path.join(tmpdir, "copy")
             shutil.copy2(path, tmp, follow_symlinks=False)
             if file_sha256(tmp) != want:
@@ -371,7 +404,17 @@ class Disposer:
                 if file_sha256(dest) == want:
                     return None
                 return "fail", "归档盘上已有同名但内容不同的文件，没有覆盖，原文件保留"
-            os.rename(tmp, dest)
+            # 先 os.link：目标已存在会报 EEXIST（绝不覆盖）；文件系统不支持硬链接才退回 rename
+            try:
+                os.link(tmp, dest)
+            except FileExistsError:
+                if file_sha256(dest) == want:
+                    return None
+                return "fail", "归档盘上已有同名但内容不同的文件，没有覆盖，原文件保留"
+            except OSError as exc:
+                if exc.errno not in LINK_UNSUPPORTED:
+                    raise
+                os.rename(tmp, dest)
             _sync_path(ddir)
             if file_sha256(dest) != want:
                 return "fail", "落盘后回读校验不一致，原文件保留"
@@ -1345,8 +1388,12 @@ def cmd_run(args):
     if args.skip_pilot and not (args.reason or "").strip():
         print("拒绝执行：--skip-pilot 必须同时给出非空的 --reason \"<原因>\"（原因会写进回执）", file=sys.stderr)
         return 2
-    if args.reason is not None and not args.skip_pilot and not getattr(args, "no_trash", False):
-        print("拒绝执行：--reason 只能与 --skip-pilot 或 --no-trash 一起使用", file=sys.stderr)
+    if args.reason is not None and not args.skip_pilot:
+        print("拒绝执行：--reason 只能与 --skip-pilot 一起使用（--no-trash 的用户原话请用 --trash-reason）", file=sys.stderr)
+        return 2
+    trash_reason = getattr(args, "trash_reason", None)
+    if trash_reason is not None and not getattr(args, "no_trash", False):
+        print("拒绝执行：--trash-reason 只能与 --no-trash 一起使用", file=sys.stderr)
         return 2
     if args.skip_pilot and (args.dry_run or args.pilot):
         print("拒绝执行：--skip-pilot 只用于正式执行，不能与 --dry-run 或 --pilot 同用", file=sys.stderr)
@@ -1356,9 +1403,9 @@ def cmd_run(args):
         print(f"拒绝执行：{bad_home}", file=sys.stderr)
         return 2
     profile = plan.load_profile()
-    if trash_conflict(args, profile) and not (args.reason or "").strip():
+    if trash_conflict(args, profile) and not (trash_reason or "").strip():
         print("拒绝执行：你的设置是“删除先放废纸篓”（delete_mode=trash），--no-trash 要直接删就必须同时给 "
-              "--reason \"<用户的原话>\"（原话会写进回执）；没有原话就不要用 --no-trash", file=sys.stderr)
+              "--trash-reason \"<用户的原话>\"（原话会写进回执）；没有原话就不要用 --no-trash", file=sys.stderr)
         return 2
     run = os.path.realpath(args.run)
     seal, err = load_seal(run, args.seal)
@@ -1421,7 +1468,7 @@ def cmd_run(args):
             "archive_to": getattr(args, "archive_to", None)}
     receipt = run_plan(run, seal, selection, args.dry_run, pilot=args.pilot, opts=opts, answers=answers)
     if trash_conflict(args, profile):
-        receipt["no_trash_reason"] = args.reason.strip()
+        receipt["no_trash_reason"] = trash_reason.strip()
     receipt["sel"] = sel
     receipt["cards_requested"] = requested
     receipt["answers"] = answers
@@ -1485,7 +1532,7 @@ def cmd_go(args):
         print(f"拒绝执行：提案里没有“{args.choice}”这一档，或这一档是空的", file=sys.stderr)
         return 2
     base = dict(run=run, seal=proposal.get("seal") or "", cards=",".join(opt["cards"]), answers=list(opt.get("answers") or []),
-                sel=opt.get("sel"), skip_pilot=False, reason=_go_reason(args), no_report=True, **_dispose_args(args))
+                sel=opt.get("sel"), skip_pilot=False, reason=None, trash_reason=_go_trash_reason(args), no_report=True, **_dispose_args(args))
     return _go_steps(run, base, since=started)
 
 
@@ -1495,9 +1542,9 @@ def _dispose_args(args, archive_to=None):
             "archive_to": archive_to or getattr(args, "archive_to", None)}
 
 
-def _go_reason(args):
-    """go 的 --reason 只用于 --no-trash 覆盖“先放废纸篓”设置时的用户原话（go 没有跳过试点）；多余的 --reason 照旧由 cmd_run 拒绝。"""
-    return getattr(args, "reason", None)
+def _go_trash_reason(args):
+    """go 的 --trash-reason 只用于 --no-trash 覆盖“先放废纸篓”设置时的用户原话（go 没有跳过试点，也就没有 --reason）。"""
+    return getattr(args, "trash_reason", None)
 
 
 def board_archive_to(ex, text):
@@ -1680,7 +1727,7 @@ def cmd_go_from_board(args):
         if err:
             return _board_stop(f"拒绝：{err}", 3)
     base = dict(run=run, seal=seal["digest"], cards=",".join(ex["cards"]), answers=list(ex["answers"]),
-                sel=ex["sel"], skip_pilot=False, reason=_go_reason(args), no_report=True, **_dispose_args(args, archive_to))
+                sel=ex["sel"], skip_pilot=False, reason=None, trash_reason=_go_trash_reason(args), no_report=True, **_dispose_args(args, archive_to))
     return _go_steps(run, base, since=started)
 
 
@@ -1710,6 +1757,8 @@ def _add_dispose_args(p):
     grp = p.add_mutually_exclusive_group()
     grp.add_argument("--trash", action="store_true", help="删除改为移入废纸篓（不腾出空间，清空废纸篓后才腾出）；缺省读 profile.delete_mode")
     grp.add_argument("--no-trash", dest="no_trash", action="store_true", help="强制直接删除，忽略 profile.delete_mode=trash")
+    p.add_argument("--trash-reason", dest="trash_reason", default=None,
+                   help="与 --no-trash 同用：设置里是“删除先放废纸篓”却要直接删时，写用户的原话（写进回执 no_trash_reason）")
     p.add_argument("--archive-to", dest="archive_to", default=None, metavar="DIR",
                    help="答复「归档」的卡搬到这里（必须在 /Volumes/<盘名>/ 下的外接硬盘）；go --from-board 时看板导出的“归档到:”优先")
 
@@ -1726,11 +1775,10 @@ def main(argv=None):
     r.add_argument("--dry-run", action="store_true")
     r.add_argument("--pilot", action="store_true", help="只真正执行一条（decide 卡优先、再取字节最大的可执行条目），用于正式执行前试点；必须带 --sel")
     r.add_argument("--skip-pilot", action="store_true", help="正式执行时跳过试点要求（预演仍必须有），必须同时给 --reason")
-    r.add_argument("--reason", default=None, help="跳过试点的原因，写进正式回执；与 --no-trash 同用时是用户要覆盖“先放废纸篓”设置的原话")
+    r.add_argument("--reason", default=None, help="跳过试点的原因，写进正式回执（只与 --skip-pilot 同用）")
     _add_dispose_args(r)
     g = sub.add_parser("go", help="连跑 预演 → 试点 → 正式执行 → 成果页，异常即停；--choice 按提案的一档，--from-board 按看板清单")
     g.add_argument("--run", required=True)
-    g.add_argument("--reason", default=None, help="与 --no-trash 同用：设置里是“删除先放废纸篓”却要直接删时，写用户的原话（写进回执）")
     g.add_argument("--choice", default=None, choices=plan.PRESETS, help="safe=稳妥 / recommended=好 / all=都删（对话确认）")
     g.add_argument("--from-board", default=None, metavar="FILE",
                    help="看板导出文本文件：校验 → 保存设置/台账 → 必要时重新封存 → 预演 → 试点 → 正式执行 → 成果页；与 --choice 二选一")

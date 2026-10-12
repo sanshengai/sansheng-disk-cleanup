@@ -99,7 +99,7 @@ def test_never_by_file_name_is_deliberately_conservative(env):
 
 def test_never_boundaries_that_are_not_credentials(env):
     assert cls(env, ".envelope") == "basic"          # 不是 .env，别误伤
-    assert cls(env, ".envrc") == "basic"             # direnv 的配置，不是密钥文件
+    assert cls(env, ".envrc") == "never"             # direnv 的 .envrc 常 export 密钥：2026-10 复核起按凭证挡（原先判 basic）
     assert cls(env, "Documents/envoy-notes.md") == "basic"
     assert cls(env, "Library/Keychains2/readme.txt") == "basic"    # 只是名字前缀像
     assert cls(env, "Documents/monkey.txt") == "basic"
@@ -118,7 +118,7 @@ def test_never_beats_other_classes(env):
     "Library/Containers/com.tencent.xinWeChat/Data/Documents/2.0b4.0.9/abc/db_storage/session.db",
     "Library/Messages/chat.db",                                   # iMessage / 短信
     "Library/Mail/V10/ABC-DEF/Data/Messages/1.emlx",              # 邮件正文
-    "Library/Application Support/Telegram Desktop/tdata/postbox/db/db_sqlite",
+    "Library/Application Support/Telegram/postbox/db/db_sqlite",   # （Telegram Desktop 的 tdata 目录已升为 never，见 test_review2_fixes）
     "Library/Containers/com.tencent.qq/Data/Documents/nt_qq_1234/nt_msg.db",
     "Downloads/photo.png",                                        # 图片内容
     "Downloads/scan.heic",

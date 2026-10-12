@@ -208,15 +208,66 @@ def _read_app_groups(path):
     return result
 
 
+# App 内嵌的登录项 / 辅助 App（常单独声明 app-group）：相对 App 本体的目录
+EMBEDDED_APP_DIRS = (("Contents", "Library", "LoginItems"), ("Contents", "Helpers"), ("Contents", "Library", "Helpers"))
+# scan.APP_ROOTS 没覆盖、但系统自带 App 所在的目录（只在本文件里合并，不改 scan.py）
+EXTRA_APP_ROOTS = ("/System/Applications/Utilities",)
+
+
 def _bundle_paths(app_path):
-    """App 本体加它 Contents/PlugIns 下的扩展（扩展常单独声明 app-group）。"""
+    """App 本体加它 Contents/PlugIns 下的扩展，以及内嵌的登录项 / 辅助 App（它们常单独声明 app-group）。"""
     out = [app_path]
     plugins = os.path.join(app_path, "Contents", "PlugIns")
     try:
         out.extend(sorted(e.path for e in os.scandir(plugins) if e.name.endswith(".appex")))
     except OSError:
         pass
+    for parts in EMBEDDED_APP_DIRS:
+        try:
+            out.extend(sorted(e.path for e in os.scandir(os.path.join(app_path, *parts)) if e.name.endswith(".app")))
+        except OSError:
+            pass
     return out
+
+
+def merge_extra_app_roots(apps, roots=None):
+    """把 EXTRA_APP_ROOTS 下的 .app 并进已装清单（新字典，不改 scan 的缓存）。
+    目录不存在不算错；某个 App 的 Info.plist 读不出就把清单标成不完整（拿不到它的 bundle id，不能断言“没人用”）。"""
+    roots = EXTRA_APP_ROOTS if roots is None else roots
+    recs = [dict(a) for a in apps.get("apps") or []]
+    seen = {os.path.realpath(a.get("path") or "") for a in recs}
+    errors = list(apps.get("errors") or [])
+    complete = bool(apps.get("complete"))
+    for root in roots:
+        try:
+            entries = sorted(e.path for e in os.scandir(root) if e.name.endswith(".app"))
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            complete = False
+            errors.append({"path": root, "error": "listdir失败: %s" % exc})
+            continue
+        for ap in entries:
+            real = os.path.realpath(ap)
+            if real in seen:
+                continue
+            seen.add(real)
+            rec = {"path": ap, "bundle_id": None, "version": None, "short_version": None, "name": None}
+            try:
+                info = scan._read_app_info(ap)
+                rec["bundle_id"] = info.get("CFBundleIdentifier")
+                rec["short_version"] = info.get("CFBundleShortVersionString")
+                rec["version"] = info.get("CFBundleVersion")
+                rec["name"] = info.get("CFBundleName")
+            except Exception as exc:  # noqa: BLE001
+                complete = False
+                errors.append({"path": ap, "error": "%s: %s" % (type(exc).__name__, exc)})
+            recs.append(rec)
+    by_id = {}
+    for a in recs:
+        if a.get("bundle_id"):
+            by_id.setdefault(a["bundle_id"].lower(), []).append(a)
+    return dict(apps, apps=sorted(recs, key=lambda a: a["path"]), by_id=by_id, errors=errors, complete=complete)
 
 
 def collect_app_groups(apps):
@@ -483,7 +534,7 @@ def probe_leftovers(opts=None):
 
     # 底线 2：清单不完整（或枚举本身出错）就拒绝
     try:
-        apps = scan.installed_apps()
+        apps = merge_extra_app_roots(scan.installed_apps())
         complete = bool(apps.get("complete"))
     except Exception as exc:  # noqa: BLE001
         return {"refused": True, "reason": "无法枚举已安装应用（%s: %s），不输出候选" % (type(exc).__name__, exc),

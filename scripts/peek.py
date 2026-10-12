@@ -35,7 +35,7 @@ HIDDEN_CHILD = "（凭证类，已隐去）"
 
 # 凭证、密钥、登录信息：任何设置都不能读。目录规则管目录本身及其下全部。
 NEVER_DIRS = ("Library/Keychains", ".ssh", ".gnupg", ".aws", ".azure", ".kube", ".config/gcloud", ".config/gh",
-              ".config/op")
+              ".config/op", ".config/github-copilot")
 NEVER_FILES = (".netrc", ".npmrc", ".pypirc", ".git-credentials", ".docker/config.json",
                ".codex/auth.json", ".claude/.credentials.json", ".gemini/oauth_creds.json")
 # 家目录相对路径通配（小写；fnmatch 的 * 可跨 /）：Agent 配置里常有 API key / token，shell 配置里常有 export 的密钥，
@@ -46,10 +46,23 @@ NEVER_REL_GLOBS = (
     ".zshrc", ".zshrc.*", ".bashrc", ".bashrc.*", ".zprofile", ".zprofile.*", ".bash_profile", ".bash_profile.*",
     ".profile", ".profile.*", ".zshenv", ".zshenv.*", ".zlogin", ".zlogout", ".bash_login", ".bash_logout",
     ".zsh_history*", ".bash_history*",
+    ".android/adbkey*", "library/application support/claude/claude_desktop_config.json",
+    ".m2/settings.xml", ".gradle/gradle.properties",
 )
 NEVER_NAME_GLOBS = ("*.keychain*", "*.pem", "*.key", "*.p12", "*.kdbx",
-                    "id_rsa*", "id_ed25519*", "Login Data*", "Cookies*",
-                    "Web Data", "key4.db", "logins.json")
+                    "Login Data*", "Cookies*",
+                    "Web Data", "key4.db", "logins.json",
+                    "*.ppk", "*.pfx", "*.jks", "*.keystore",                 # 私钥 / 证书库 / Java 密钥库
+                    ".npmrc", ".envrc", ".mcp.json", "*mcp*.json",           # 任意目录的项目级令牌与 MCP 配置
+                    "local state", "state.vscdb*", "wallet.dat",             # 浏览器 / 编辑器 / 钱包的登录态
+                    ".pgpass", ".my.cnf", ".s3cfg", ".boto", ".terraformrc", "*.tfstate*",
+                    "service-account*.json", "service_account*.json")
+# id_* 私钥（id_ecdsa / id_dsa / 任意 id_xxx）；*.pub 公钥不算
+NEVER_NAME_PREFIX_EXCEPT = (("id_", ".pub"),)
+# 路径里任一段命中就是登录态存储（Local Storage / Session Storage / IndexedDB / Telegram tdata）
+NEVER_PATH_SEGS = frozenset(("local storage", "session storage", "indexeddb", "tdata"))
+# 切词后相邻词对：api_key.txt / API-KEY.txt / private_key.json 等
+NEVER_TOKEN_PAIRS = frozenset((("api", "key"), ("private", "key"), ("access", "key"), ("secret", "key")))
 NEVER_NAME_WORDS = ("password", "密码", "凭证", "密钥")        # 文件名里出现就按凭证处理（宁可多挡；中文无词界，按子串）
 # 文件名按「词」匹配：把名字（含扩展名）按非字母数字、驼峰边界、字母与数字边界切成词，词在下面这组里就按凭证处理。
 # 例：auth.json、my-token.txt、OAuthClient.json、client_secret_123.json、access.token 命中；
@@ -71,7 +84,10 @@ def name_tokens(name):
 
 def has_credential_word(name):
     """文件名里有没有整词的 credential/secret/token/oauth/auth。"""
-    return any(t in NEVER_NAME_TOKENS for t in name_tokens(name))
+    toks = name_tokens(name)
+    if any(t in NEVER_NAME_TOKENS for t in toks):
+        return True
+    return any(pair in NEVER_TOKEN_PAIRS for pair in zip(toks, toks[1:]))
 
 
 # 聊天软件收到的文件、邮件附件、照片图库、截图：能看到文件名与大小就够了。
@@ -138,6 +154,10 @@ def _never(rel, segs, name, orig_name=None):
     if has_credential_word(orig_name if orig_name is not None else name):
         return True
     if _ENV_NAME.match(name):
+        return True
+    if any(name.startswith(pre) and not name.endswith(exc) for pre, exc in NEVER_NAME_PREFIX_EXCEPT):
+        return True
+    if any(sg in NEVER_PATH_SEGS for sg in segs):
         return True
     if any(fnmatch.fnmatchcase(name, g.lower()) for g in NEVER_NAME_GLOBS):
         return True

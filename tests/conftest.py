@@ -37,3 +37,16 @@ def _no_real_claude_tmp_root(tmp_path_factory, monkeypatch):
         return
     monkeypatch.setattr(protect, "TMP_BASE", os.path.join(str(tmp_path_factory.getbasetemp()), "no-such-ptmp"))
     yield
+
+
+@pytest.fixture(autouse=True)
+def _no_real_extra_app_roots(monkeypatch):
+    """leftovers 会额外并入 /System/Applications/Utilities；测试夹具的“已装清单”不能混进本机真实系统 App。
+    要测这条合并的用例自己传 roots。"""
+    try:
+        import leftovers
+    except ImportError:
+        yield
+        return
+    monkeypatch.setattr(leftovers, "EXTRA_APP_ROOTS", ())
+    yield

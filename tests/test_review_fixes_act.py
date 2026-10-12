@@ -198,14 +198,14 @@ def test_readback_mismatch_after_rename_keeps_source(env, vol):
     d, n, c = one_dir_card(env, {"x.bin": b"x" * 3000})
     env.write([n], [c])
     digest = env.seal()
-    real = os.rename
+    real = os.link
 
-    def rename_then_corrupt(src, dst, *a, **k):
+    def link_then_corrupt(src, dst, *a, **k):
         real(src, dst, *a, **k)
         if "叁笙归档" in str(dst):
             with open(dst, "ab") as fh:
-                fh.write(b"!")                                    # 改名之后落盘的内容变了
-    env.mp.setattr(os, "rename", rename_then_corrupt)
+                fh.write(b"!")                                    # 落到目标名之后落盘的内容变了
+    env.mp.setattr(os, "link", link_then_corrupt)
     assert act.main(with_gate(run_argv(env, digest, "", "--archive-to", str(vol), answers=["c01=归档"]))) == 0
     it = env.receipt()["cards"][0]["items"][0]
     assert it["status"] == "failed" and "回读" in it["failed"][0]["error"]
@@ -383,10 +383,10 @@ def test_formal_run_refused_when_dry_run_was_under_another_delete_mode(env):
     digest = env.seal()
     base = auto_sel(run_argv(env, digest, "c01"))
     assert act.main(base + ["--dry-run"]) == 0                                       # 预演按“先放废纸篓”
-    assert act.main(base + ["--skip-pilot", "--no-trash", "--reason", "用户说直接删"]) == 2
+    assert act.main(base + ["--skip-pilot", "--reason", "只有一条", "--no-trash", "--trash-reason", "用户说直接删"]) == 2
     assert (d / "x.bin").exists() and not (env.run / "receipt.json").exists()          # 预演没看过“直接删”，不放行
-    assert act.main(base + ["--dry-run", "--no-trash", "--reason", "用户说直接删"]) == 0   # 按直接删重新预演
-    assert act.main(base + ["--skip-pilot", "--no-trash", "--reason", "用户说直接删"]) == 0
+    assert act.main(base + ["--dry-run", "--no-trash", "--trash-reason", "用户说直接删"]) == 0   # 按直接删重新预演
+    assert act.main(base + ["--skip-pilot", "--reason", "只有一条", "--no-trash", "--trash-reason", "用户说直接删"]) == 0
     assert not d.exists()
     rc = env.receipt()
     assert rc["delete_mode"] == "delete" and rc["no_trash_reason"] == "用户说直接删"
@@ -398,10 +398,10 @@ def test_no_trash_conflicting_with_trash_profile_needs_reason(env):
     env.write([n], [c])
     digest = env.seal()
     base = auto_sel(run_argv(env, digest, "c01"))
-    for extra in (["--dry-run", "--no-trash"], ["--dry-run", "--no-trash", "--reason", "  "]):
+    for extra in (["--dry-run", "--no-trash"], ["--dry-run", "--no-trash", "--trash-reason", "  "]):
         assert act.main(base + extra) == 2
     assert not list(env.run.glob("receipt-*.json"))
-    assert act.main(base + ["--dry-run", "--no-trash", "--reason", "别放废纸篓"]) == 0
+    assert act.main(base + ["--dry-run", "--no-trash", "--trash-reason", "别放废纸篓"]) == 0
     assert (d / "x.bin").exists()
 
 
@@ -411,7 +411,8 @@ def test_no_trash_without_conflict_and_reason_misuse(env):
     digest = env.seal()
     base = auto_sel(run_argv(env, digest, "c01"))
     assert act.main(base + ["--dry-run", "--no-trash"]) == 0                         # 设置本来就是直接删：不需要原话
-    assert act.main(base + ["--dry-run", "--reason", "x"]) == 2                      # --reason 既不配 --skip-pilot 也不配 --no-trash
+    assert act.main(base + ["--dry-run", "--reason", "x"]) == 2                      # --reason 只配 --skip-pilot
+    assert act.main(base + ["--dry-run", "--trash-reason", "x"]) == 2                # --trash-reason 只配 --no-trash
 
 
 def test_go_from_board_no_trash_conflict_needs_reason(env):
@@ -423,7 +424,7 @@ def test_go_from_board_no_trash_conflict_needs_reason(env):
     f = write(env, export_text(digest, ["c01"]))
     assert act.main(["go", "--run", str(env.run), "--from-board", f, "--no-trash"]) == 2          # 没有原话：拒绝，什么都没删
     assert (d / "x.bin").exists()
-    assert act.main(["go", "--run", str(env.run), "--from-board", f, "--no-trash", "--reason", "用户说直接删"]) == 0
+    assert act.main(["go", "--run", str(env.run), "--from-board", f, "--no-trash", "--trash-reason", "用户说直接删"]) == 0
     assert not d.exists()
     assert env.receipt()["no_trash_reason"] == "用户说直接删" and env.receipt()["delete_mode"] == "delete"
 
