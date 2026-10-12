@@ -10,7 +10,7 @@
 | "可清除空间"（purgeable） | 系统认为空间不够时可回收的部分，含快照与可重新下载的 iCloud 文件 | 可再生缓存（计量口径，不是目录） |
 | "系统数据"（Settings → General → Storage） | 没被归类的一切：缓存、日志、虚拟内存、快照、插件、模拟器等 | 混合（不是一个目录，不能整体清） |
 | `~/Library/Caches/<应用或 Bundle ID>` | 应用缓存 | 可再生缓存（按子目录处理） |
-| `~/.Trash`、各卷 `.Trashes` | 废纸篓 | 用户确认过的删除，但空间未释放 |
+| `~/.Trash`、各卷 `.Trashes` | 废纸篓 | 用户确认过的删除，但空间未释放；叁笙清理选了“先放废纸篓”时，东西也在这里的 `叁笙清理-<scan_id>-<时间>` 文件夹里，清空前不算腾出空间（我们不替用户清空，也不删废纸篓里已有的东西） |
 | `~/Library/Application Support/MobileSync/Backup` | iPhone/iPad 的本机备份 | 用户独有成果（可能是唯一备份）；本机不存在 |
 | `~/Library/Containers/com.apple.mail/Data/Library/Mail Downloads`（旧版 `~/Library/Mail Downloads`） | 邮件附件的打开副本 | 可再生缓存（原件在邮件里）；路径随版本变化；本机两个路径都不存在 |
 | `~/Library/Mail`、`~/Library/Messages` | 邮件库、信息库 | 用户独有成果（受保护，不动） |
@@ -24,7 +24,7 @@
 
 ## 怎么判断还在用
 
-- 删了东西空间不涨：依次查 `tmutil listlocalsnapshots /`、废纸篓是否已清空、APFS 克隆（复制出来的文件共享块，删一份不释放）。
+- 删了东西空间不涨：先看是不是选了“先放废纸篓”（成果页会写“已移入废纸篓，清空后腾出”），再依次查 `tmutil listlocalsnapshots /`、废纸篓是否已清空、APFS 克隆（复制出来的文件共享块，删一份不释放）。
 - 看真实可用量：`df -h /System/Volumes/Data` 或 `diskutil info /` 的可用空间；Finder 的"可用"含 purgeable，口径更乐观。
 - 快照列表为空但"可清除"仍大：这部分多半是可重新下载的 iCloud 文件，不要靠删文件去换。
 - `~/Library/Caches`：只按子目录判断。看该子目录对应的应用是否在运行（`pgrep`），是否 24 小时内有改动。

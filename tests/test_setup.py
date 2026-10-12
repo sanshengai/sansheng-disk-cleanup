@@ -509,4 +509,4 @@ def test_summary_lines_follow_profile(env):
                   tools={"android": "unused", "docker": "often"})
     assert setup_q.summary_lines(read_profile(env)) == ["合进主线的工作树：只清构建产物", "录屏和大视频：不问你", "不用了的软件：Android 模拟器"]
     assert setup_q.summary_lines({"big_file_age_days": 30, "default_choice": "all", "confirm_mode": "board"}) == [
-        "录屏和大视频：超过 30 天没动才问你", "重新下载要等：空间优先（默认全部可删档）", "确认方式：每次都发看板"]
+        "录屏和大视频：超过 30 天没动才问你", "重新下载要等：空间优先（重新下载慢的也勾上）", "确认方式：每次都发看板"]

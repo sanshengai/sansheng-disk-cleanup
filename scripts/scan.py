@@ -3602,6 +3602,22 @@ def _near_name(a, b):
     return len(a) >= 3 and len(b) >= 3 and (a == b or a in b or b in a)
 
 
+def _peek_refused(fp):
+    import peek
+    return peek.decide(peek.classify(fp), peek.read_scope()) != "content"
+
+
+def _log_read(run, fp):
+    """读过的文档记进 <run>/reads.jsonl（成果页“这次读了哪些文件”）；没给运行目录或目录不存在就不记。"""
+    if not run or not os.path.isdir(os.path.realpath(run)):
+        return
+    import peek
+    try:
+        peek.record(os.path.realpath(run), fp, peek.classify(fp), "content")
+    except OSError:
+        pass
+
+
 def probe_done_evidence(opts):
     path = os.path.realpath(os.path.expanduser(opts.path))
     base = os.path.basename(path.rstrip("/"))
@@ -3708,11 +3724,14 @@ def probe_done_evidence(opts):
         out["final_named_files"] = final_files
         hits = []
         for fp in sorted(docs)[:10]:
+            if _peek_refused(fp):           # 与 peek.py 同一口径：凭证类永不读，未授权的类别不读内容
+                continue
             try:
                 with open(fp, "rb") as f:
                     text = f.read(DONE_DOC_MAX_BYTES).decode("utf-8", "replace")
             except OSError:
                 continue
+            _log_read(getattr(opts, "run", None), fp)
             lines = [ln.strip()[:160] for ln in text.splitlines() if DONE_TEXT_RE.search(ln)][:3]
             if lines:
                 hits.append({"file": os.path.relpath(fp, path), "lines": lines})

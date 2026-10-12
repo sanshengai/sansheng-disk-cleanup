@@ -1,4 +1,4 @@
-# 数据契约与安全规则（v0.5）
+# 数据契约与安全规则（v0.6）
 
 三段流水线共用本契约：`scan.py` 产出事实 → Agent 写 `plan.json` → `plan.py` 校验、封存并渲染看板 → 用户选择 → `act.py` 复核并执行。所有脚本只用 Python 3.9+ 标准库，macOS 优先，路径一律 `os.path.realpath` 规范化后再比较。
 
@@ -21,13 +21,34 @@
 - `protect`：用户追加的保护路径（前缀匹配）。
 - `deliverable_roots`（可选）：成品目录。`copy_verified` 证据的副本若不在 git 跟踪的文件里，就必须位于这些目录之内。设置行 `成品` 或台账里某个项目的 `成品` 写入成品目录时，同时追加进 `reference_roots`（0.5 起成品目录按项目记在 `projects[*].deliverables`，由有效 profile 并进来）。
 - `notes`：路径 → 一句说明，原样带入事实，供 Agent 判断。
-- `onboarded_at`（可选）：完成初次设置的时间，设置或台账成功应用过一次（含全默认的空台账）就写入。没有它就是第一次使用：`plan.py propose` 的 `stage` 为 `onboarding`，一律走看板，且应先发 ①项目台账看板（第 7d 节）；有它则 `stage` 为 `cleanup`，不再发 ①。
-- `retention_days`（可选，0/7/15/30）：最近 N 天内有改动的交互会话，`check` 整卡降为 keep；0 或缺省不按天数。看板上显示的当前值取实际设置（没设就是 0，显示“不按天数”并选中），不会替用户默认成 15。
+- `onboarded_at`（可选）：完成初次设置的时间，设置页导出、设置或台账成功应用过一次（含全默认的空台账）就写入；0.5 的老 profile 靠它认“设置过”。
+- `setup`（0.6，可选）：`{version, at, answers}`，初始设置页保存的记录（第 7d 节）。`answers` 只存结构化答案，不存“补充”原话。**第一次使用的判据**：`setup.version` 缺失**且** `onboarded_at` 缺失 → `plan.py propose` 的 `stage` 为 `onboarding`，一律走看板，先发设置页；有 `onboarded_at` 但 `setup.version` 小于题库当前版本（`setup_q.SETUP_VERSION`）→ `stage` 为 `cleanup`，`proposal.setup_upgrade` 为真，Agent 先发只补新题的设置页再发清理看板；都不缺则 `cleanup`，不再发设置页。
+- `retention_days`（可选，0/7/15/30/60/90）：最近 N 天内有改动的交互会话，`check` 整卡降为 keep；0 或缺省不按天数。看板上显示的当前值取实际设置（没设就是 0，显示“不按天数”并选中），不会替用户默认成 15。
 - `default_choice`（可选，safe/recommended/all）：对话里回“好”对应的档，缺省 recommended。
+- 设置页写入的字段（0.6，都可选，取值不合法一律当作没设；各字段怎么被 `check` / `propose` 消费见第 7f 节）：
+  - `read_scope`：`["basic","extended","deep"]` 的子集，用户允许读哪些类别的文件；`never` 永远隐含、不存；缺省按 `["basic"]`，空数组 = 只给文件名等元信息。`peek.py` 据此拦截（第 9 节）。
+  - `tools`：`{工具键: often|sometimes|unused}`，工具键 = 知识卡名（`android` / `xcode` / `docker` / `model-caches` / `creative-media` / `codex` / `claude-code` / `grok` / `gemini-antigravity` / `cursor`）。其中 android、xcode、docker、model-caches 同步台账环境项目：`often` → 进行中，`unused` → 做完了，已标“别碰”的不改。
+  - `conversation_policy`：`done` / `sometimes` / `library`（旧对话：做完就不再看 / 偶尔回去接着做 / 当资料库）；同时写 `retention_days`（7 / 30 / 0，用户另选了天数以天数为准）。
+  - `rejects_policy`：`drop` / `until_done` / `keep`（没挑中的 AI 图：不留 / 留到项目做完 / 都留）。
+  - `worktree_policy`：`whole` / `build_only` / `ask`（合进主线的工作树：整棵删 / 只清构建产物 / 每次问）。
+  - `installer_policy`：`auto` / `ask`。
+  - `big_file_age_days`：`30` / `90` / `0`（0 = 录屏和大视频别问）。
+  - `cloud_policy`：`ok` / `offline` / `unsure`（云盘文件“只留云端”）。
+  - `done_project_policy`：`intermediate` / `archive` / `keep`（做完的项目：删中间稿 / 整个搬走 / 先留着）。
+  - `governance_mode`：`tell` / `guide` / `fix`（会一直涨的东西：只告诉我 / 告诉我改法 / 同意后你来改）。
+  - `delete_mode`：`trash` / `delete`（删除方式：先放废纸篓 / 直接删；缺省按 `delete`）。
+  - `confirm_mode`：`smart` / `board`（`board` = 每次都发看板）。
+  - `default_choice`：设置页第 12 题“能等多久”映射到它：`minimal` → `safe`，`some` → `recommended`，`space` → `all`。
+  - 成品目录（第 4 题）写 `deliverable_roots` 与 `reference_roots`，别碰的目录（第 5 题）并入 `protect`（只增不减）。
+- 记忆（0.6，由 `memory.py` 与 `prefs.py` 读写，第 10 节）：
+  - `identities`：`{realpath: {title, producer, task, at, scan_id}}`，认下的目录；下次扫描给同路径或最近祖先节点附 `identity`，只作事实附注。
+  - `governance`：`{realpath: {change, undo, at, baseline_bytes, scan_id}}`，从源头改过的设置。
+  - `pending_rules`：`[{id, text, kind: protect|rule|note, value, at}]`，用户在设置页“补充”里说过、Agent 翻译后待确认的规则；清理看板每条给“对 / 不对”，确认前不生效。
+  - `memory_log`：`[{id, kind: rule|identity|setting|governance|project|protect|note, text, ref, at, scan_id, forgotten?}]`，每次真正改动设置、规则、身份、保护都记一行，成果页“这次我记住了”读它，“忘掉”据 `ref` 撤销。
 - `rules`（可选）：`{规则键: {"action": "delete"|"keep", "at", "spec"}}`。规则键 = “看板类别/`cards_used` 第一项/档位”（如 `ai-images/codex/recommended`），由 `check` 算出并写进封存；卡片不能自定义，没写 `cards_used` 的卡不参与规则。`delete`：这一类不再算“要你看”，但仍只进它自己那一档及以上，且对降过级、带风险提示或含交互会话的卡不适用；`keep`：这一类不进任何一档、文案不再提。
 - `cooldown`（可选）：`{规则键: 截止时间戳}`，用户回“不用”后 60 天内不再问。
 - `projects`（可选，0.5 项目台账）：`{项目键: {name, status, deliverables[], updated_at, source}}`。项目键 = 规范化绝对路径（`realpath`，必须是家目录下已存在的目录），环境项目用 `env:android` / `env:xcode` / `env:docker` / `env:models`（各自占的位置见 `protect.ENV_PROJECT_ROOTS`）。`status` ∈ `active`（进行中）/ `done`（做完了）/ `archived`（归档）/ `protected`（别碰）；`deliverables` 是该项目自己的成品目录（`~/…`，家目录下已存在的目录）；`source` = `board`（用户在台账看板或对话里标的）。**有效 profile**：`protect.load_profile()`（scan / plan / act 一律用它）把 `protected` 项目的目录并入 `protect`，把各项目的 `deliverables` 并入 `deliverable_roots` 与 `reference_roots`（副本核对与引用检查范围）；这只发生在内存里，`prefs.load()` 读原始内容、改写后存盘，折进去的部分不会写回文件。
-- 以上几项由 `plan.py profile --apply`（看板导出的“设置:”“别再列:”行）与 `plan.py rule` 写入；“别碰”“成品”只接受家目录下已存在的子目录。`plan.py project --key <项目键> --status <状态>` 单独改一个项目的状态（回答“X 做完了吗”）。`onboarded_at` 在设置或台账**成功应用过一次**时写入（台账全是默认状态、没有一行需要改也算）。
+- 以上几项由 `plan.py profile --apply`（看板导出的“设置:”“别再列:”“确认规则:”“不要规则:”行、台账导出、初始设置导出）与 `plan.py rule` 写入；“别碰”“成品”只接受家目录下已存在的子目录。`plan.py project --key <项目键> --status <状态>` 单独改一个项目的状态（回答“X 做完了吗”）。`onboarded_at` 在设置或台账**成功应用过一次**时写入（台账全是默认状态、没有一行需要改也算）。
 - 同目录 `choices.jsonl`：每次正式执行后按 `cardkeys.json`（`propose` / `board` 写出）记一行 `{scan_id, at, key, chosen, bytes, title}`，一类里的卡全被选中才算删。卡片属于某个项目时（封存记录里的 `projects`），再多记一行带项目前缀的键 `project:<sha256(项目键)[:8]>/<原规则键>`（`prefs.project_rule_key`），原规则键的格式不变；带项目前缀的键目前只记录，不参与“以后都这样吗”的提问。同一规则键在最近 3 次不同 scan_id 里同向，且没有规则、不在冷却期，`propose` 才在文案末尾问一次（成长飞轮规范版本 1）。
 
 ## 2. 事实 `facts.json`（scan.py 产出）
@@ -81,6 +102,9 @@
 - **refs（引用检查）**：对每个前沿节点生成路径变体：绝对路径、`~/` 相对路径、所在仓库的相对路径，以及 `basename`（仅当 basename 长度 ≥ 12，或含日期/哈希这类独特片段时）。到 `reference_roots` 与节点所在仓库搜索，每个仓库只跑一次 `git grep -F -l -f <模式文件>`，再把结果映射回节点。节点自身内部的文件不算引用。`samples` 最多 5 条 `文件:行号`。超时或失败时置 `checked=false`。**一个目录都没搜过**（`reference_roots` 为空、节点又不在 git 工作树里）时置 `checked=false, reason:"no-search-scope"`，不是“已查 0 处”；`plan.py check` 把它按“引用未查”降级，扫描摘要显示“引用未查”并打警告。`facts.json` 的 `coverage.refs_search` 记下扫描时实际搜过的目录：`{"roots":[规范化的绝对路径…],"worktree_scopes":bool}`（只含存在的目录）。扫描之后台账 / 设置新增了成品目录（有效 profile 的 `reference_roots` 里有扫描时没搜过的根），`check` 把查过引用的节点视为“引用未查”（错误提示“台账或设置新增了成品目录……运行 scan.py probe item-refs --run …”），用 `probe item-refs` 按当前引用检查目录补查后恢复；`item_refs.json` 的每条记录 `roots` 为实际搜过的目录，`check` 据此判断是否覆盖当前全部引用检查目录。没有 `refs_search` 的旧格式 facts 不做这项比较。
 - `producer`：按 `scripts/producers.json` 的路径规则匹配，给出 `tool`、对应知识卡名 `card`、一句 `hint`；匹配不到时 `tool=null`。规则默认连子路径一起匹配；可选 `exact: true`（只匹配路径本身）和 `only: "file"`（只匹配已存在的单个文件，目录不匹配）。`large-old-files` 只套给下载、桌面、影片里的单个文件，这三个目录本身是入口提示，其下的子目录不套这张卡。
 - `growth`：与 runs 目录里最近一次 `facts.json` 按路径对比。
+- `identity`（0.6，可选）：`profile.identities` 里同路径或最近祖先登记过的目录身份 `{title, producer, task}`，只作事实附注，不改变任何判断。
+- **扫描根（0.6）**：除 `roots` 与 `extra_roots` 外，`/private/tmp/claude-<uid>`（Claude Code 会话临时目录）存在时默认也加入扫描。`producers.json` 里它归 `claude-code` 卡；`protect.py` 只放开它下面的会话子目录，目录本身、`/private/tmp` 其他内容、当前会话（环境变量 `CLAUDE_SESSION_ID` / `CLAUDE_CODE_SESSION_ID` 给出的会话 id）一律保护；24 小时内有改动的照常保留。另有 `~/.codex/.tmp`（Codex 没在运行时可清）与 `~/Library/Caches/clang`（编译器模块缓存）两条归属规则。
+- `--no-refs`（0.6）：扫描不做引用检查，所有节点 `refs` 为 `checked=false, reason:"--no-refs"`。这种快扫只给设置页出题，**不能支撑任何删除卡**：`plan.py check` 把相关卡降为保留，`probe item-refs` 也不替它补查；要出清理计划必须再跑一次完整的 `scan.py scan`。
 - `protected`：命中第 5 节保护名单时为 true，此时照常输出事实，但标记不可清理。
 
 ## 3. 探针（scan.py probe <kind>，Agent 按知识卡调用）
@@ -104,11 +128,12 @@
 - `probe claude`：`~/.claude/projects/*` 各项目体积与会话数，`settings.json` 里的 `cleanupPeriodDays`，`~/.local/share/claude/versions` 各版本与当前运行版本。
 - `probe android`：各 SDK 根（`ANDROID_HOME`、`~/Library/Android/sdk`、`~/.local/share/android-sdk`）下的 `system-images`，以及哪些被 `~/.android/avd/*/config.ini` 的 `image.sysdir.*` 引用；各 AVD 的体积和快照体积。
 - `probe worktrees --repo <路径>`：`git worktree list --porcelain` 的每棵树：分支、是否 locked、是否已并入 `origin/main`、dirty 行数、被忽略内容体积（`git ls-files -o -i --exclude-standard --directory` 加上 `du`）。
-- `probe projects [--run DIR] [--runs-dir DIR]`（0.5，只读）：识别项目并写 `<run>/projects.json`（见第 6b 节）。来源：① git 仓库根与链接工作树（facts 节点的 `git.repo`、家目录一二级目录下的 `.git`；链接工作树折进主仓库，记入 `roots`）；② AI 会话的工作目录（Codex 会话 `cwd`、Claude Code 项目目录名——按文件系统逐级反解，不拆字符串、Grok 会话目录名——URL 解码）归到所在仓库根，没有仓库就取家目录（或标准文件夹）下第一级目录；③ 开发环境，每类一个（android / xcode / docker / models），体积为 0 的不列；④ 家目录一级、名字含 成品 / 成片 / final / output / dist / release / export / deliver 的目录。体积来自 facts 前沿节点（归给路径最深的项目），没有事实的项目才做有限遍历（≤2 万条目、1.5 秒、总预算 20 秒，`bytes_partial: true` 表示被截断）；最后活动取节点最新修改、项目目录与 `.git` 的修改时间、会话时间中最大的。不在家目录下、隐藏目录、Library、标准文件夹本身、已不存在的目录不算项目；某类来源取不到就跳过并写进 `skipped`。stdout 输出 JSON（去掉 `session_ids`），摘要写 stderr。
+- `probe projects [--run DIR] [--runs-dir DIR]`（0.5，只读）：识别项目并写 `<run>/projects.json`（见第 6b 节）。来源：① git 仓库根与链接工作树（facts 节点的 `git.repo`、家目录一二级目录下的 `.git`；链接工作树折进主仓库，记入 `roots`）；② AI 会话的工作目录（Codex 会话 `cwd`、Claude Code 项目目录名——按文件系统逐级反解，不拆字符串、Grok 会话目录名——URL 解码）归到所在仓库根，没有仓库就取家目录（或标准文件夹）下第一级目录；③ 开发环境，每类一个（android / xcode / docker / models），体积为 0 的不列；④ 家目录一级、名字含 成品 / 成片 / final / output / dist / release / export / deliver 的目录。体积来自 facts 前沿节点（归给路径最深的项目），没有事实的项目才做有限遍历（≤2 万条目、1.5 秒、总预算 20 秒，`bytes_partial: true` 表示被截断）；最后活动取节点最新修改、项目目录与 `.git` 的修改时间、会话时间中最大的。不在家目录下、隐藏目录、Library、标准文件夹本身、已不存在的目录不算项目；某类来源取不到就跳过并写进 `skipped`。stdout 输出 JSON（去掉 `session_ids`），摘要写 stderr。0.6 起同一个文件里还有出设置题用的三项机器事实（第 6b 节）：`tools`（装了哪些工具、占多少、最后使用时间）、`deliverable_candidates`（像成品目录的文件夹）、`setup_facts`（AI 对话与生成图体积、工作树数、安装包与录屏体积、云盘本机占用、最近一次 Time Machine 备份、家目录一级目录体积等）。全部只读：只 stat，不读文件内容，不触发云盘下载。
 - `probe grok`：`~/.grok/sessions` 体积，`config.toml` 里的 `storage.cleanup_ttl_days`。
 - `probe system`：完全磁盘访问权限（三态）、本地快照、Time Machine 目的地、可清除空间（statvfs / 容器 / Finder 三种口径）、未归因的“系统数据”估算、`/private/var/folders` 等系统大块。只读、外部命令带超时、不用 sudo。
 - `probe updaters`：各软件更新暂存包与已安装版本比对（bundle id、版本号），状态 `superseded / pending_install / orphaned_update / unknown / in_use`；只有 `superseded` 的卡可写 `updater_verdict: "superseded"`。
-- `probe leftovers [--min-age-days N] [--brew-zap]`：已卸载软件在 Caches / Logs / Saved State / HTTPStorages / WebKit 留下的目录，只报告；Spotlight 查询失败一律按“软件还在”处理。
+- `probe leftovers [--min-age-days N] [--brew-zap]`：已卸载软件的残留，只报告。位置：Caches / Logs / Saved State / HTTPStorages / WebKit 的第一层目录，另有只认明确形状的 LaunchAgents 的 `<id>.plist`、Cookies 的 `<id>.binarycookies`、Group Containers 的 `<TeamID>.xxx` / `group.xxx` 目录（含登录态或可能被同厂商软件共用的位置标 `moderate`，默认不勾选）。名字匹配不用子串，用“整名 + 以分隔符或数字开头的后缀”；名字或 id 少于 4 个字符只认整串相等；已装软件清单不完整时整个探针拒绝；任何查询失败（Spotlight、进程名单、stat）一律按“软件还在”处理。
+- `probe done-evidence --run <run目录> --path <目录> [--profile 文件]`（0.6，只读）：给“这个任务做完了吗”找信号，**只是信号，不是结论**。输出 `{path, exists, git, deliverables, last_modified, final_named_files, doc_hits, skipped?}`：`git` 是 `{is_repo, branch, merged_into_main, compared_with, dirty_files, last_commit_at}`；`deliverables` 是成品目录（`profile.deliverable_roots`）里与目录同名或近名的文件数和样本；`final_named_files` 是名字含完成 / 交付 / final / release 一类字样的文件；`doc_hits` 是目录前两层 README、进度、日志一类文档里含“完成”“已上线”“done”字样的行（每份最多 3 行，名字含 password / .env / secret 的不读）。要变成放行依据，必须再转成第 4 节的 `merged` / `delivered` / `copy_verified`。
 - 需要 sudo 才能处理的对象（本地快照、`/Library` 下的系统缓存等）：Skill 自己不使用 sudo，只在卡片 `question`/`impact` 里合成一两行命令，由用户在终端自行执行。
 
 ## 4. 计划 `plan.json`（Agent 撰写）
@@ -180,6 +205,8 @@
 - 任何 `.git` 目录或文件；
 - `profile.protect` 中的路径。
 
+0.6 补充：`/private/tmp` 本身与不属于 Claude 会话的内容永远受保护，只有 `/private/tmp/claude-<uid>` 下的会话子目录可进计划（第 2 节）；废纸篓模式（第 8 节）是把文件移**进** `~/.Trash/叁笙清理-…/`，不是去删废纸篓里已有的东西，废纸篓里的内容仍不开放删除。
+
 另外：
 
 - 路径是保护路径的祖先时也拒绝。不能删除包含保护路径的父目录。但这种“仅因是祖先而受保护”的节点（如含 MobileSync 的 `~/Library/Application Support`）只拒绝整删它本身：节点内部不受保护的条目不受影响，按“未做引用检查的节点”处理，卡片 `evidence` 须有一条合法的 `refs_reviewed`（`history_only`，见第 5 节检查项）；本身在保护范围内的节点（如 `~/Documents` 之内），其内条目仍不可补救。
@@ -207,7 +234,7 @@
 
 **项目台账接入 `check`（0.5）**：用有效 profile 与 `<run>/projects.json`（`scan_id` 须一致，否则只能按项目目录路径判断）建项目索引。**台账里有 `active` / `protected` 项目、而本次 run 没有 `scan_id` 一致的 `projects.json` 时，`check` 让所有 clean / decide 卡降为 `keep`**（原因“台账里有进行中或别碰的项目，但这次扫描还没有项目识别结果……先运行 scan.py probe projects”）：会话号与 Claude 项目目录的归属只有它能认出，少了它不能放行任何删除卡；台账只有 `done` / `archived` 项目时不要求。条目属于某个项目的方式有三种：路径与项目目录重叠（在里面；或条目把整个进行中 / 别碰项目包含在内）；Codex 会话 / 生成图的会话号在该项目的 `session_ids` 里（会话号取自条目的 `session`、路径文件名、`codex delete` 的 argv）；路径在 `~/.claude/projects/<目录>` 下且该目录在项目的 `claude_dirs` 里。`active` / `protected` 项目里的条目让整张卡降为 `keep`（原因“项目「X」还在进行中……”/“项目「X」你标了‘别碰’……”，附 `judgment.md` §8 引用）；`protected` 项目的目录同时在保护名单里，执行时 `protect.py` 也会拦。`done` / `archived` **不改变任何放行条件**（`user_stated` 仍不是结束证据，副本核对、引用核对、进程与 24 小时改动照旧），只在封存记录里写 `projects: [{key,name,status}]`，并影响提案：卡里全部条目都属于 `done` / `archived` 项目的 `decide` 卡（无风险提示、不含交互会话）记 `prefill: "删"`；全部条目都属于 `archived` 项目时，档位上限为 `recommended`（`preset: all` 的卡降到推荐档；风险区仍只在 `all`）；封存记录另有 `preset_raw`（不计台账上限的原始档位），提案文案与看板据此仍提醒“删了找不回”（看板卡片带 `preset_raw`，与 `preset` 不同时标出）。`plan.check.json` 每张卡带 `projects`，有上限 / 预填时带 `project_cap` / `prefill`；看板数据（`plan.py board` 的 `plan.cards[]`）同样带 `projects` 与 `prefill`。
 
-`plan.py seal` 同时写入 `profile_guard`（`{digest, fields}`）：封存时影响判断的本机设置——`roots`、`extra_roots`、`reference_roots`、`protect`、`deliverable_roots`、`retention_days`——的规范化摘要，以及 0.5 起的 `projects`（项目台账里每个项目的 `status` 与 `deliverables`；没有台账时不进摘要，与旧摘要一致；名字、时间、来源只影响显示，不在其内）（列表排序去重，缺省值与显式默认值等价；`rules`、`cooldown`、`default_choice`、`notes`、`onboarded_at` 只影响提案档位与文案，不在其内）。`profile_guard` 不参与 `digest` 的计算：改了设置重新封存，卡片没变时 digest 不变，用户已发来的选择清单仍然有效。`act.py run`（含预演、试点）与 `go` 比对现在的设置与它，不同或旧封存没有这一项就拒绝（退出码 2，什么都不做），要求重新 `plan.py check` / `seal`。
+`plan.py seal` 同时写入 `profile_guard`（`{digest, fields}`）：封存时影响判断的本机设置——`roots`、`extra_roots`、`reference_roots`、`protect`、`deliverable_roots`、`retention_days`——的规范化摘要，以及 0.5 起的 `projects`（项目台账里每个项目的 `status` 与 `deliverables`；没有台账时不进摘要，与旧摘要一致；名字、时间、来源只影响显示，不在其内）（列表排序去重，缺省值与显式默认值等价；`rules`、`cooldown`、`default_choice`、`notes`、`onboarded_at` 只影响提案档位与文案，不在其内）；0.6 起再加会改变 `check` 结果（降保留、预填、进哪一档）的设置：`tools`（只有 `unused` 的工具键进摘要，`often` / `sometimes` / 没设等价）、`conversation_policy`（`done` / `library`）、`rejects_policy`（`drop` / `keep`）、`worktree_policy`（`whole` / `build_only` / `ask`）、`big_file_age_days`（30 / 90 / 0）、`done_project_policy`（`archive` / `keep`）、`installer_policy`（`auto`）。取值等于“没设”的不进摘要，所以没有这些字段的 0.5 旧封存摘要不变。`read_scope`、`delete_mode`、`governance_mode`、`confirm_mode`、`cloud_policy`、`setup`、记忆类字段不影响放行，不在其内（改了不让封存失效）。`profile_guard` 不参与 `digest` 的计算：改了设置重新封存，卡片没变时 digest 不变，用户已发来的选择清单仍然有效。`act.py run`（含预演、试点）与 `go` 比对现在的设置与它，不同或旧封存没有这一项就拒绝（退出码 2，什么都不做），要求重新 `plan.py check` / `seal`。
 
 `plan.py seal` 对通过的 items 记录指纹：`realpath`、`st_ino`、`st_dev`，以及计量时的 `bytes`；对 `files` 范围的条目，还记录每个文件的 `(size, mtime_ns)`。整份内容写入 `seal.json`，`digest` 取前 12 位 sha256。
 
@@ -225,6 +252,14 @@
      "roots": ["/Users/alex/Projects/短剧", "/Users/alex/wt-feature"],
      "claude_dirs": ["-Users-alex-Projects---"], "session_ids": ["<Codex 会话 UUID>"]}
   ],
+  "tools": [{"key": "android", "name": "Android 模拟器", "bytes": 17200000000, "last_used": "2026-09-01T00:00:00Z", "paths": ["~/.android/avd"]}],
+  "deliverable_candidates": [{"path": "~/Movies/成片", "why": "名字含“成片”，有 34 个视频", "bytes": 18000000000, "files": 34}],
+  "setup_facts": {
+    "ai_sessions_bytes": 0, "ai_images_bytes": 0, "worktrees": 0, "installers_bytes": 0, "recordings_bytes": 0,
+    "cloud_local_bytes": 0, "time_machine_last": "2026-09-07T00:00:00Z", "pipelines": false,
+    "top_dirs": [{"path": "~/Documents", "bytes": 0}],
+    "cloud_folders": [{"path": "~/Library/Mobile Documents/com~apple~CloudDocs/素材", "provider": "iCloud Drive", "local_bytes": 0, "files": 0}]
+  },
   "skipped": [{"source": "codex", "reason": "没有 ~/.codex/sessions"}]
 }
 ```
@@ -233,15 +268,19 @@
 - `default_status`：最后活动 7 天内 → `active`；30 天以上 → `done`；其间或不知道 → `unknown`（让用户选）。
 - 按 `bytes` 降序全部输出，前 15 个 `shown: true`，其余折叠；台账看板只列 `shown` 的。`sessions` 是关联的 AI 会话数（Codex 顶层线程 + Claude jsonl + Grok 会话目录）。
 - `roots` / `claude_dirs` / `session_ids` 是 `check` 判断条目归属用的，不给用户看。
+- **设置页用的新字段（0.6，都可缺；0.5 的 `projects.json` 没有它们，设置页当空处理）**：
+  - `tools`：工具键同第 1 节 `profile.tools`；`bytes` 来自 facts 节点（取最上层、不重复计），没有节点才按已知位置有限估算；`last_used` 是该工具位置里最新的修改时间，`null` = 不知道。设置页只列 ≥ 1 GB 的。
+  - `deliverable_candidates`：家目录下名字含 成品 / 成片 / 导出 / 交付 / final / output / export / release、或直接放了大量视频图片的目录（限深度与时间，不进隐藏目录、Library、依赖目录与 git 仓库内部），最多 20 个。
+  - `setup_facts`：`ai_sessions_bytes` / `ai_images_bytes`（AI 对话记录、生成图和流水线目录体积）、`worktrees`（git 链接工作树数，不含主仓库）、`installers_bytes`（下载与桌面里的安装包）、`recordings_bytes`（桌面、影片、下载里的录屏与视频）、`cloud_local_bytes`（iCloud 与 CloudStorage 里已下载到本机的字节，只 stat，占位文件不计）、`time_machine_last`（最近一次备份的 UTC 时间，`null` = 没有配置或读不到）、`pipelines`（有没有认出自建流水线节点）、`top_dirs`（家目录一级目录按体积前 12）、`cloud_folders`（云盘第二层文件夹里本机占用最大的几个，给“只留云端”的只读建议用）。任何一项取不到保持默认值，不拖垮整个探针。
 
-**台账导出行**：台账看板（P3）导出的文本抬头写“叁笙清理 · 项目台账”，台账放在一行 JSON 里（路径里有 `|`、`;` 也不会被拆）：
+**台账导出行**：0.5 的项目台账看板导出的文本抬头写“叁笙清理 · 项目台账”，台账放在一行 JSON 里（路径里有 `|`、`;` 也不会被拆）。0.6 起这张表并入初始设置页（第 7d 节，导出里同样是 `台账:` 行，抬头换成“叁笙清理 · 初始设置”），清理看板上只对新项目和久没动的项目单题询问（答案仍以 `台账:` 行导出）；0.5 抬头照旧被识别和拒绝：
 
 ```
 叁笙清理 · 项目台账
 台账: {"项目":{"/Users/alex/Projects/短剧":{"状态":"做完了","成品":["~/Projects/短剧/成品"],"名称":"短剧"},"env:android":{"状态":"归档"}}}
 ```
 
-状态接受中文（进行中 / 做完了 / 归档 / 别碰）与英文（active / done / archived / protected），键 `状态`/`status`、`成品`/`deliverables`、`名称`/`name`。`plan.py profile --apply <文件>` 解析并写入 `profile.projects`；不认识的项目键、不在家目录下的路径、不存在的目录、太宽泛的成品目录（`~/Library`、`~/Library/Caches`、`~/Downloads`、`~/Desktop`、`~/Documents` 根等，判定见 `protect.is_broad_deliverable`，设置行 `成品` 同样拒绝）、不合法的状态逐项报“没保存”；文件读不了时 `plan.py profile --apply` 给中文错误（退出码 2），其余照写；成功应用过一次（含 `{"项目":{}}` 全默认）就写 `onboarded_at`。**这种导出只保存设置，不含任何清理授权**：`prefs.is_ledger_export` 认抬头；`act.py run` 只读 `--cards` / `--answers` / `--sel` 与封存；`act.py go --from-board` 只接受抬头为“叁笙清理选择”的清单，遇到这种抬头直接拒绝（第 7c 节），文本里即使混进 `清理:` 行也不会产生任何清理选择。保存后项目台账变了，已封存的计划按 `profile_guard` 失效（重新 `check` / `seal`）。
+状态接受中文（进行中 / 做完了 / 归档 / 别碰）与英文（active / done / archived / protected），键 `状态`/`status`、`成品`/`deliverables`、`名称`/`name`。`plan.py profile --apply <文件>` 解析并写入 `profile.projects`；不认识的项目键、不在家目录下的路径、不存在的目录、太宽泛的成品目录（`~/Library`、`~/Library/Caches`、`~/Downloads`、`~/Desktop`、`~/Documents` 根等，判定见 `protect.is_broad_deliverable`，设置行 `成品` 同样拒绝）、不合法的状态逐项报“没保存”；文件读不了时 `plan.py profile --apply` 给中文错误（退出码 2），其余照写；成功应用过一次（含 `{"项目":{}}` 全默认）就写 `onboarded_at`。**这种导出只保存设置，不含任何清理授权**：`prefs.is_ledger_export` 认抬头；`act.py run` 只读 `--cards` / `--answers` / `--sel` 与封存；`act.py go --from-board` 只接受抬头为“叁笙清理选择”的清单，遇到这种抬头（和“叁笙清理 · 初始设置”）直接拒绝（第 7c 节），文本里即使混进 `清理:` 行也不会产生任何清理选择。保存后项目台账变了，已封存的计划按 `profile_guard` 失效（重新 `check` / `seal`）。
 
 ## 7. 看板 `board.html`（plan.py board 产出）
 
@@ -249,10 +288,21 @@
 - 左侧目录是垂直居中的深绿悬浮导航岛：总览 + 按用户认得出的类别分区成块（每区顶部写本区合计）（AI 工作 / 常规清理 / 你的文件，定义在 `plan.py` 的 `BOARD_CATEGORIES`），每类一行写“可删 x/总量”或“留 总量”。类别默认由 `cards_used` 第一项映射（`USER_SOURCES`），卡片可写 `category`（取 `BOARD_CATEGORIES` 的 id，如 Codex 出图写 `ai-images`）改归类，写错的不认；`category` 只影响显示，不进封存摘要。底栏“复制清单”左侧是“一键选择”三档按钮（写腾出量，悬停说明，另有“清空”；总览不重复放）：稳妥（删了不丢东西：会自动重新下载、失败或废弃的记录）、推荐（再加有副本的、任务已做完的过程记录和中间稿）、全部可删（再加删了找不回来的）。卡片可写 `preset`（`safe / recommended / all`），不写时 `clean` 为 `safe`、`decide` 为 `recommended`；风险提示含账号数据风险（RISKY_ZONE）的卡一律为 `all`，写低了也不认。选一档 = 勾上所有档位不高于它的可执行卡，之后可逐项加减；每个条目显示所属档（稳妥 / 推荐 / 慎重）。`preset` 只影响显示，不进封存摘要。总览先回答“已用空间都去哪了”：逐项查过的各类别、扫过但没逐项分析的在用文件（列扫描根下第一层大目录）、扫描不到的系统区域（已用 − walked_bytes），`governance` 放在总览底部（`done: true` 表示已办好）。右侧只显示当前类别：每项左侧写标题、来源与为什么会有（`summary`）、勾选前要想的问题（Agent 原写的 `question`，看板字段 `ask`）、合并后的风险提示（`risk_summary`），右侧是体积和勾选框；删了会怎样（`impact`）与路径在“详情”里。
 - 勾选＝清理，没勾＝不动：decide 卡勾上即“清理”行带上它、“回答”行记 `卡号=删`；没勾的不出现在导出文本里。页面只有一个主操作“复制清单，发给 Agent”，剪贴板不可用时退回到选中文本框让用户手动复制。
 - `clean` 卡初始勾选与否取 `plan.check.json` 里算出的 `default_select`（`true` 才预勾选，其余不勾）；用户仍可随时改选。
-- **② 清理看板没有设置页**（0.5）：全局设置只剩“AI 对话保留天数”和“默认档位”，成品目录按项目；左侧常驻“我的项目”入口（随时改项目状态，页底有“回到清单”），每个条目旁有“这个项目做完了 / 还在做”快捷按钮，顶部有“新发现 N 个项目”提示行（来自 `proposal.json` 的 `project_questions` 与 `projects.json`），左下角小字入口：GitHub、反馈问题、公众号、小红书、小宇宙。改过设置或项目状态时，导出文本在 `sel:` 之后多出下列行（都是整行 JSON，目录名里可以有 `|`、`;`；都不改变 `sel` 的计算）：
-  - `设置: {"保留天数":15,"别碰":["~/a"],"成品":[],"默认":"recommended"}`；`plan.py profile --apply` 同时兼容旧的 `保留天数=15; 别碰=a|b; …` 写法；
-  - `台账: {"项目":{"<项目键>":{"状态":"做完了","成品":["~/…"],"名称":"…"}}}`（格式同第 6b 节，只是抬头仍是“叁笙清理选择”，所以这份文本**同时是**清理清单）；
-  - `别再列: <规则键>, …`。
+- **② 清理看板（0.6 起不再内嵌台账表和全局设置）**：改设置在对话里说“改设置”，再打开设置页（第 7d 节）。看板 payload（`plan.py board`）与 0.5 的差异：
+  - 删除 `projects`（台账整表）与 `settings`。
+  - 新增 `setup_summary`：`["旧对话：偶尔回去接着做（30 天内用过的留着）", …]`，按 profile 一项一句生成（`setup_q.summary_lines`，没设过的项不写），页面顶部显示为“按你的设置：……（要改就跟我说“改设置”）”。
+  - `project_questions`：沿用 `proposal.project_questions`（新项目 / 久没动的进行中项目），页面渲染为一题一卡（“发现新项目《X》2.3 GB，是进行中还是做完了？”）；答案仍以 `台账:` 行导出。
+  - `pending_rules`：`[{id, text}]`，用户在设置页“补充”里说过、Agent 翻译后待确认的规则；每条两个按钮“对 / 不对”，导出 `确认规则: p1,p2` 与 `不要规则: p3`（只导出编号，文字不进清单）。
+  - `archive_enabled`：真，decide 卡的选项为 删 / 留 / 归档；选了归档时页面要求填“归档到”（外接硬盘路径，形如 `/Volumes/<盘名>/…`，内置硬盘与相对路径不收），导出 `归档到: /Volumes/X/叁笙归档`。
+  - `cloud_suggestions`：`[{path, provider, local_bytes, how, link}]`，来自提案（第 7a 节），页面显示“这些文件夹可以只留云端”：只读建议，没有勾选、不动任何文件。
+  - `facts.composition`：`[{id: home|apps|system|other, name, bytes}]` 整盘构成；`facts.purgeable_bytes`：访达口径的可清除空间估算，`null` = 不知道；`facts.frontier` 每项带 `category`（看板类别 id），页面可按类别下钻。总览单独露出“本地模型”一行（类别 `ai-models`），即使为 0 也写“没有本地模型”。
+  - 治理区文案按 `proposal.governance_mode`：`tell` 只写现象，`guide` 写改法，`fix` 写“同意后我来改，可撤销”。
+  - 左下角小字入口：GitHub、反馈问题、公众号、小红书、小宇宙。
+  - 清理清单抬头仍是“叁笙清理选择”，`回答:` 的值域是 删 / 留 / 归档；`prefs.parse_board_export` 返回 `archive_to`、`confirm_rules`、`reject_rules`；`selection_sig` 仍对 `answers` 签名（归档写进 answers 即被签，归档目标不进 `sel`，由 `act.py` 单独复核，见第 8 节）。改过项目状态或有别再列时，导出文本在 `sel:` 之后多出下列行（都是整行 JSON 或编号列表，目录名里可以有 `|`、`;`；都不改变 `sel` 的计算）：
+    - `设置: {"保留天数":15,"别碰":["~/a"],"成品":[],"默认":"recommended"}`：0.5 的旧写法，`plan.py profile --apply` 仍兼容（含旧的 `保留天数=15; 别碰=a|b; …` 写法）；
+    - `台账: {"项目":{"<项目键>":{"状态":"做完了","成品":["~/…"],"名称":"…"}}}`（格式同第 6b 节，只是抬头仍是“叁笙清理选择”，所以这份文本**同时是**清理清单）；
+    - `别再列: <规则键>, …`；
+    - `归档到: /Volumes/…`、`确认规则: p1,p2`、`不要规则: p3`。
   影响判断的设置或台账保存后，已封存的计划按上面的 `profile_guard` 失效，须重新 `check` / `seal`；`act.py go --from-board` 会自己做（第 7c 节）。
 - 主操作"复制给 Agent"生成如下文本：
 
@@ -274,7 +324,7 @@
 
 ## 7a. 提案 `proposal.json`（plan.py propose 产出）
 
-按封存给出三档：档位、规则键、体积（封存条目实测字节之和）和是否逐个确认都取自 `seal.json` 里每张卡的 `preset` / `rule_key` / `review` / `interactive`，封存后再改 `plan.json` 不影响执行范围（旧格式封存会被拒绝，重新 seal）；每档 `{word, label, cards, answers, sel, bytes, by_category}`：`safe`（回复“稳妥”）、`recommended`（回复“好”）、`all`（回复“都删”）。档内 = 可执行卡中 `preset` 档位不高于该档的；decide 卡的答复记为“删”；`sel` 用第 7 节同一公式。`mode` 为 `chat`（在对话里确认）或 `board`（发看板），`board_reasons` 写原因：没有 `onboarded_at`、待你决定的卡超过 3 张（`BOARD_ATTENTION_MAX`），或有卡含交互会话。`mode` 为 `board` 或 `stage` 为 `onboarding` 的提案，`act.py go --choice` 一律拒绝（退出码 2，什么都不做），三档 `options` 也从不含交互会话的卡，这类提案只能走看板清单（第 7c 节）。0.5 新增字段：`stage`（`onboarding` = profile 没有 `onboarded_at`，第一次使用，应先发 ①「认识你的电脑」台账看板并保存台账；`cleanup` = 否则）与 `onboarding_hint`（仅 onboarding）；`project_questions`：`[{"type":"new_projects","count":N,"projects":[{key,name,bytes,default_status}]}]`（本次 `projects.json` 里 `shown`、台账里还没有的项目）和 `[{"type":"stale_active","key","name","idle_days"}]`（台账标“进行中”、最后活动 ≥30 天），没有 `projects.json`（或 `scan_id` 对不上）就为空，两类问题也各用一句话写在 `message` 末尾；`prefill`：`{卡号: "删"}`（项目做完了 / 归档的 `decide` 卡）；`projects_by_card`：`{卡号: [{key,name,status}]}`（取自封存）。`cardkeys.json` 里属于项目的卡多一个 `projects`（项目键列表），`act.py` 记选择时据此多记带项目前缀的规则键。
+按封存给出三档：档位、规则键、体积（封存条目实测字节之和）和是否逐个确认都取自 `seal.json` 里每张卡的 `preset` / `rule_key` / `review` / `interactive`，封存后再改 `plan.json` 不影响执行范围（旧格式封存会被拒绝，重新 seal）；每档 `{word, label, cards, answers, sel, bytes, by_category}`：`safe`（回复“稳妥”）、`recommended`（回复“好”）、`all`（回复“都删”）。档内 = 可执行卡中 `preset` 档位不高于该档的；decide 卡的答复记为“删”；`sel` 用第 7 节同一公式。`mode` 为 `chat`（在对话里确认）或 `board`（发看板），`board_reasons` 写原因：第一次使用（`stage` 为 `onboarding`）、设置里选了“每次都发看板”（`confirm_mode=board`）、待你决定的卡超过 3 张（`BOARD_ATTENTION_MAX`），或有卡含交互会话。`mode` 为 `board` 或 `stage` 为 `onboarding` 的提案，`act.py go --choice` 一律拒绝（退出码 2，什么都不做），三档 `options` 也从不含交互会话的卡，这类提案只能走看板清单（第 7c 节）。0.5 新增字段：`stage`（`onboarding` = 第一次使用，判据见第 1 节 `setup` 条，应先发初始设置页并保存设置；`cleanup` = 否则）与 `onboarding_hint`（仅 onboarding）；`project_questions`：`[{"type":"new_projects","count":N,"projects":[{key,name,bytes,default_status}]}]`（本次 `projects.json` 里 `shown`、台账里还没有的项目）和 `[{"type":"stale_active","key","name","idle_days"}]`（台账标“进行中”、最后活动 ≥30 天），没有 `projects.json`（或 `scan_id` 对不上）就为空，两类问题也各用一句话写在 `message` 末尾；`prefill`：`{卡号: "删"}`（项目做完了 / 归档的 `decide` 卡）；`projects_by_card`：`{卡号: [{key,name,status}]}`（取自封存）。`cardkeys.json` 里属于项目的卡多一个 `projects`（项目键列表），`act.py` 记选择时据此多记带项目前缀的规则键。0.6 新增字段：`governance_mode`（`tell` / `guide` / `fix`，没设按 `guide`）、`delete_mode`（`trash` / `delete`，没设按 `delete`，与 0.5 行为一致）、`read_scope`（第二轮能读哪些文件，没设按 `["basic"]`）、`setup_upgrade`（题库比用户答过的新，Agent 先发只补新题的设置页；此时另有 `setup_hint`）、`cloud_suggestions`（`[{path, provider, local_bytes, how, link}]`：设置里第 11 题答“可以”或“不确定”，且云盘文件夹本机占用 ≥ 1 GB 时，最多列 8 个，每个写明官方的“只留云端”做法；答“不行，我要离线用”或没答为空；只读，不执行任何释放）。`prefill` 的取值扩为 `删` / `归档`（第 7f 节）。
 
 `message` 是发给用户的一段话：默认档能腾出多少（按类别列前几项）、按规则直接清的逐个点名、要你拿主意的逐条列出标题、体积、回“好”删不删和问题、删了找不回的逐个点名（默认档为“全部可删”时写成“回‘好’也会删掉”）、三个回复词各对应什么。
 
@@ -287,33 +337,95 @@
 - 已用前 = 磁盘总量 − 第一份回执的 `free_before`；已用后 = 已用前 − 释放量。按类别汇总用与看板相同的归类（`plan.card_category`），`ai_freed` = “AI 工作”分区之和。
 - 分享链接 `SHARE_BASE?v=1&f=&b=&a=&ai=`：只带腾出量、清理前后已用量、AI 部分（GB，一位小数），不带路径、用户名、卡片标题。二维码矩阵由内置的 `scripts/vendor/qrcodegen.py`（Project Nayuki，MIT）在 Python 端编码，页面只负责绘制；分享图在浏览器里用 canvas 画成 1080×1440 PNG。
 
+**0.6 成果页新增内容**（数据文件不存在时对应区块不显示）：
+
+- **处置方式**（`report.json` 的 `disposal`：`{freed, trash, trash_dirs, archived:[{volume, source, bytes}]}`）：释放量只算 `disposal_flags` 判为“已腾出”的条目——直接删除的、归档后原文件已删的；移入废纸篓的字节单列为“已移入废纸篓，清空废纸篓后才会腾出”（附废纸篓里的文件夹名，不替用户清空，上面的“已腾出”与分享链接都不含它）；搬到外接硬盘的按盘名单列，注明原文件已删除还是在废纸篓里。没有 `disposal` 字段的旧回执按“已删除”算。
+- **这次读了哪些文件**：读 `<run>/reads.jsonl`（`peek.py` 每次调用追加一行），显示读过内容 / 只看了元信息 / 被拒绝的次数与前 20 条读过内容的路径（口径同 `peek.py --summary`，路径已是 `~/…`），标题旁写“这些内容发给了你的 AI 服务商”。
+- **这次我记住了**：读 `<run>/remembered.json`（`memory.py remembered` 写；`act.py go` 在成果页之前自动生成），每条带“不对，忘掉”勾选，勾了就出现复制按钮，复制 `忘掉: m1,m2` 发给 Agent，Agent 运行 `memory.py forget --from-text <文件>`。
+- **从源头改好的**：读 `<run>/governance-check.json`（`memory.py govern check` 写），`stopped` 写“已停止增长”，`growing` 写“还在涨，下次再看”，`unknown` 只写改了什么。
+
 ## 7c. 看板清单一条命令 `act.py go --run <目录> --from-board <导出文本文件>`（0.5）
 
-输入是 ② 清理看板“复制清单，发给 Agent”的整段文本（第 7 节格式，抬头“叁笙清理选择”；`scan_id:`、`seal:`、`清理:`、`回答:`、`sel:` 五行必须各出现一次，`seal` / `sel` 为 12 位小写十六进制；`清理:` 与 `回答:` 可以写 `无`，回答之间用 ` / ` 分隔；`设置:`、`台账:`、`别再列:`、`备注:` 可有可无）。与 `--choice` 二选一。`prefs.parse_board_export` 只解析，不核对。
+输入是 ② 清理看板“复制清单，发给 Agent”的整段文本（第 7 节格式，抬头“叁笙清理选择”；`scan_id:`、`seal:`、`清理:`、`回答:`、`sel:` 五行必须各出现一次，`seal` / `sel` 为 12 位小写十六进制；`清理:` 与 `回答:` 可以写 `无`，回答之间用 ` / ` 分隔；`设置:`、`台账:`、`别再列:`、`归档到:`、`确认规则:`、`不要规则:`、`备注:` 可有可无；`回答:` 的值是 删 / 留 / 归档）。与 `--choice` 二选一。`prefs.parse_board_export` 只解析，不核对。
 
 顺序（任何一步不满足就停，之前的步骤不回退但之后的不执行）：
 
-1. 抬头是“叁笙清理 · 项目台账”（① 的导出）→ 拒绝，提示用 `plan.py profile --apply` 保存；这种文本从不是清理授权，即使里面混进合法的清理行也不执行。
+1. 抬头是“叁笙清理 · 项目台账”（0.5 台账看板的导出）或“叁笙清理 · 初始设置”（设置页的导出）→ 拒绝（退出码 2，什么都没删），提示用 `plan.py profile --apply` 保存；这两种文本从不是清理授权，即使里面混进合法的清理行也不执行（设置页导出没有 `seal:` / `sel:`，清单解析同样会因抬头不是“叁笙清理选择”而报格式错误）。
 2. 解析清单、解析设置/台账行；格式不对 → 拒绝，什么都不保存。
 3. `seal` 必须与 run 目录里的 `seal.json` digest 一致，`scan_id` 必须与封存的一致；按清单里的卡片与回答重算 `selection_sig` 必须等于清单的 `sel`（先于保存设置，对不上的清单不改动本机设置）；没有选中任何卡片也拒绝。`sel` 只来自清单，本命令从不重新生成它。
-4. 有 `设置:` / `台账:` / `别再列:` 行 → 调 `prefs.apply_settings`（与 `plan.py profile --apply` 同一实现）保存；有路径没保存成功 → 停。
+4. 有 `设置:` / `台账:` / `别再列:` / `确认规则:` / `不要规则:` 行 → 调 `prefs.apply_settings`（与 `plan.py profile --apply` 同一实现；规则编号交给 `memory.confirm` / `memory.reject`）保存，且在任何删除之前；有路径没保存成功 → 停。
 5. 保存后（或本来就是）封存的 `profile_guard` 与现在的设置不一致 → 在进程内调 `plan.py seal`（内含 `check`，同样写 `plan.check.json`）重新封存；新 digest 与清单里的不同 → 停，打印原因（设置/台账让哪些卡的判断变了，或判断没变但卡里目录的内容在封存之后又变了：实测体积、文件大小、修改时间都是封存内容的一部分，不沿用旧值）、“需要用新看板重新确认”和 `plan.py propose` / `plan.py board` 的命令；相同则继续。
-6. 预演 → 试点 → 正式执行，与 `--choice` 共用同一段 `_go_steps` → `cmd_run`：`sel`、`profile_guard`、预演与成功试点的回执核对一步不少；结束自动生成成果页。每步打印 `【go】…`，适合 `nohup` 后台运行。
+6. 预演 → 试点 → 正式执行，与 `--choice` 共用同一段 `_go_steps` → `cmd_run`：`sel`、`profile_guard`、预演与成功试点的回执核对一步不少；清单里的 `归档到:`（优先）或命令行 `--archive-to`、`--trash` / `--no-trash` 一并传下去（第 8 节）；结束时先汇总“这次我记住了”并复查“从源头改好的”，再自动生成成果页。每步打印 `【go】…`，适合 `nohup` 后台运行。
 
 退出码：`0` 完成；`2` 拒绝（台账导出、清单格式不对、scan_id / seal / sel 对不上、没有选中卡片、闸门拒绝，什么都没删）；`3` 停下请用户看（设置/台账让判断变了需要重新确认、设置没保存全、重新封存没通过、预演有失败或没有可执行条目、试点没成功）；`4` 正式执行有条目没删成功，其余已完成。
 
-## 7d. ① 项目台账看板 `plan.py onboard --run <目录>`（0.5，模板 `assets/onboard.html`）
+## 7d. 初始设置页 `plan.py setup --run <目录> [--mode first|upgrade|edit] [--out 文件]`（0.6，模板 `assets/setup.html`）
 
-第一次使用（`profile.json` 没有 `onboarded_at`，提案 `stage` 为 `onboarding`）时先发的轻量页，数据来自 `<run>/projects.json`（第 6b 节，只列 `shown` 的项目）。页面只有一张项目表（名称、体积、最后活动时间、四个状态分段按钮，“成品在哪”可展开修改）加两三个全局选项，**没有任何删除选项**；只有 `default_status` 为 `active` 的项目预选“进行中”（它只会让清理更保守）；扫描猜测的“做完了”不预选，只在行内用小字提示“看起来做完了（N 天没动）”，用户自己点了才算标注；导出只含用户点过的和预选“进行中”的项目。底部一个按钮“复制，发给 Agent”，导出文本：
+第一次使用时发的独立页面，标题“认识你的电脑”。题库、出题条件、推荐值、导出解析与答案落地都在 `scripts/setup_q.py`（单一真源，`SETUP_VERSION`、`SETUP_TITLE`）；`plan.py onboard` 是 `setup` 的别名，旧命令照用。0.5 的独立台账页已取消，项目表成为设置页第 3 题。
+
+**触发与模式**（`--mode` 缺省按 profile 自动判断）：
+- `first`：没有 `setup.version` 也没有 `onboarded_at`（第 1 节），出全部适用的题。
+- `upgrade`：设置过但题库比用户答过的新（`proposal.setup_upgrade` 为真），只出新增的题（0.5 老用户只补 0.6 新增的题，不重问项目状态，`projects` 为空数组）。
+- `edit`：用户说“改设置”或“重新认识我的电脑”，用最近一次扫描重新出题，每题 `current` 预填现值，导出只带改动过的题。
+- 没有题可问时（如 `upgrade` 模式下没有新增的题）只打印提示，不写页面。
+
+**数据**：读 `<run>/projects.json`（第 6b 节，须是 `schema: projects/1` 且 `scan_id` 与 `facts.json` 一致），写 `<run>/setup.html`；占位符 `__SETUP_JSON__`、`__LOGO_DATA__`。payload（`setup_q.build_payload`）：
+
+```json
+{"version": 1, "scan_id": "…", "mode": "first|upgrade|edit",
+ "groups": [{"id": "read", "title": "我会看什么", "desc": "…", "questions": [<题对象>]}],
+ "projects": [<0.5 台账看板的项目行：key, name, kind, bytes, last_active, sessions, deliverables_guess, default_status, status, deliverables, in_ledger>],
+ "deliverable_candidates": [], "top_dirs": [],
+ "tools": [{"key", "name", "bytes", "last_used", "paths", "recommended": "often|null", "current": "often|sometimes|unused|null"}],
+ "time_machine_last": "ISO|null",
+ "privacy_note": "读的内容会发给你所用的 AI 服务商（如 Claude、OpenAI），不只在本机看"}
+```
+
+题对象：`{id, no, group, type: multi|single|tools|projects|paths|text, title, context, options: [{value, label, desc}], recommended, current, why, risk}`；“对话”题另带 `days`（可选天数 7 / 15 / 30 / 60 / 90）、`days_recommended`、`current_days`，“删除方式”题带 `time_machine_last`。`context` 是带着本机发现的一句话（“找到 Codex、Claude 等对话共 41.2 GB”），`why` 写清理时用在哪，`risk` 写答错了会怎样。分组：`read`（我会看什么）、`machine`（你电脑上有什么）、`ai`（你用 AI 的习惯）、`files`（日常文件）、`way`（清理的方式）、`note`（还有想让我知道的吗）。
+
+**题库**（17 题，按机器出题，条件读 `projects.json` 的 `tools` / `projects` / `setup_facts`；没有对应情况的题不出，空机器只出总是出现的题）：
+
+| 题 | id | 出现条件 | 推荐 | 写入 profile |
+|---|---|---|---|---|
+| 1 我可以看哪些文件 | `read_scope`（多选 basic / extended / deep；“永不读”锁定不可勾） | 总是 | basic + extended | `read_scope` |
+| 2 这些软件和开发环境还用吗 | `tools`（每个工具 often / sometimes / unused） | 有 ≥ 1 GB 的工具 | 30 天内用过的预选 often，其余不预选（没答按 sometimes） | `tools`，并同步环境项目 |
+| 3 你的项目是在做还是做完了 | `projects`（走 `台账:` 行） | 有 `shown` 的项目 | 同 0.5：最近有改动的预选进行中，猜测“做完了”的只提示 | `projects`（台账） |
+| 4 做好的成品放在哪 | `deliverables`（目录） | 有项目或 AI 生成图 | 不预选，列 `deliverable_candidates` | `deliverable_roots`、`reference_roots` |
+| 5 哪些文件夹不管多久没动都不能碰 | `protect`（目录） | 总是 | 不勾 | `protect`（只增不减） |
+| 6 用完的 AI 对话 | `conversations`：done / sometimes / library（可附 `conversation_days`） | 有 AI 对话记录 | sometimes | `conversation_policy`、`retention_days` |
+| 7 没挑中的 AI 图和视频 | `rejects`：drop / until_done / keep | 有生成图或流水线目录 | until_done | `rejects_policy` |
+| 8 合进主线的工作树 | `worktrees`：whole / build_only / ask | 有 git 工作树 | build_only | `worktree_policy` |
+| 9 装好后的安装包 | `installers`：auto / ask | 安装包 ≥ 300 MB | auto | `installer_policy` |
+| 10 录屏和大视频多久没动才问 | `big_files`：30 / 90 / 0 | 录屏和大视频 ≥ 1 GB | 90 | `big_file_age_days` |
+| 11 云盘文件能接受只留云端吗 | `cloud`：ok / offline / unsure | 云盘本机占用 ≥ 5 GB（`CLOUD_ENABLED` 开着，现为开） | unsure | `cloud_policy` |
+| 12 重新下载、生成能等多久 | `wait`：minimal / some / space | 总是 | some | `default_choice` |
+| 13 做完的项目素材怎么处理 | `done_projects`：intermediate / archive / keep | 总是 | intermediate | `done_project_policy` |
+| 14 发现东西一直涨时 | `governance`：tell / guide / fix | 总是 | fix | `governance_mode` |
+| 15 删掉的东西怎么处理 | `delete_mode`：trash / delete，题旁显示最近一次 Time Machine 备份 | 总是 | 第一次使用、或没有备份（读不到或超过 14 天）→ trash，否则 delete | `delete_mode` |
+| 16 以后怎么跟你确认 | `confirm`：smart / board | 总是 | smart | `confirm_mode` |
+| 17 还有什么想让我知道的 | `note`（文本） | 总是 | 空 | 不存（见下） |
+
+页面顶部和底部各有一个“全部按推荐”；顶部显示进度（“第 2 组，共 6 组”）；不确定的题默认取更保守的选项。页面只保存设置，没有任何删除选项。
+
+**导出文本**（点“复制，发给 Agent”；每行 JSON 必须单行，U+2028 / U+2029 / NEL 转义，`setup_q.export_text` 是 Python 端同格式实现）：
 
 ```
-叁笙清理 · 项目台账
-scan_id: …
-台账: {"项目":{…}}
-设置: {"保留天数":15,"默认":"recommended"}
+叁笙清理 · 初始设置
+设置版本: 1
+答案: {"read_scope":["basic","extended"],"tools":{"android":"unused"},"conversations":"sometimes","conversation_days":30,…}
+台账: {"项目":{"<项目键>":{"状态":"做完了","成品":["~/…"],"名称":"…"}}}
+补充: "下载里的视频都是课程，别动"
 ```
 
-首行固定为“叁笙清理 · 项目台账”（`prefs.LEDGER_TITLE`，`prefs.is_ledger_export` 据此区分）；`台账:` 格式见第 6b 节；`设置:` 只含用户动过的全局项。Agent 把它存成文件交给 `plan.py profile --apply`（成功应用即写 `onboarded_at`，之后不再出 ①）；它不含 `seal:` / `sel:`，`act.py` 不会、也不能把它当清理清单（见 7c 第 1 条）。用户在对话里说“跳过设置”，等价于 apply 一份 `台账: {"项目":{}}`。
+首行固定为“叁笙清理 · 初始设置”（`setup_q.SETUP_TITLE`，`setup_q.is_setup_export` 据此识别）；`设置版本:` 必须有；`答案:`、`台账:`（0.5 格式，第 6b 节）、`补充:`（JSON 字符串）可缺，三者都没有算错误。`first` 与 `upgrade` 导出所有出现的题（含按推荐未改动的；没答也没推荐的工具不导出），`edit` 只导出改动过的题与项目行。“永不读”永远不写进答案。
+
+**保存**：Agent 把导出存成文件，`python3 scripts/plan.py profile --apply <文件> [--scan-id <scan_id>]`（`setup_q.apply_export`）。设置版本比 Skill 认识的新就拒绝。先写答案再写台账：台账里用户逐项标的状态比“软件还用不用”的同步更具体，以台账为准。每题一条映射（第 1 节字段），非法值逐项报“没保存”、其余照写；每道真正改了设置的题写一条 `memory_log`（kind `setting`，`ref` 记旧值，供“忘掉”撤销）。成功后写 `setup = {version, at, answers}`（`answers` 只存结构化答案，不存补充原话）和 `onboarded_at`。保护名单只增不减；设置页取消掉的、上一次由它写进去的成品目录会被去掉，别处加的不动。
+
+**补充（第 17 题）**：原话**不存档**。`plan.py profile --apply` 把它原样打印出来，Agent 翻译成一句规则或备注，用 `memory.py pending add`（第 10 节）记成待确认；第一张清理看板上用户点“对 / 不对”，确认后才进 profile（`protect` 并入保护名单，`rule` 写进 `rules`，`note` 写进 `notes`）。
+
+**与清理的隔离**：设置导出不含 `seal:` / `sel:`，`act.py run` 只读 `--cards` / `--answers` / `--sel` 与封存，`act.py go --from-board` 只接受抬头为“叁笙清理选择”的清单、遇到“叁笙清理 · 初始设置”（和“叁笙清理 · 项目台账”）一律拒绝（第 7c 节）；文本里即使混进 `清理:` 行也不会产生任何清理选择。设置只改变要不要问、预填什么、进哪一档，**不改变能不能放行**；唯一让保护更严的方向是别碰和永不读。保存后影响判断的设置变了，已封存的计划按 `profile_guard` 失效，重新 `check` / `seal`。用户在对话里说“跳过设置”，等价于 apply 一份只有 `设置版本: 1` 和 `答案: {}` 的导出（全按默认，写上 `setup` 与 `onboarded_at`，以后不再弹）。
+
+清理看板的顶部摘要（`setup_summary`）、各设置对 `check` / `propose` 的影响见第 7f 节。
 
 ## 7e. 反馈 `feedback.py` 与成果页首次 Star（0.5）
 
@@ -324,7 +436,33 @@ scan_id: …
 - `report.make` 是唯一写 `star_asked_at` 的地方，`build_report` 纯计算；`report.json` 新增 `star: {show, url}`，只有第一次清理的成果页 `show` 为真。
 - `act.py run` 正式执行成功后调用 `finish_report(run)`：生成成果页，再打印反馈提示行；`cmd_go` 内部三步传 `no_report=True`，全部结束后调一次，避免重复。
 
-## 8. 执行 `act.py run --run <目录> --seal <digest> --cards c01,c03 [--dry-run | --pilot | --skip-pilot --reason <原因>]`
+## 7f. 设置对 `check` / `propose` 的消费（0.6）
+
+安全不变式：设置只改变“问不问、预填什么、进哪一档”，**不改变能不能放行**；任何设置都不能让一张卡从 `decide` 升为 `clean`，也不能绕过结束证据复核、引用核对、进程与 24 小时改动检查。唯一让保护更严的方向是别碰和永不读。每一项都有测试：同一份 facts 与计划，设置取两种值时 `check` 或 `propose` 输出不同；另有“所有设置取最激进值也没有任何卡 `decide` → `clean`”的反例测试。
+
+| 设置 | `check` / `propose` 的变化（卡指 `cards_used` 第一项或看板类别） |
+|---|---|
+| `tools[x]=unused` | 该工具知识卡的 `decide` 卡（无风险提示、不含交互会话）`prefill` 为“删” |
+| `conversation_policy=library` | 含交互会话的卡整卡降 `keep`，原因“你说过旧对话当资料库，都留着” |
+| `conversation_policy=done` | 含交互会话的卡，条目全属于做完了 / 归档项目时 `prefill` “删”（仍逐个确认，不进任何档的对话确认） |
+| `rejects_policy=drop` | 类别 `ai-images` 的 `decide` 卡 `prefill` “删” |
+| `rejects_policy=keep` | 类别 `ai-images` 且没有通过复核的 `copy_verified` / `delivered` 证据的卡降 `keep`，原因“你说过没挑中的图都留着……” |
+| `worktree_policy=whole` | 知识卡 `git-worktree-build` 的 `decide` 卡 `prefill` “删” |
+| `worktree_policy=build_only` | 同类卡里条目正好是某个 git 工作树根的 `clean` 卡降 `decide`，问题“只清构建产物，整棵工作树先留着？” |
+| `worktree_policy=ask` | 同类卡 `preset` 至少 `recommended`，且不适用“以后都删”的规则 |
+| `installer_policy=auto` | 知识卡 `app-updaters-installers`，或条目扩展名是安装包（`.dmg` / `.pkg` / `.mpkg` / `.zip` / `.xip` / `.iso`）的卡，提案按 `rule=delete` 处理（和一条“以后都删”规则一样，仍不适用于降过级、带风险提示或含交互会话的卡；用户明确的“留”规则优先） |
+| `big_file_age_days=N` | 知识卡 `large-old-files` 里最近 N 天内有改动的条目，整卡降 `keep`，原因“不到你定的 N 天” |
+| `big_file_age_days=0` | `large-old-files` 卡一律降 `keep`，原因“你说过录屏和大视频别问” |
+| `done_project_policy` | `archive`：项目做完了 / 归档的 `decide` 卡 `prefill` “归档”而不是“删”；`keep`：不再预填；`intermediate`（缺省）：预填“删”（0.5 行为） |
+| `default_choice` | 同 0.5：对话里回“好”对应的档 |
+| `confirm_mode=board` | `needs_board` 给原因“你选了每次都发看板”，`proposal.mode` 为 `board` |
+| `governance_mode` / `delete_mode` / `read_scope` | 原样写进 `proposal`；治理文案、`act.py` 的默认处置方式、`peek.py` 的读取拦截据此变化（本身不改变放行） |
+| 重建很慢的缓存 | 卡片写了 `rebuild: "slow"` 或首卡是 `model-caches`（`plan.py` 的 `SLOW_REBUILD_CARDS`）：`preset` 为 `safe` 时提为 `recommended`，慢重建缓存不进稳妥档 |
+| `cloud_policy` | 只决定提案里有没有 `cloud_suggestions`，不影响任何卡 |
+
+`prefill` 只是预填，仍要用户确认；有风险提示的卡、含交互会话的卡（`conversation_policy=done` 的例外见上）不预填。`tools[x]=often` 没有对应的 `check` 行为，只是提示 Agent 第二轮跳过深查（SKILL.md）。
+
+## 8. 执行 `act.py run --run <目录> --seal <digest> --cards c01,c03 [--answers c05=归档] [--dry-run | --pilot | --skip-pilot --reason <原因>] [--trash | --no-trash] [--archive-to /Volumes/盘名/目录]`（`go` 同样接受 `--trash` / `--no-trash` / `--archive-to`）
 
 1. 读取 `seal.json`，`digest` 必须一致；`profile_guard` 与现在的本机设置不一致（或旧封存没有）就拒绝，退出码 2；只处理指定卡片中封存过的 items。
    `--sel <12位>`：按上面的公式，用 seal digest、本次选中的卡（`--cards` 并上答复“删”的卡）和全部 `--answers` 重算，不符直接拒绝（退出码 2，不做任何删除）。**从看板导出文本来的运行必须带上其 `sel:` 值**，用来防止转抄时写错卡号、多加卡或改了回答。**试点与正式执行必须带 `--sel`**，缺省直接退出码 2、什么都不删；只有预演可以不带（用户还没选时 Agent 自己核对清单），此时 stderr 提示一行。
@@ -335,7 +473,11 @@ scan_id: …
    - 24 小时内没有修改。
 
    任一项不满足就跳过并写明原因。
-3. 删除规则：
+3a. **处置方式（0.6）**：三种——`delete` 直接删（`os.unlink`）、`trash` 移入废纸篓、`archive` 复制到外接硬盘再处置原文件。选择顺序：答复“归档”的卡走 `archive`；其余的 `--trash` 强制废纸篓、`--no-trash` 强制直接删，都没给读 `profile.delete_mode`，缺省 `delete`（与 0.5 一致）。`native` 条目不受影响（照常由原生命令处理，回执 `disposal.mode` 记 `native`），回执里标明。
+   - **`trash`**：文件 `os.rename` 到 `~/.Trash/叁笙清理-<scan_id>-<UTC 时间>/<相对家目录的路径>`（家目录外的路径放 `_root/<绝对路径去掉开头 />`），保持目录结构，先建父目录；原有的身份检查（inode / 设备）与保护检查照旧；目标已存在则该文件记失败、不覆盖；跨卷 `rename` 失败（`EXDEV`）→ 该文件 `skip`，原因“不在同一块盘，没法放进废纸篓”（并清掉为它建的空目录）。
+   - **`archive`**：需要归档目录（`--archive-to` 或看板导出的 `归档到:`，后者优先）。执行前整体校验，任一不满足整卡 `skip` 并写清原因：必须在 `/Volumes/<盘名>/` 下且真实路径仍在 `/Volumes` 下；目录存在、可写；与家目录不在同一块盘；剩余空间不小于本卡封存字节的 1.05 倍。通过后逐文件 `shutil.copy2` 到 `<归档目录>/叁笙归档-<scan_id>/<相对家目录的路径>`（先写 `.part` 再改名），**`sha256` 一致才处置原文件**（原文件再按删除方式 `trash` 或 `delete` 处理）；校验不一致、同名但内容不同、复制失败，原文件保留并记失败。重跑时目标已有逐字节相同的副本直接认。归档不免除结束证据、引用检查和其他任何复核，看板上“归档”只是 `decide` 卡的第三个答复。
+   - `go --choice` 的对话确认没有“归档到”，要归档在 `go` 上加 `--archive-to`；记飞轮选择时，答复“归档”的卡不算“删”也不算“留”，不计入“以后都这样吗”。
+3. 删除规则（在 3a 选定的处置方式下逐个文件进行）：
    - `scope=ignored-only`：现场重新运行 `git ls-files -o -i --exclude-standard -z -- <path>`，逐个删除文件，删完再清理空目录；绝不删除 `git ls-files` 中的跟踪文件。
    - `scope=all`：先确认路径内没有跟踪文件；有就拒绝，并提示改用 `ignored-only`。
    - `scope=files`：只删列出的、且 `(size, mtime_ns)` 与封存一致的文件。
@@ -346,11 +488,57 @@ scan_id: …
 5. 执行过至少一条成功的 `codex delete` 后，对 `~/.codex/thread_history_*.sqlite` 回收空间：`auto_vacuum=incremental` 的库分批 `PRAGMA incremental_vacuum(5000)`，WAL 模式下每批后 `wal_checkpoint(PASSIVE)`，按“主文件 + `-wal`”合计体积判断进展；空闲页不降、或合计体积连续 20 批不降即停止并记录原因；结束 `wal_checkpoint(TRUNCATE)`（失败不报错）与 `quick_check`。其他模式的库只报告、不做整库 `VACUUM`。结果写进回执的 `history_reclaim`。`act.py reclaim` 可单独补做。
 6. 执行前后各取一次 `os.statvfs` 可用空间，写 `receipt.json`，内容包括：
    - 逐条结果：`removed` / `skipped` / `failed`，附原因；
-   - `summary.freed_by_items` = 实际删除的字节（`bytes_by_files`，含原生命令条目按前后差额实测的部分 `bytes_native`）+ 历史库回收（`history_reclaimed`，负数按 0 计），这是对用户报告的释放量；
+   - `summary.freed_by_items` = 真正腾出的字节（`bytes_freed_now`：直接删除的文件，含原生命令条目按前后差额实测的部分 `bytes_native`，以及归档后原文件已删的部分）+ 历史库回收（`history_reclaimed`，负数按 0 计），这是对用户报告的释放量。**0.6 口径**：移入废纸篓的字节（`bytes_trash`）清空废纸篓后才腾出，不计入 `freed_by_items`，否则会和磁盘余量变化对不上；归档到外接硬盘的字节记 `bytes_archived`；`bytes_by_files` 仍是“处理掉的源文件字节”（含废纸篓与归档），`removed.bytes` 的口径不变；
    - 磁盘余量变化（`freed_measured`）与它的差异单独注明：同时运行的其他程序会抵消余量，也可能是 APFS 克隆、快照、废纸篓。
 7. `--dry-run` 只输出将处理的内容，不改动任何文件（只写预演回执 `receipt-dryrun-<时间>.json`，`status` 不显示它）。
 8. `--pilot` 按卡片顺序只真正执行第一条结果为删除或失败的条目，其余卡片记为跳过；回执写 `receipt-pilot-<时间>.json`，不覆盖 `receipt.json`；`status` 优先显示正式回执，没有正式回执时显示最近一次试点回执。不能与 `--dry-run` 同用。
-9. **回执字段**：预演、试点、正式执行的回执都带 `mode`（`dry_run` / `pilot` / `full`）、`seal`、`sel`。`sel` 无论是否传 `--sel`，都按本次实际选中的卡与答复用 `selection_sig` 算出。
+9. **回执字段**：预演、试点、正式执行的回执都带 `mode`（`dry_run` / `pilot` / `full`）、`seal`、`sel`、`delete_mode`（`delete` / `trash`）。`sel` 无论是否传 `--sel`，都按本次实际选中的卡与答复用 `selection_sig` 算出。0.6 起每个条目带 `disposal: {mode: delete|trash|archive|native, dir, …}`：`trash` 的 `dir` 是废纸篓里本次的文件夹，`archive` 另带 `source`（原文件的处置：`delete` / `trash`）、`volume`（盘名）、`source_dir`；答复“归档”的卡在回执卡片条目上标 `archive: true`，回执顶层有 `trash_dir` 与（归档时）`archive_to`。没有 `disposal` 字段的旧回执、原生命令条目，成果页都按“已删除”算。预演时每条 `reason` 写明将怎么处置（“将删除 / 将移入废纸篓 / 将搬到 …”）。
 10. **正式执行闸门**：非预演、非试点的 run 在动手前，要在 run 目录里找到 `seal`、`scan_id`、`sel` 都一致的回执：① `mode=dry_run` 的预演回执；② `mode=pilot` 且试点成功的回执（`pilot_done` 为真，且第一条被执行的条目状态为 `removed`、没有失败文件；`skipped`、`partial`、`failed` 都不算；回执里记为删除的那一条还要现场核对：必须是封存里的条目，路径现在已不存在，或删除样本全不存在，原生命令则要求占用小于封存时）。回执是 run 目录里的普通文件，这道核对防的是失误与旧回执，不防同一用户的蓄意伪造。缺任何一项就退出码 2、什么都不删，stderr 给出该先跑的完整命令。没有 `sel` 的旧回执不算；换了卡片或答复，`sel` 变了，必须重新预演和试点。
 11. `--skip-pilot --reason "<原因>"`：只跳过②，预演仍必须有。`--reason` 必填且非空白，只能与 `--skip-pilot` 同用，不能与 `--dry-run`、`--pilot` 同用；正式回执写 `skip_pilot: true`、`skip_reason`，并在 `gate` 里记下用到的预演/试点回执文件名。
 12. **试点取哪一条**：不按 `--cards` 顺序。`decide` 卡的条目优先，再按封存字节从大到小；被跳过就顺延到下一条。试点证明的是这条执行路径走得通，不证明每一条都安全。
+
+## 9. 读取授权 `scripts/peek.py`（0.6）
+
+Agent 读用户的文件一律经这里，不直接 `cat` 或用别的方式打开：
+
+```
+python3 scripts/peek.py --run <run目录> <路径> [--lines 200] [--bytes 65536] [--meta]
+python3 scripts/peek.py --run <run目录> --summary
+```
+
+**分类**（`classify`，先取真实路径，按家目录相对路径与文件名匹配，不区分大小写；优先级 never > extended > deep > basic）：
+
+- `never`：钥匙串（`~/Library/Keychains/**`、`*.keychain*`）、浏览器登录与 Cookie（`Login Data*`、`Cookies*`、`Web Data`、`key4.db`、`logins.json`）、`~/.ssh/**`、`~/.gnupg/**`、`.env` 与 `.env.*`、`*.pem`、`*.key`、`*.p12`、`*.kdbx`、`id_rsa*`、`id_ed25519*`、`.netrc`、`~/.aws/credentials`、`~/.config/gh/hosts.yml`、`~/.codex/auth.json`、`~/.claude/.credentials.json`、文件名含 password / 密码、1Password / Bitwarden / KeePass 的数据目录。
+- `extended`：聊天软件收到的文件（微信 `msg/file`、`msg/video`）、邮件附件（`~/Library/Mail` 下叫 `Attachments` 的目录）、照片图库（`*.photoslibrary`）、桌面与 `~/Pictures/Screenshots` 下的截图（`截屏*`、`Screenshot*`）。
+- `deep`：聊天与邮件正文（`~/Library/Messages`、`~/Library/Mail` 的 `*.emlx`、微信 `Message` 与 `db_storage`、QQ `nt_msg`、Telegram `postbox/db`）、图片内容（png / jpg / jpeg / heic / webp）。
+- `basic`：其余。
+
+**授权**（`decide`，授权取 `profile.read_scope`，缺省 `["basic"]`，空数组 = 只读文件名）：
+
+| 类别 | 授权了什么 | 结果 |
+|---|---|---|
+| `never` | 任何设置 | 一律拒绝，退出码 3，只记 `refused` |
+| `extended` | 含 `deep` 且没加 `--meta` | 给内容（判断截图、重复照片要看图） |
+| `extended` | 只含 `extended`（或含 `deep` 但加了 `--meta`） | 只给元信息：名字、大小、类型、修改时间 |
+| `extended` | 都没授权 | 拒绝，退出码 3，连名字都不给 |
+| `deep` | 含 `deep` 且没加 `--meta` | 给内容 |
+| `deep` | 没授权 | 只给元信息 |
+| `basic` | 含 `basic` 且没加 `--meta` | 给内容 |
+| `basic` | 没授权，或加了 `--meta` | 只给元信息 |
+
+目录只给元信息和前 50 个子项名（`never` 类子项连名字也隐去，写“（凭证类，已隐去）”）。文本内容按 `--lines` / `--bytes` 截断；二进制只给元信息与类型，授权了 `deep` 的图片会提示用自己的看图工具打开。设置只能决定“进哪一档”，**不能把 `never` 放行**。
+
+**留痕**：每次调用（含被拒绝的）往 `<run>/reads.jsonl` 追加一行 `{"at","path","class","mode":"content|meta|refused"}`，路径写成 `~/…`。`--summary` 输出 `{content, meta, refused, paths}`（计数按调用次数，`paths` 是去重后前 50 条读过内容的路径），成果页“这次读了哪些文件”读同一份数据。
+
+注意：脚本自己的只读探针（如 `probe done-evidence` 读目录前两层的 README、进度文档）不经过 `peek.py`、不记入 `reads.jsonl`，它们只在固定的文档名范围内取含“完成”字样的几行，且跳过名字含 password / `.env` / secret 的文件。
+
+## 10. 记忆 `scripts/memory.py`（0.6）
+
+读写 profile 里的四块记忆（`identities`、`governance`、`pending_rules`、`memory_log`，第 1 节）。原则：**记忆只改变问不问、预填什么，不改变能不能放行**；`forget` 必须真的撤销，日志里只标 `forgotten: true`，不物理删。
+
+- `identity set --path P --title T [--producer X] [--task Y] [--scan-id S]` / `identity forget --path P` / `identity list`：`P` 必须是存在的家目录下路径或 `/private/tmp/claude-<uid>` 下路径，按 realpath 存。认下的目录下次扫描带 `identity`。
+- `govern record --path P --change "改了什么" --undo "怎么撤销" --bytes N [--scan-id S]`：记一处“从源头改好”的设置，`N` 是改动时的字节数（基准）。`govern check --run <run目录>`：对每条记录，在 `<run>/facts.json` 里找同路径（或最近祖先 / 后代合计）的现值，写 `<run>/governance-check.json`：`[{path, change, baseline_bytes, now_bytes, delta, verdict: stopped|growing|unknown}]`（涨幅不超过 1% 或为负算 `stopped`）。
+- `pending add --text T --kind protect|rule|note [--value JSON]` / `pending list`：记一句待确认的话。`--value`：`protect` 写路径（字符串或数组，须是家目录下已存在的目录，走 `prefs._home_paths` 同样的校验）；`rule` 写 `{"key":"<规则键>","action":"delete|keep"}`；`note` 写 `{"path":"<目录>"}`（备注文字就是 `--text`）。`memory.confirm(ids)` / `memory.reject(ids)`：看板导出的 `确认规则:` / `不要规则:` 由 `prefs.apply_settings` 调用，确认时 `protect` 并入保护名单、`rule` 写进 `rules`、`note` 写进 `notes`，都写 `memory_log`；`reject` 直接移除。
+- `remembered --run <run目录> [--since ISO]`：汇总本次记住的条目（`memory_log` 里 `scan_id` 与本次扫描一致，或 `at` 不早于 `--since`，且没被忘掉）写 `<run>/remembered.json`：`[{id, kind, text}]`。
+- `forget --ids m1,m2` / `forget --from-text <文件>`：撤销对应改动（规则删除或恢复旧值、认下的目录删除、保护路径移出、设置恢复 `ref.old`）并标 `forgotten`；`--from-text` 解析成果页复制来的“忘掉: m1,m2”行。
+

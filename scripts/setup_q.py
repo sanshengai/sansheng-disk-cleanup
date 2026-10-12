@@ -196,7 +196,9 @@ def _ctx_protect(F, ctx):
 
 
 def _ctx_conversations(F, ctx):
-    return f"找到 {_ai_names(F)} 的对话记录共 {units.fmt_bytes(F['sf']['ai_sessions_bytes'])}"
+    names = _ai_names(F)
+    names = names[:-2] + "等工具" if names.endswith(" 等") else names + " "
+    return f"找到 {names}的对话记录，共 {units.fmt_bytes(F['sf']['ai_sessions_bytes'])}"
 
 
 def _ctx_rejects(F, ctx):
@@ -266,7 +268,7 @@ QUESTIONS = [
      "title": "你的项目是在做，还是做完了", "context": _ctx_projects, "when": lambda F: bool(F["projects"]),
      "options": [_opt("active", "进行中", "里面的东西一律不出删除卡"),
                  _opt("done", "做完了", "中间稿和对话可以进入判断，成品仍要有副本才放行"),
-                 _opt("archived", "归档", "同做完了，且原本“删了找不回”的东西进推荐档"),
+                 _opt("archived", "归档", "同做完了；连原本“删了找不回”的东西也会按推荐勾上"),
                  _opt("protected", "别碰", "整个目录加入保护名单")],
      "recommended": None,
      "why": "项目状态决定里面的东西出不出删除卡、问题预填什么",
@@ -300,7 +302,7 @@ QUESTIONS = [
                  _opt("keep", "都留着", "找不到成品副本的图一律保留")],
      "recommended": "until_done",
      "why": "生成图里找不到成品副本的那部分，按这题决定删、留还是问",
-     "risk": "依赖第 4 题：成品位置没填全时，被挑中的图也可能看起来“没有副本”，所以这类东西最多预填，不进稳妥档"},
+     "risk": "依赖第 4 题：成品位置没填全时，被挑中的图也可能看起来“没有副本”，所以这类东西最多帮你预选，仍要你确认"},
     {"id": "worktrees", "no": 8, "group": "ai", "type": "single", "since": 1, "legacy": False,
      "title": "AI 写代码时开过的工作树，代码合进主线以后", "context": _ctx_worktrees,
      "when": lambda F: F["sf"]["worktrees"] > 0,
@@ -337,16 +339,16 @@ QUESTIONS = [
      "risk": "不动文件，没有风险。你自己动手前请先确认没有“正在上传”的文件，并用官方入口的“移除下载 / 释放空间”；"
              "直接删除或把文件拖出云盘，会连云端的一起删掉"},
     {"id": "wait", "no": 12, "group": "way", "type": "single", "since": 1, "legacy": True,
-     "title": "清掉以后要重新下载、重新生成时，你能等多久", "context": lambda F, ctx: "决定默认勾选到哪一档",
+     "title": "清掉以后要重新下载、重新生成时，你能等多久", "context": lambda F, ctx: "清掉的缓存有的几秒就能重新下载，有的（比如本地模型、编译缓存）要等很久",
      "when": _always,
-     "options": [_opt("minimal", "尽量别让我等", "只勾不丢东西的（稳妥档）"),
-                 _opt("some", "可以等一会儿", "按推荐勾选（推荐档）"),
-                 _opt("space", "空间优先", "连重建很慢的缓存也一起勾（全部可删档）")],
+     "options": [_opt("minimal", "尽量别让我等", "默认只勾删了不丢东西、马上能补回的"),
+                 _opt("some", "可以等一会儿", "默认按我的推荐勾，重新生成慢的不勾"),
+                 _opt("space", "空间优先", "连重新下载很慢的也一起勾；删了找不回的仍要你逐个确认")],
      "recommended": "some",
      "why": "决定默认勾选到哪一档；重建很慢的缓存（如本地模型）只在“空间优先”时进默认勾选",
      "risk": "只影响默认勾选，每次执行前仍有看板或一句话确认"},
     {"id": "done_projects", "no": 13, "group": "way", "type": "single", "since": 1, "legacy": False,
-     "title": "做完的项目，素材通常怎么处理", "context": lambda F, ctx: "影响已做完项目的清理建议",
+     "title": "做完的项目，素材通常怎么处理", "context": lambda F, ctx: "做完的项目常常留着几 GB 的草稿、中间稿和渲染文件",
      "when": _always,
      "options": [_opt("intermediate", "删中间稿，留成品", "做完项目的中间稿预填“删”"),
                  _opt("archive", "整个搬到移动硬盘", "预填“归档”，由你指定外接硬盘"),
@@ -355,7 +357,7 @@ QUESTIONS = [
      "why": "做完了的项目，清理建议是删、归档还是不动",
      "risk": "成品始终要先有副本或交付证据；归档前会先核对复制是否一致"},
     {"id": "governance", "no": 14, "group": "way", "type": "single", "since": 1, "legacy": False,
-     "title": "发现某样东西会一直涨（比如 AI 工具一直存对话），你希望", "context": lambda F, ctx: "只影响建议的写法",
+     "title": "发现某样东西会一直涨（比如 AI 工具一直存对话），你希望", "context": lambda F, ctx: "AI 工具的对话、批量出图脚本这类东西，删了还会再涨回来",
      "when": _always,
      "options": [_opt("tell", "只告诉我", "只说现象"),
                  _opt("guide", "告诉我改法，我自己改", "给出具体设置路径"),
@@ -371,7 +373,7 @@ QUESTIONS = [
      "why": "决定执行时是移入废纸篓还是直接删除",
      "risk": "选“直接删”且没有备份：删了找不回，所以执行前还要再确认一次"},
     {"id": "confirm", "no": 16, "group": "way", "type": "single", "since": 1, "legacy": False,
-     "title": "以后怎么跟你确认", "context": lambda F, ctx: "只影响确认方式", "when": _always,
+     "title": "以后怎么跟你确认", "context": lambda F, ctx: "清理前总要你点头，可以在对话里说一句，也可以在网页里逐项看", "when": _always,
      "options": [_opt("smart", "小事在对话里一句话确认，大事发看板", ""),
                  _opt("board", "每次都发看板", "")],
      "recommended": "smart",
@@ -533,8 +535,8 @@ def summary_lines(profile):
         out.append("录屏和大视频：不问你" if bf == 0 else f"录屏和大视频：超过 {bf} 天没动才问你")
     wait = DEFAULT_TO_WAIT.get(p.get("default_choice"))
     if wait:
-        out.append({"minimal": "重新下载要等：尽量别让你等（默认稳妥档）", "some": "重新下载要等：可以等一会儿（默认推荐档）",
-                    "space": "重新下载要等：空间优先（默认全部可删档）"}[wait])
+        out.append({"minimal": "重新下载要等：尽量别让你等（默认只勾不丢东西的）", "some": "重新下载要等：可以等一会儿（默认按推荐勾）",
+                    "space": "重新下载要等：空间优先（重新下载慢的也勾上）"}[wait])
     for key, lines in (
         ("done_project_policy", {"intermediate": "做完的项目：删中间稿，留成品", "archive": "做完的项目：整个搬到移动硬盘",
                                  "keep": "做完的项目：先都留着"}),
@@ -821,6 +823,9 @@ def apply_export(text, scan_id=None):
         errs += e
         if not data["ledger"]:
             done.append("项目台账：全部按默认状态，已记下第一次设置完成")
+    if not done and not errs and not data["answers"] and data["ledger"] is None:
+        # 用户说“跳过设置”：答案为空也算完成第一次设置（全部按默认），以后不再弹设置页
+        done.append("全部按默认，已记下第一次设置完成（想改随时说“改设置”）")
     if done or ledger_ok:
         p["onboarded_at"] = p.get("onboarded_at") or prefs.now_iso()
         if "setup" not in p:

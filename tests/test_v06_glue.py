@@ -240,3 +240,37 @@ def test_report_forget_button_text_roundtrips_into_memory_forget(env, tmp_path):
     g.write_text("随便一句话", encoding="utf-8")
     assert memory.main(["forget", "--from-text", str(g)]) == 2
     assert set(profile(env)["rules"]) == {"c/d/safe"}
+
+
+def test_skip_setup_with_empty_answers_marks_onboarded(tmp_path, monkeypatch):
+    """“跳过设置”：只含空答案的导出也算完成第一次设置，退出码 0。"""
+    import json as _json
+    import plan, protect, setup_q
+    prof = tmp_path / "profile.json"
+    monkeypatch.setattr(protect, "PROFILE", str(prof))
+    f = tmp_path / "skip.txt"
+    f.write_text(setup_q.SETUP_TITLE + "\n设置版本: 1\n答案: {}\n", encoding="utf-8")
+    assert plan.main(["profile", "--apply", str(f)]) == 0
+    p = _json.loads(prof.read_text(encoding="utf-8"))
+    assert p.get("onboarded_at") and p["setup"]["version"] == setup_q.SETUP_VERSION
+
+
+def test_done_evidence_logs_doc_reads_and_skips_never(tmp_path, monkeypatch):
+    import json as _json
+    import scan
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "README.md").write_text("第一季已上线，完成交付\n", encoding="utf-8")
+    run = tmp_path / "run"
+    run.mkdir()
+    monkeypatch.setattr(scan, "_peek_refused", lambda fp: False)
+    import argparse
+    out = scan.probe_done_evidence(argparse.Namespace(path=str(proj), run=str(run)))
+    assert out["doc_hits"]
+    rows = [_json.loads(l) for l in (run / "reads.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert rows and rows[0]["mode"] == "content" and rows[0]["path"].endswith("README.md")
+    # 反例：读取闸门说不能读，就不读也不记
+    (run / "reads.jsonl").unlink()
+    monkeypatch.setattr(scan, "_peek_refused", lambda fp: True)
+    out = scan.probe_done_evidence(argparse.Namespace(path=str(proj), run=str(run)))
+    assert out["doc_hits"] == [] and not (run / "reads.jsonl").exists()
