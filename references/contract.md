@@ -292,7 +292,7 @@
   - 删除 `projects`（台账整表）与 `settings`。
   - 新增 `setup_summary`：`["旧对话：偶尔回去接着做（30 天内用过的留着）", …]`，按 profile 一项一句生成（`setup_q.summary_lines`，没设过的项不写），页面顶部显示为“按你的设置：……（要改就跟我说“改设置”）”。
   - `project_questions`：沿用 `proposal.project_questions`（新项目 / 久没动的进行中项目），页面渲染为一题一卡（“发现新项目《X》2.3 GB，是进行中还是做完了？”）；答案仍以 `台账:` 行导出。
-  - `pending_rules`：`[{id, text}]`，用户在设置页“补充”里说过、Agent 翻译后待确认的规则；每条两个按钮“对 / 不对”，导出 `确认规则: p1,p2` 与 `不要规则: p3`（只导出编号，文字不进清单）。
+  - `pending_rules`：`[{id, text, means}]`，用户在设置页“补充”里说过、Agent 翻译后待确认的规则；`text` 是 Agent 写的话，`means` 是 `plan.py pending_means` 由实际生效的 `value` 生成的中文释义（如“以后永不触碰：~/a、~/b”“以后“ai-images/codex/recommended”这一类都清”），看板两行都显示，以 `means` 为准；每条两个按钮“对 / 不对”，导出 `确认规则: p1,p2` 与 `不要规则: p3`（只导出编号，文字不进清单）。
   - `archive_enabled`：真，decide 卡的选项为 删 / 留 / 归档；选了归档时页面要求填“归档到”（外接硬盘路径，形如 `/Volumes/<盘名>/…`，内置硬盘与相对路径不收），导出 `归档到: /Volumes/X/叁笙归档`。
   - `cloud_suggestions`：`[{path, provider, local_bytes, how, link}]`，来自提案（第 7a 节），页面显示“这些文件夹可以只留云端”：只读建议，没有勾选、不动任何文件。
   - `facts.composition`：`[{id: home|apps|system|other, name, bytes}]` 整盘构成；`facts.purgeable_bytes`：访达口径的可清除空间估算，`null` = 不知道；`facts.frontier` 每项带 `category`（看板类别 id），页面可按类别下钻。总览单独露出“本地模型”一行（类别 `ai-models`），即使为 0 也写“没有本地模型”。
@@ -444,7 +444,7 @@
 |---|---|
 | `tools[x]=unused` | 该工具知识卡的 `decide` 卡（无风险提示、不含交互会话）`prefill` 为“删” |
 | `conversation_policy=library` | 含交互会话的卡整卡降 `keep`，原因“你说过旧对话当资料库，都留着” |
-| `conversation_policy=done` | 含交互会话的卡，条目全属于做完了 / 归档项目时 `prefill` “删”（仍逐个确认，不进任何档的对话确认） |
+| `conversation_policy=done` | 只影响提问措辞与保留天数，**不预填**：含交互会话的卡永不预填（0.6 评审 13，与 0.5 一致），做完项目里的对话仍逐个确认 |
 | `rejects_policy=drop` | 类别 `ai-images` 的 `decide` 卡 `prefill` “删” |
 | `rejects_policy=keep` | 类别 `ai-images` 且没有通过复核的 `copy_verified` / `delivered` 证据的卡降 `keep`，原因“你说过没挑中的图都留着……” |
 | `worktree_policy=whole` | 知识卡 `git-worktree-build` 的 `decide` 卡 `prefill` “删” |
@@ -460,7 +460,7 @@
 | 重建很慢的缓存 | 卡片写了 `rebuild: "slow"` 或首卡是 `model-caches`（`plan.py` 的 `SLOW_REBUILD_CARDS`）：`preset` 为 `safe` 时提为 `recommended`，慢重建缓存不进稳妥档 |
 | `cloud_policy` | 只决定提案里有没有 `cloud_suggestions`，不影响任何卡 |
 
-`prefill` 只是预填，仍要用户确认；有风险提示的卡、含交互会话的卡（`conversation_policy=done` 的例外见上）不预填。`tools[x]=often` 没有对应的 `check` 行为，只是提示 Agent 第二轮跳过深查（SKILL.md）。
+`prefill` 只是预填，仍要用户确认；有风险提示的卡、含交互会话的卡（任何设置下）不预填。`tools[x]=often` 没有对应的 `check` 行为，只是提示 Agent 第二轮跳过深查（SKILL.md）。
 
 ## 8. 执行 `act.py run --run <目录> --seal <digest> --cards c01,c03 [--answers c05=归档] [--dry-run | --pilot | --skip-pilot --reason <原因>] [--trash | --no-trash] [--archive-to /Volumes/盘名/目录]`（`go` 同样接受 `--trash` / `--no-trash` / `--archive-to`）
 
@@ -475,7 +475,7 @@
    任一项不满足就跳过并写明原因。
 3a. **处置方式（0.6）**：三种——`delete` 直接删（`os.unlink`）、`trash` 移入废纸篓、`archive` 复制到外接硬盘再处置原文件。选择顺序：答复“归档”的卡走 `archive`；其余的 `--trash` 强制废纸篓、`--no-trash` 强制直接删，都没给读 `profile.delete_mode`，缺省 `delete`（与 0.5 一致）。`native` 条目不受影响（照常由原生命令处理，回执 `disposal.mode` 记 `native`），回执里标明。
    - **`trash`**：文件 `os.rename` 到 `~/.Trash/叁笙清理-<scan_id>-<UTC 时间>/<相对家目录的路径>`（家目录外的路径放 `_root/<绝对路径去掉开头 />`），保持目录结构，先建父目录；原有的身份检查（inode / 设备）与保护检查照旧；目标已存在则该文件记失败、不覆盖；跨卷 `rename` 失败（`EXDEV`）→ 该文件 `skip`，原因“不在同一块盘，没法放进废纸篓”（并清掉为它建的空目录）。
-   - **`archive`**：需要归档目录（`--archive-to` 或看板导出的 `归档到:`，后者优先）。执行前整体校验，任一不满足整卡 `skip` 并写清原因：必须在 `/Volumes/<盘名>/` 下且真实路径仍在 `/Volumes` 下；目录存在、可写；与家目录不在同一块盘；剩余空间不小于本卡封存字节的 1.05 倍。通过后逐文件 `shutil.copy2` 到 `<归档目录>/叁笙归档-<scan_id>/<相对家目录的路径>`（先写 `.part` 再改名），**`sha256` 一致才处置原文件**（原文件再按删除方式 `trash` 或 `delete` 处理）；校验不一致、同名但内容不同、复制失败，原文件保留并记失败。重跑时目标已有逐字节相同的副本直接认。归档不免除结束证据、引用检查和其他任何复核，看板上“归档”只是 `decide` 卡的第三个答复。
+   - **`archive`**：需要归档目录（`--archive-to` 或看板导出的 `归档到:`，后者优先）。执行前整体校验，任一不满足整卡 `skip` 并写清原因：必须在 `/Volumes/<盘名>/` 下且真实路径仍在 `/Volumes` 下；目录存在、可写；与家目录不在同一块盘；剩余空间不小于本次全部归档卡封存字节合计的 1.05 倍（原生命令条目不算，见下）。通过后逐文件 `shutil.copy2` 到 `<归档目录>/叁笙归档-<scan_id>/<相对家目录的路径>`（先写进同目录里本次独有的 `.叁笙-tmp-*` 临时目录，数据 `F_FULLFSYNC`（不支持则 `fsync`）落盘并校验，再改名为目标名，目标目录同步落盘，再回读校验），**全部通过才处置原文件**（原文件再按删除方式 `trash` 或 `delete` 处理）；每个目标文件的真实路径必须仍在归档根之内、所在设备与源文件不同，否则该文件失败、原件保留。校验不一致、同名但内容不同、复制失败，原文件保留并记失败；只会删除本次自己创建的临时文件，绝不 unlink 目标位置已有的文件。重跑时目标已有逐字节相同的副本直接认。含 `native`（原生命令）条目的卡答复“归档”时，该条目一律跳过（“原生命令没法归档，先留着”），看板对这类卡不给“归档”选项。`sel` 在选了归档时多带 `archive_to`（规范化后的路径），为空时与 0.5 的签名逐位一致；预演/试点回执记录 `delete_mode` 与 `archive_to`，正式执行与之不同即拒绝；`--no-trash` 与设置 `delete_mode=trash` 冲突时必须同时给 `--reason "<用户原话>"`（写进回执 `no_trash_reason`）。归档不免除结束证据、引用检查和其他任何复核，看板上“归档”只是 `decide` 卡的第三个答复。
    - `go --choice` 的对话确认没有“归档到”，要归档在 `go` 上加 `--archive-to`；记飞轮选择时，答复“归档”的卡不算“删”也不算“留”，不计入“以后都这样吗”。
 3. 删除规则（在 3a 选定的处置方式下逐个文件进行）：
    - `scope=ignored-only`：现场重新运行 `git ls-files -o -i --exclude-standard -z -- <path>`，逐个删除文件，删完再清理空目录；绝不删除 `git ls-files` 中的跟踪文件。
@@ -540,5 +540,5 @@ python3 scripts/peek.py --run <run目录> --summary
 - `govern record --path P --change "改了什么" --undo "怎么撤销" --bytes N [--scan-id S]`：记一处“从源头改好”的设置，`N` 是改动时的字节数（基准）。`govern check --run <run目录>`：对每条记录，在 `<run>/facts.json` 里找同路径（或最近祖先 / 后代合计）的现值，写 `<run>/governance-check.json`：`[{path, change, baseline_bytes, now_bytes, delta, verdict: stopped|growing|unknown}]`（涨幅不超过 1% 或为负算 `stopped`）。
 - `pending add --text T --kind protect|rule|note [--value JSON]` / `pending list`：记一句待确认的话。`--value`：`protect` 写路径（字符串或数组，须是家目录下已存在的目录，走 `prefs._home_paths` 同样的校验）；`rule` 写 `{"key":"<规则键>","action":"delete|keep"}`；`note` 写 `{"path":"<目录>"}`（备注文字就是 `--text`）。`memory.confirm(ids)` / `memory.reject(ids)`：看板导出的 `确认规则:` / `不要规则:` 由 `prefs.apply_settings` 调用，确认时 `protect` 并入保护名单、`rule` 写进 `rules`、`note` 写进 `notes`，都写 `memory_log`；`reject` 直接移除。
 - `remembered --run <run目录> [--since ISO]`：汇总本次记住的条目（`memory_log` 里 `scan_id` 与本次扫描一致，或 `at` 不早于 `--since`，且没被忘掉）写 `<run>/remembered.json`：`[{id, kind, text}]`。
-- `forget --ids m1,m2` / `forget --from-text <文件>`：撤销对应改动（规则删除或恢复旧值、认下的目录删除、保护路径移出、设置恢复 `ref.old`）并标 `forgotten`；`--from-text` 解析成果页复制来的“忘掉: m1,m2”行。
+- `forget --ids m1,m2` / `forget --from-text <文件>`：撤销对应改动（规则删除或恢复旧值、认下的目录删除、保护路径移出、设置恢复 `ref.old`）并标 `forgotten`。设置类（`setting`）写日志时同时记 `ref.new`（连带字段记 `ref.also_new`），撤销时当前值不等于 `ref.new` 说明之后被改过，**不回滚**并提示“之后改过，没动”；没有 `new` 的旧日志条目没法确认，按不回滚处理。`protect` 类只记本次真正新增的路径（`ref.paths`），原来就在保护名单里的忘掉时不移除，没有新增就不写日志；`--from-text` 解析成果页复制来的“忘掉: m1,m2”行。
 

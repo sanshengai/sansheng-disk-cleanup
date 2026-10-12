@@ -117,7 +117,7 @@ nohup python3 scripts/act.py go --run <run目录> --choice recommended > <run目
 - 项目台账、设置页答案、待确认规则和记忆都**不能单独作为删除依据**，也不能替代副本核对、交付证据、引用检查、进程与 24 小时改动检查；最激进的一整套设置取下来，也不该有任何卡从 `decide` 变 `clean`。唯一更严的方向是“别碰”和“永不读”。
 - 读取：用户的文件只经 `peek.py` 读；`never` 类（钥匙串、浏览器登录数据、密钥、`.env`、密码库等）任何设置都读不了；读了就留痕。
 - 保护名单由 `scripts/protect.py` 强制执行，不得绕过，也不得用 shell 的 `rm -rf`。不在封存计划里的路径一律不动。
-- 原生清理命令优先（`sdkmanager --uninstall`、`codex delete`、`claude purge`、`hf cache rm`、`brew cleanup`、`uv cache prune`），它们不进废纸篓、不归档。工具自带的保留设置写进 `governance`，经用户同意后再改。
+- 原生清理命令优先（`sdkmanager --uninstall`、`codex delete`、`hf cache rm`、`brew cleanup`、`uv cache prune`），它们不进废纸篓、不归档。**不要推荐 `claude purge`**：它会连记忆与配置一起删，`protect.py` 有意不登记它。工具自带的保留设置写进 `governance`，经用户同意后再改。
 - 聊天软件（微信、企业微信等）的记录，只引导用户使用软件内的清理入口；云盘文件夹只给“只留云端”的官方做法。
 - 需要 sudo 的对象（本地快照、系统级缓存）自己不用 sudo，只合成一两行命令交给用户执行。
 - 汇报时说明覆盖率和跳过的部分，不要把“扫描完成”说成“全盘清理完成”。

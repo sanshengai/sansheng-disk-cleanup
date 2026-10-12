@@ -103,15 +103,25 @@ def digest_of(seal):
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
 
-def selection_sig(seal_digest, cards, answers):
+def norm_archive_to(archive_to):
+    """归档目标写进指纹前的规范化：去首尾空白、去末尾斜杠。assets/dashboard.html 的 archiveLine 做同样的事。"""
+    return str(archive_to or "").strip().rstrip("/")
+
+
+def selection_sig(seal_digest, cards, answers, archive_to=None):
     """看板选择指纹（看板导出的 `sel:` 行 / `act.py run --sel`）。
 
     sha256(规范化 JSON)[:12]；JSON 为 {"answers":[排序的"卡号=回答"],"cards":[排序的卡号],"seal":"<seal digest>"}，
     键序固定、无空白、不转义非 ASCII。assets/dashboard.html 里的 selPayload/selSig 须逐字节算出同一值。
-    cards：本次选中的卡号（可乱序、可重复）；answers：{卡号: 回答} 或 "卡号=回答" 列表。"""
+    cards：本次选中的卡号（可乱序、可重复）；answers：{卡号: 回答} 或 "卡号=回答" 列表。
+    archive_to（0.6 起）：归档目录。非空时多一个键 "archive_to"（规范化后的路径，字典序夹在 answers 与 cards 之间）；
+    为空/None 时不出现这个键，签名与 0.5 完全一致（旧看板、旧回执继续可用）。"""
     if isinstance(answers, dict):
         answers = [f"{k}={v}" for k, v in answers.items()]
     body = {"seal": seal_digest, "cards": sorted(set(cards)), "answers": sorted(answers)}
+    at = norm_archive_to(archive_to)
+    if at:
+        body["archive_to"] = at
     blob = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
@@ -351,6 +361,7 @@ TASK_SHAPES = ("codex-delete", "grok-sessions-delete")
 # 条目 class（探针 --emit 写入）：interactive 交互会话 / batch 批量出图 / unknown 判不出；缺失按 unknown，兼容旧条目文件
 ITEM_CLASSES = ("interactive", "batch", "unknown")
 INSTALLER_EXTS = (".dmg", ".pkg", ".mpkg", ".zip", ".xip", ".iso")
+INSTALLER_POLICY_EXTS = (".dmg", ".pkg", ".mpkg", ".xip", ".iso")      # installer_policy 只认这些（不含 .zip）
 ARCHIVE_RE = re.compile(r"/Xcode/Archives(/|$)|\.xcarchive(/|$)", re.I)
 
 
@@ -898,15 +909,18 @@ def _is_worktree_root(rp, nodes):
 
 
 def _installer_card(card, items):
-    if _first_card(card) == "app-updaters-installers":
-        return True
-    for it in items if isinstance(items, list) else []:
+    """“安装包直接清”只认真正的安装包（.dmg/.pkg/.mpkg/.xip/.iso），且整张卡的条目全是安装包。
+    不看卡片 id、不认 .zip（zip 常是文档、素材、源码包）；混有文档或 .zip 的卡不受 installer_policy 影响（评审 8）。"""
+    if not isinstance(items, list) or not items:
+        return False
+    for it in items:
         if not isinstance(it, dict):
-            continue
-        paths = [it.get("path")] + (it.get("files") if isinstance(it.get("files"), list) else [])
-        if any(isinstance(x, str) and x.lower().endswith(INSTALLER_EXTS) for x in paths):
-            return True
-    return False
+            return False
+        files = it.get("files") if isinstance(it.get("files"), list) else []
+        paths = [x for x in files if x] if files else [it.get("path")]
+        if not paths or not all(isinstance(x, str) and x.lower().endswith(INSTALLER_POLICY_EXTS) for x in paths):
+            return False
+    return True
 
 
 def _floor_preset(card, preset, wt_ask):
@@ -1634,10 +1648,9 @@ def check_plan(run):
             records[cid]["preset_raw"] = _floor_preset(card, card_preset(card, records[cid]["verdict"], risk_notes), wt_ask)
             if card_projects:
                 records[cid]["projects"] = card_projects
-            # 预填只是预填，仍要用户确认：项目做完了（按“做完的项目怎么处理”预填删或归档；含交互对话的卡只有选了
-            # “做完就不再看”才预填）；其次是初始设置里的“不用了的软件 / 废稿不留 / 整棵工作树删”
+            # 预填只是预填，仍要用户确认：项目做完了（按“做完的项目怎么处理”预填删或归档；含交互对话的卡永不预填）；其次是初始设置里的“不用了的软件 / 废稿不留 / 整棵工作树删”
             pf = None
-            if prefill and (not isess or (proj_done and S["conv"] == "done")):
+            if prefill and not isess:          # 含交互对话的卡永不预填（逐个确认），conversation_policy=done 也一样
                 pf = prefill
             if pf is None and setting_prefill and not isess:
                 pf = setting_prefill
@@ -2029,6 +2042,8 @@ def board_plan(plan, result):
         bc["rule_key"] = prefs.rule_key(c, bc["preset"], bc["category"])
         items = c.get("items") if isinstance(c.get("items"), list) else []
         bc["items_total"] = len(items)
+        # 含软件自带清理命令（native）的卡不能归档：看板只列前 BOARD_ITEMS 条，要按全部条目判断后明示
+        bc["archivable"] = not any(isinstance(it, dict) and it.get("method") == "native" for it in items)
         bc["items"] = [{k: v for k, v in it.items() if k != "files" and not k.startswith("_")}
                        | ({"files_total": len(it["files"])} if isinstance(it.get("files"), list) else {})
                        for it in items[:BOARD_ITEMS] if isinstance(it, dict)]
@@ -2055,12 +2070,30 @@ def proposal_for_board(run, scan_id):
             "cloud_suggestions": pr.get("cloud_suggestions") or []}
 
 
+def pending_means(kind, value):
+    """由 value（确认后真正生效的内容）生成中文释义；text 是 Agent 写的，可能与 value 不一致，用户该看到实际效果。"""
+    value = value if isinstance(value, dict) else {}
+    if kind == "protect":
+        paths = [x for x in (value.get("paths") if isinstance(value.get("paths"), list) else []) if isinstance(x, str) and x.strip()]
+        return "以后永不触碰：" + "、".join(paths) if paths else "（没有可用目录，确认后不会生效）"
+    if kind == "rule":
+        key, action = value.get("key"), value.get("action")
+        if isinstance(key, str) and key and action in ("delete", "keep"):
+            return f"以后“{key}”这一类" + ("都清" if action == "delete" else "都留着、不再列出")
+        return "（规则不完整，确认后不会生效）"
+    if kind == "note":
+        path = value.get("path")
+        return f"给 {path} 记一条备注，只用来提醒，不改变清理判断" if isinstance(path, str) and path else "（备注缺少目录，确认后不会生效）"
+    return "（不认识的类型，确认后不会生效）"
+
+
 def pending_rules_of(profile):
-    """用户在设置页“补充”里说的话，Agent 翻译后待确认的规则：[{id, text}]。看板每条两按钮“对 / 不对”。"""
+    """用户在设置页“补充”里说的话，Agent 翻译后待确认的规则：[{id, text, means}]。看板每条两按钮“对 / 不对”。
+    means = 由 value 生成的中文释义（实际生效的内容），看板与 text 并排显示。"""
     out = []
     for r in profile.get("pending_rules") if isinstance(profile.get("pending_rules"), list) else []:
         if isinstance(r, dict) and isinstance(r.get("id"), str) and isinstance(r.get("text"), str) and r["text"].strip():
-            out.append({"id": r["id"], "text": r["text"]})
+            out.append({"id": r["id"], "text": r["text"], "means": pending_means(r.get("kind"), r.get("value"))})
     return out
 
 

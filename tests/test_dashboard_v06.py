@@ -413,3 +413,73 @@ def test_cloud_card_hidden_when_no_suggestions_and_via_proposal(browser, tmp_pat
 def test_cloud_card_no_hscroll_on_phone(browser, tmp_path):
     page, errors = open_page(browser, tmp_path, cloud_payload(), viewport={"width": 390, "height": 844}, is_mobile=True)
     assert errors == [] and no_hscroll(page)
+
+
+# ------------------------------------------------------------ 评审修复：含 native 的卡不给“归档”、sel 含归档目录、规则 means
+def _native_items():
+    return [{"path": "/Users/x/Library/Android/sdk/system-images", "method": "native", "scope": "all"}]
+
+
+@pw
+@pytest.mark.parametrize("how", ["items", "flag"])
+def test_card_with_native_items_has_no_archive_option_and_prefill_is_ignored(browser, tmp_path, how):
+    """评审第 2 条：act.py 不会归档 native 条目，所以这张卡不给“归档”选项；预填的“归档”也不认。
+    how=items：条目里直接带 method=native；how=flag：条目列表被截断时 plan.py 标 archivable:false。"""
+    p = sample_payload()
+    c02 = next(c for c in p["plan"]["cards"] if c["id"] == "c02")
+    if how == "items":
+        c02["items"] = _native_items()
+    else:
+        c02["archivable"] = False
+    page, errs = open_page(browser, tmp_path, p, viewport={"width": 1280, "height": 900})
+    page.get_by_role("button", name=re.compile("AI 生成的图")).first.click()
+    item = page.locator('.item[data-id="c02"]')
+    assert item.get_by_role("button", name="归档").count() == 0
+    assert item.get_by_role("button", name="删", exact=True).count() == 1
+    assert "没法归档" in item.inner_text()
+    assert page.locator("#archrow").is_hidden()
+    assert "c02=归档" not in page.evaluate("agentMessage()")        # 预填的归档没有变成清单里的回答
+    # 对照：同一份数据里没有 native 的卡仍然给“归档”
+    page.get_by_role("button", name=re.compile("AI 对话与记录")).first.click()
+    assert page.locator('.item[data-id="c03"]').get_by_role("button", name="归档").count() == 1
+    assert errs == []
+
+
+@pw
+def test_exported_sel_covers_archive_target_and_matches_python(browser, tmp_path):
+    """评审第 6 条：页面算出的 sel 与 plan.selection_sig 对同一输入一致，含归档目录；改目录 sel 就变。"""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import plan
+    page, _ = open_page(browser, tmp_path, viewport={"width": 1280, "height": 900})
+    page.fill("#arch", "/Volumes/移动硬盘/叁笙归档/")
+    msg = page.evaluate("agentMessage()")
+    got, errs = prefs.parse_board_export(msg)
+    assert errs == [] and got["archive_to"] == "/Volumes/移动硬盘/叁笙归档"
+    assert got["sel"] == plan.selection_sig("0123456789ab", got["cards"], got["answers"], got["archive_to"])
+    assert got["sel"] != plan.selection_sig("0123456789ab", got["cards"], got["answers"])
+    page.fill("#arch", "/Volumes/移动硬盘/别处")
+    got2, _ = prefs.parse_board_export(page.evaluate("agentMessage()"))
+    assert got2["sel"] != got["sel"]
+    # 没有归档卡时不带归档目录行，sel 与 0.5 公式一致（旧回执、旧流程照用）
+    page.get_by_role("button", name=re.compile("AI 生成的图")).first.click()
+    page.locator('.item[data-id="c02"]').get_by_role("button", name="留", exact=True).click()
+    got3, _ = prefs.parse_board_export(page.evaluate("agentMessage()"))
+    assert got3["archive_to"] is None
+    assert got3["sel"] == plan.selection_sig("0123456789ab", got3["cards"], got3["answers"])
+
+
+@pw
+def test_pending_rule_shows_means_and_tolerates_missing(browser, tmp_path):
+    """评审第 9 条：待确认规则同时显示 Agent 写的话和实际生效的 means；没有 means 字段/为空时照常显示。"""
+    p = sample_payload(pending_rules=[{"id": "p1", "text": "下载里的视频都是课程，别动", "means": "以后永不触碰：~/Downloads/课程"},
+                                      {"id": "p2", "text": "没选中的图用完就可以删", "means": ""},
+                                      {"id": "p3", "text": "旧缓存随便清"}])
+    page, errs = open_page(browser, tmp_path, p, viewport={"width": 1280, "height": 900})
+    c1 = page.locator(".qcard", has_text="下载里的视频").inner_text()
+    assert "下载里的视频都是课程，别动" in c1 and "以后永不触碰：~/Downloads/课程" in c1
+    for t in ("没选中的图用完", "旧缓存随便清"):
+        txt = page.locator(".qcard", has_text=t).inner_text()
+        assert "实际会这样生效" not in txt and "undefined" not in txt
+    page.locator(".qcard", has_text="下载里的视频").get_by_role("button", name="对", exact=True).click()
+    assert "确认规则: p1" in page.evaluate("agentMessage()").splitlines()
+    assert errs == []

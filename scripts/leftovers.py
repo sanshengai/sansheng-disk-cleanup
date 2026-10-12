@@ -12,6 +12,11 @@ r"""已卸载应用遗留的低风险缓存：只读探针（不删除、不联�
      名字或 id 少于 4 个字符只认整串相等；bundle id 先归一（去掉 .trial/.beta/.demo/.debug 等尾部段与数字段），
      达到 8 个字符才放宽前缀匹配，也只有这时才看 LaunchAgents / Cookies。
   4. 任何查询失败都往「应用还在」方向：反查异常、stat 失败、Spotlight 不可用、进程名单读不到，一律跳过不列。
+  5. Group Containers 只在读得到 app-group 时评估：对每个已装 App（系统 App 同样）及其 PlugIns/*.appex 跑
+     `codesign -d --entitlements :-`（5 秒超时、结果缓存）取 com.apple.security.application-groups；
+     任何一个读不到（超时、报错、解析失败），整个位置标 not_evaluated、不报残留。
+  6. LaunchAgents 读 plist 的 Program / ProgramArguments[0]：可执行文件存在、或 `launchctl print gui/<uid>/<label>`
+     退出码 0，就视为在用不报；launchctl 超时或读不到按「在用」处理。
 另有：目录内最新 mtime 距今 >= min_age_days；Spotlight 查到同 bundle id 的 .app 视为还在；
 正在运行的 App 对应的目录默认保护；brew_zap=True 时已装 cask 的 zap 路径覆盖候选视为还在；
 ~/Library 与 /Library 下的标准子目录本身永不算残留。
@@ -19,12 +24,14 @@ r"""已卸载应用遗留的低风险缓存：只读探针（不删除、不联�
 import fnmatch
 import json
 import os
+import plistlib
 import re
 import shutil
 import subprocess
 import sys
 import time
 from collections import namedtuple
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -72,6 +79,13 @@ WALK_MAX_SECONDS = 5.0
 MDFIND_TIMEOUT = 10
 BREW_TIMEOUT = 60
 PGREP_TIMEOUT = 10
+CODESIGN_TIMEOUT = 5        # 读一个 App 的签名权限最多等 5 秒
+LAUNCHCTL_TIMEOUT = 5
+APP_GROUPS_KEY = "com.apple.security.application-groups"
+APP_GROUPS_WORKERS = 8
+# ProgramArguments[0] 是解释器时，真正的程序是后面第一个绝对路径参数
+INTERPRETERS = frozenset(("sh", "bash", "zsh", "dash", "env", "python", "python3", "osascript", "node", "ruby",
+                          "perl", "open", "caffeinate", "nohup"))
 SPOTLIGHT_SANITY_BID = "com.apple.finder"   # 任何正常的 Spotlight 索引都该找到它
 
 # 标准 Library 子目录（AppCleaner 硬编码的 66 项，另加现代 macOS 的 HTTPStorages、Application Scripts）：
@@ -159,6 +173,116 @@ def _strip_group_prefix(name):
 def _app_groups(app):
     """App 签名里的 app-group 列表（scan 提供时才有；没有就是空，不猜）。"""
     return [g for g in (app.get("app_groups") or []) if isinstance(g, str) and g.strip()]
+
+
+# ---- Group Containers：读 App 签名里的 app-group ------------------------------------------------
+_APP_GROUP_CACHE = {}       # 真实路径 -> app-group 列表；None = 读不到（本次探针内有效）
+
+
+def _read_app_groups(path):
+    """`codesign -d --entitlements :- <path>` 读 com.apple.security.application-groups。
+    返回列表（没有权限声明或未签名 = 空列表）；超时、命令缺失、解析失败返回 None（调用方按「读不到」处理）。"""
+    key = os.path.realpath(path)
+    if key in _APP_GROUP_CACHE:
+        return _APP_GROUP_CACHE[key]
+    result = None
+    try:
+        r = subprocess.run(["codesign", "-d", "--entitlements", ":-", path], capture_output=True,
+                           timeout=CODESIGN_TIMEOUT, shell=False)
+        out = r.stdout or b""
+        if r.returncode != 0:
+            err = (r.stderr or b"").decode("utf-8", "replace").lower()
+            result = [] if "not signed at all" in err else None
+        elif not out.strip():
+            result = []
+        else:
+            start = out.find(b"<?xml")
+            if start < 0:
+                start = out.find(b"<plist")
+            data = plistlib.loads(out[start:] if start >= 0 else out)
+            groups = data.get(APP_GROUPS_KEY) if isinstance(data, dict) else None
+            result = [g for g in groups if isinstance(g, str) and g.strip()] if isinstance(groups, list) else []
+    except Exception:  # noqa: BLE001  超时 / 命令缺失 / plist 解析失败：一律读不到
+        result = None
+    _APP_GROUP_CACHE[key] = result
+    return result
+
+
+def _bundle_paths(app_path):
+    """App 本体加它 Contents/PlugIns 下的扩展（扩展常单独声明 app-group）。"""
+    out = [app_path]
+    plugins = os.path.join(app_path, "Contents", "PlugIns")
+    try:
+        out.extend(sorted(e.path for e in os.scandir(plugins) if e.name.endswith(".appex")))
+    except OSError:
+        pass
+    return out
+
+
+def collect_app_groups(apps):
+    """给每个已装 App 记录补上 app_groups（新字典，不改 scan 的缓存）。
+    返回 (带 app_groups 的 apps, 读不到的路径列表)；读不到列表非空就不能断言某 group 无人用。"""
+    recs = [dict(a) for a in apps.get("apps") or []]
+    targets = []
+    for a in recs:
+        for bp in _bundle_paths(a.get("path") or ""):
+            targets.append((a, bp))
+    with ThreadPoolExecutor(max_workers=APP_GROUPS_WORKERS) as ex:
+        results = list(ex.map(lambda t: _read_app_groups(t[1]), targets))
+    failed = []
+    for (a, bp), groups in zip(targets, results):
+        if groups is None:
+            failed.append(bp)
+            continue
+        a.setdefault("app_groups", [])
+        a["app_groups"] = list(a["app_groups"]) + groups
+    return dict(apps, apps=recs), failed
+
+
+# ---- LaunchAgents：plist 指向的程序还在、或 launchd 已加载就是在用 -------------------------------
+def _launch_program(plist_path):
+    """plist 的 (Label, 可执行文件路径)。Program 优先，否则 ProgramArguments[0]；
+    第一项是解释器（sh、bash、env、python3……）时取后面第一个绝对路径参数。读不出抛异常。"""
+    with open(plist_path, "rb") as f:
+        data = plistlib.load(f)
+    if not isinstance(data, dict):
+        raise ValueError("plist 不是字典")
+    label = data.get("Label") if isinstance(data.get("Label"), str) else None
+    prog = data.get("Program")
+    if isinstance(prog, str) and prog:
+        return label, prog
+    args = data.get("ProgramArguments")
+    if isinstance(args, list) and args and isinstance(args[0], str) and args[0]:
+        first = args[0]
+        if os.path.basename(first).lower() in INTERPRETERS:
+            for extra in args[1:]:
+                if isinstance(extra, str) and extra.startswith("/"):
+                    return label, extra
+        return label, first
+    return label, None
+
+
+def _launchctl_loaded(label):
+    """`launchctl print gui/<uid>/<label>` 退出码 0 = 已加载。超时、命令缺失抛异常（调用方按「在用」处理）。"""
+    r = subprocess.run(["launchctl", "print", "gui/%d/%s" % (os.getuid(), label)], capture_output=True,
+                       timeout=LAUNCHCTL_TIMEOUT, shell=False)
+    return r.returncode == 0
+
+
+def launch_agent_in_use(plist_path, fallback_label):
+    """返回 (在用?, 原因)。读不到 plist、launchctl 超时一律往「在用」方向。"""
+    try:
+        label, exe = _launch_program(plist_path)
+    except Exception:  # noqa: BLE001
+        return True, "plist_unreadable"
+    if exe and os.path.exists(exe):
+        return True, "program_exists"
+    try:
+        if _launchctl_loaded(label or fallback_label):
+            return True, "launchctl_loaded"
+    except Exception:  # noqa: BLE001
+        return True, "launchctl_inconclusive"
+    return False, None
 
 
 def owner_of(name, apps):
@@ -328,8 +452,31 @@ def probe_leftovers(opts=None):
     out = {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
            "inventory_complete": False, "min_age_days": min_age, "candidates": [], "skipped": {},
            "not_evaluated_locations": [{"location": "~/Library/" + n, "reason": why} for n, why in NOT_EVALUATED],
-           "errors": []}
+           "group_containers_evaluated": None, "errors": []}
     skipped = out["skipped"]
+    _APP_GROUP_CACHE.clear()
+    group_state = {"done": False, "apps": None, "failed": []}
+
+    def group_apps():
+        """惰性读一次所有 App 的 app-group；返回带 app_groups 的清单，有任何读不到的返回 None。"""
+        if not group_state["done"]:
+            group_state["done"] = True
+            try:
+                group_state["apps"], group_state["failed"] = collect_app_groups(apps)
+            except Exception as exc:  # noqa: BLE001
+                group_state["apps"], group_state["failed"] = None, ["%s: %s" % (type(exc).__name__, exc)]
+            if group_state["failed"]:
+                group_state["apps"] = None
+                out["errors"].append({"stage": "app_groups", "error": "读不到 %d 个签名的 app-group：%s"
+                                      % (len(group_state["failed"]), "；".join(group_state["failed"][:5]))})
+                out["group_containers_evaluated"] = False
+                for loc in out["not_evaluated_locations"]:
+                    if loc["location"] == "~/Library/Group Containers":
+                        loc["reason"] = ("读不到部分 App 签名里的 app-group（%d 处），无法断言哪个 group 没人用，整个位置不评估"
+                                         % len(group_state["failed"]))
+            else:
+                out["group_containers_evaluated"] = True
+        return group_state["apps"]
 
     def skip(reason):
         skipped[reason] = skipped.get(reason, 0) + 1
@@ -426,6 +573,9 @@ def probe_leftovers(opts=None):
                         continue
                     facts = {"app": None, "app_match": None, "app_installed": False}
                 else:
+                    if rule.kind == KIND_GROUP and group_apps() is None:
+                        skip("group_containers_not_evaluated")
+                        continue
                     try:
                         facts = scan.reverse_lookup(path, apps)
                     except Exception:  # noqa: BLE001  反查异常 -> 当作应用还在
@@ -440,7 +590,7 @@ def probe_leftovers(opts=None):
                     if facts.get("app_installed") is not False:
                         skip("lookup_inconclusive")
                         continue
-                owner, why = owner_of(name, apps)      # 再按 AppCleaner 的匹配规则复核一遍
+                owner, why = owner_of(name, group_apps() if rule.kind == KIND_GROUP else apps)   # 再按 AppCleaner 的匹配规则复核一遍
                 if owner is not None:
                     skip("app_installed:%s" % why)
                     continue
@@ -463,6 +613,11 @@ def probe_leftovers(opts=None):
                 if age_days < min_age:
                     skip("too_recent")
                     continue
+                if rule.match_rule == "launch_agent":
+                    in_use, why_use = launch_agent_in_use(path, name)
+                    if in_use:
+                        skip("launch_agent_in_use:%s" % why_use)
+                        continue
                 # Spotlight：装在清单根目录之外（Setapp、自定义目录、iOS Wrapper）的 .app
                 if spotlight_ok is None:
                     try:

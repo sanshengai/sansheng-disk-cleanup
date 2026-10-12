@@ -112,7 +112,8 @@ def auto_sel(argv):
         return argv
     req = [c.strip() for c in val("--cards").split(",") if c.strip()]
     ans = act.parse_answers(answers)
-    sel = plan.selection_sig(seal["digest"], [c for c, _, _ in act.select_cards(seal, req, ans)], ans)
+    arch = act.effective_archive_to(val("--archive-to") or None, ans)
+    sel = plan.selection_sig(seal["digest"], [c for c, _, _ in act.select_cards(seal, req, ans)], ans, arch)
     return argv + ["--sel", sel]
 
 

@@ -82,6 +82,9 @@ def build(env):
         if cid in ("conv", "convproj"):
             kw["newest_mtime"] = iso_days_ago(50)
         item_kw = {"class": "interactive", "session": cid} if cid in ("conv", "convproj") else {}
+        if cid == "inst":                                # 评审 8：installer_policy 只认整卡全是 .dmg 等安装包
+            mkfile(d / "Foo.dmg")
+            item_kw = {"files": [str(d / "Foo.dmg")]}
         c = card(cid, [delete_item(d, **item_kw)], verdict=verdict, question="删吗？" if verdict == "decide" else None)
         c.update(extra)
         if verdict == "decide" or cid == "deliv":
@@ -159,8 +162,6 @@ CASES = {
                      lambda o: show(o, "deliv", "verdict_out")),
     "conversations": ({"conversations": "done"}, {"conversations": "library"},
                       lambda o: show(o, "conv", "verdict_out")),
-    "conversations#done_projects": ({"conversations": "done"}, {"conversations": "sometimes"},
-                                    lambda o: show(o, "convproj", "prefill")),
     "conversations#days": ({"conversations": "done", "conversation_days": 30}, {"conversations": "done", "conversation_days": 60},
                            lambda o: show(o, "conv", "verdict_out")),
     "rejects#drop": ({"rejects": "drop"}, {"rejects": "until_done"}, lambda o: show(o, "img", "prefill")),
@@ -243,7 +244,7 @@ def test_consumer_details_are_what_the_spec_says(env):
     o = outputs(env)
     assert o["check"]["tool"]["prefill"] == "删" and o["check"]["img"]["prefill"] == "删" and o["check"]["wt"]["prefill"] == "删"
     assert o["check"]["proj"]["prefill"] == "归档"
-    assert o["check"]["convproj"]["prefill"] == "归档"                 # 含交互对话的卡：选了“做完就不再看”才预填，值随做完项目的处理方式
+    assert o["check"]["convproj"].get("prefill") is None               # 含交互对话的卡永不预填（评审 13）：conversations=done 也一样，逐个确认
     assert o["proposal"]["prefill"]["tool"] == "删"                    # 进了提案
     with_answers(env, {"conversations": "library"})
     o = outputs(env)

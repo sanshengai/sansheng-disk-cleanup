@@ -192,7 +192,8 @@ def test_board_injects_setup_summary_questions_and_proposal_fields(env):
     assert d["plan"]["cards"][0]["prefill"] == "删" and d["plan"]["cards"][0]["projects"][0]["key"] == os.path.realpath(proj)
     assert "projects" not in d and "settings" not in d                          # 台账表和全局设置不再放进清理看板
     assert d["project_questions"] == pr["project_questions"]                      # 新项目 / 久没动的项目：单题卡
-    assert d["pending_rules"] == [{"id": "p1", "text": "下载里的视频都是课程，别动"}]   # 不合法的条目丢掉
+    assert [(r["id"], r["text"]) for r in d["pending_rules"]] == [("p1", "下载里的视频都是课程，别动")]   # 不合法的条目丢掉
+    assert d["pending_rules"][0]["means"]                                        # 评审 9：每条带由 value 生成的释义（这条没写 value，释义说明不会生效）
     assert d["archive_enabled"] is True
     assert "旧对话：偶尔回去接着做（30 天内用过的留着）" in d["setup_summary"] and "删掉的东西：先放进废纸篓" in d["setup_summary"]
     for sentinel in ("ROOT-SENTINEL", "SESSION-SENTINEL", "CLAUDEDIR-SENTINEL", "session_ids"):

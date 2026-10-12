@@ -515,7 +515,7 @@ def apply_settings(text, scan_id=None):
             p["retention_days"] = d
             done.append("AI 对话：" + (f"最近 {d} 天内用过的一律留着" if d else "不按天数限制，只看任务是否结束"))
             if old != d:
-                _note(p, "setting", done[-1], {"field": "retention_days", "old": old}, scan_id)
+                _note(p, "setting", done[-1], {"field": "retention_days", "old": old, "new": p.get("retention_days")}, scan_id)
         except (ValueError, TypeError):
             errs.append(f"保留天数只能是 {'/'.join(map(str, RETENTION_CHOICES))}")
     if "别碰" in settings:
@@ -538,14 +538,16 @@ def apply_settings(text, scan_id=None):
             done.append("成品目录（也在这里查引用）：" + "、".join(paths))
             if p["deliverable_roots"] != (old_d or []) or p["reference_roots"] != (old_r or []):
                 _note(p, "setting", done[-1], {"field": "deliverable_roots", "old": old_d,
-                                               "also": {"reference_roots": old_r}}, scan_id)
+                                               "new": p.get("deliverable_roots"),
+                                               "also": {"reference_roots": old_r},
+                                               "also_new": {"reference_roots": p.get("reference_roots")}}, scan_id)
     if "默认" in settings:
         if settings["默认"] in ("safe", "recommended", "all"):
             old = p.get("default_choice")
             p["default_choice"] = settings["默认"]
             done.append("默认档位：" + {"safe": "稳妥", "recommended": "推荐", "all": "全部可删"}[settings["默认"]])
             if old != settings["默认"]:
-                _note(p, "setting", done[-1], {"field": "default_choice", "old": old}, scan_id)
+                _note(p, "setting", done[-1], {"field": "default_choice", "old": old, "new": p.get("default_choice")}, scan_id)
         else:
             errs.append("默认档位只能是 safe / recommended / all")
     for k in hide:

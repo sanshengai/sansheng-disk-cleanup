@@ -42,7 +42,8 @@ def setup(env, spec=(("c01", "clean"), ("c02", "decide"))):
 def export_text(digest, cards, answers=(), extra=(), scan_id="scan1", title="叁笙清理选择", sel=None):
     """按看板“复制清单”的格式拼导出文本；sel 缺省时按 cards + 答复「删」的卡现算。"""
     ids = sorted(set(cards) | {a.split("=")[0] for a in answers if a.endswith("=删")})
-    sel = sel or plan.selection_sig(digest, ids, list(answers))
+    arch = next((ln.split(":", 1)[1].strip() for ln in extra if ln.startswith("归档到")), None) if any(a.endswith("=归档") for a in answers) else None
+    sel = sel or plan.selection_sig(digest, ids, list(answers), arch)
     return "\n".join([title, f"scan_id: {scan_id}", f"seal: {digest}",
                       "清理: " + (", ".join(cards) or "无"), "回答: " + (" / ".join(answers) or "无"),
                       f"sel: {sel}", *extra, "备注: 无"])

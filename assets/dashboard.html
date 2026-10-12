@@ -111,7 +111,7 @@ code{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:any
 .asks{margin:14px 0 6px}.asks h2{font-size:15px;margin:0 0 6px}
 .qcard{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;padding:12px 14px;margin-bottom:8px;border:1px solid var(--line);border-radius:8px;background:var(--white)}
 .qcard.done{opacity:.8}
-.qcard .qt{flex:1 1 280px;min-width:0;overflow-wrap:anywhere}.qcard .qt small{display:block;color:var(--muted);font-size:12px}
+.qcard .qt{flex:1 1 280px;min-width:0;overflow-wrap:anywhere}.qcard .qt small{display:block;color:var(--muted);font-size:12px}.qcard .qt .rmeans{display:block;margin-top:4px;color:var(--muted);font-size:13px}
 .seg{display:flex;white-space:nowrap;max-width:100%}
 .seg button{border-radius:0;margin-left:-1px;font-size:12px;padding:5px 12px}
 .seg button:first-child{border-radius:6px 0 0 6px;margin-left:0}.seg button:last-child{border-radius:0 6px 6px 0}
@@ -201,7 +201,8 @@ function ledgerLine(entries){ // entries：[{key,name,status,deliverables(数组
 function cleanNote(v){return String(v==null?'':v).replace(/[\x00-\x1f\x7f\x85\u2028\u2029]/g,' ').replace(/\s+/g,' ').trim()}
 // 归档目标：必须是外接硬盘 /Volumes/<盘名>/…，不许有 . 或 .. 段；真正的“是不是另一块盘、能不能写”由 act.py 现场核对
 function archivePathOk(p){p=cleanNote(p).replace(/\/+$/,'');const seg=p.split('/');return /^\/Volumes\/[^\/]+(\/[^\/]+)*$/.test(p)&&!seg.includes('.')&&!seg.includes('..')}
-function archiveLine(p){return '归档到: '+cleanNote(p).replace(/\/+$/,'')}
+function archiveNorm(p){return cleanNote(p).replace(/\/+$/,'')}
+function archiveLine(p){return '归档到: '+archiveNorm(p)}
 // 待确认规则：只导出形如 p1 的编号，文字本身不进清单
 function ruleLines(confirmIds,rejectIds){
   const ok=a=>[...new Set(a)].filter(x=>/^[A-Za-z0-9_-]+$/.test(x)).sort();
@@ -230,7 +231,9 @@ const colorOf=id=>COLORS[(catIndex.get(id)||0)%COLORS.length];
 const cards=(plan.cards||[]).filter(c=>LABEL[c.verdict]).sort((a,b)=>(b.bytes||0)-(a.bytes||0));
 // 待定卡的预填：plan.py 写 prefill（删 / 归档）；只是预选，仍要用户确认。归档只在 archive_enabled 为真时认
 const ARCH=D.archive_enabled===true;
-const prefillMode=c=>{const v=c.prefill||(D.proposal&&D.proposal.prefill&&D.proposal.prefill[c.id])||null;return v==='删'||(v==='归档'&&ARCH)?v:null};
+// 含“软件自带命令”（native）条目的卡没法归档（act.py 会跳过它们）：不给“归档”选项，预填的归档也不认。plan.py 标 archivable:false；条目列表被截断时以这个标记为准，列出的条目里有 native 也算
+const canArch=c=>ARCH&&c.archivable!==false&&!(c.items||[]).some(it=>it&&it.method==='native');
+const prefillMode=c=>{const v=c.prefill||(D.proposal&&D.proposal.prefill&&D.proposal.prefill[c.id])||null;return v==='删'||(v==='归档'&&canArch(c))?v:null};
 const prefillOf=c=>prefillMode(c)!==null;
 // 勾选＝要处理，没勾＝不动。clean 卡按 plan.py 算出的 default_select 预勾选；decide 卡只有被预填（项目做完了等）才预选，选项是 删 / 留 / 归档
 const modeOf=new Map(); // decide 卡的回答：删 / 归档 / 留
@@ -256,7 +259,7 @@ for(const p of ((newQ&&newQ.projects)||[])){addProj({key:p.key,name:p.name});QCA
 const newMore=Math.max(0,((newQ&&newQ.count)||0)-QCARDS.length);
 for(const q of PQ.filter(q=>q.type==='stale_active')){addProj({key:q.key,name:q.name,status:'active'});QCARDS.push({kind:'stale',key:q.key,name:q.name,days:q.idle_days})}
 // 待确认的规则：用户在设置页“补充”里说的话，Agent 翻译后等她点头
-const RULES=(D.pending_rules||[]).filter(r=>r&&typeof r.id==='string'&&r.text);
+const RULES=(D.pending_rules||[]).filter(r=>r&&typeof r.id==='string'&&r.text);   // r.means（可为空）= 实际生效的释义
 const ruleAns=new Map(); // id -> confirm | reject
 const ledgerEntries=()=>[...PROJ.values()].filter(r=>r.status&&r.status!==r.orig)
   .map(r=>({key:r.p.key,name:r.p.name,status:r.status,deliverables:null}));
@@ -344,6 +347,7 @@ function qCard(q){
 function ruleCard(r){
   const a=ruleAns.get(r.id), el=E('div',null,'qcard'+(a?' done':''));el.dataset.id=r.id;
   const t=E('div',null,'qt');t.append('你说过：“'+r.text+'”。我是这样理解的，对吗？');
+  if(typeof r.means==='string'&&r.means.trim())t.append(E('div','实际会这样生效：'+r.means.trim(),'rmeans')); // 由规则的实际取值生成的机器释义；旧数据没有这个字段就不显示
   const g=E('div',null,'seg');g.setAttribute('role','group');g.setAttribute('aria-label','确认规则：'+r.text);
   for(const [k,name] of [['confirm','对'],['reject','不对']]){const b=E('button',name);b.type='button';b.setAttribute('aria-pressed',String(a===k));
     b.onclick=()=>{const y=window.scrollY;if(ruleAns.get(r.id)===k)ruleAns.delete(r.id);else ruleAns.set(r.id,k);render();window.scrollTo({top:y})};g.append(b)}
@@ -505,13 +509,14 @@ function detail(c){
 function choiceRow(c,el){
   const row=E('div',null,'choice'), g=E('div',null,'seg'), btns=[];g.setAttribute('role','group');g.setAttribute('aria-label','怎么处理 '+c.title);
   const cur=()=>picked.has(c.id)?(modeOf.get(c.id)||'删'):(modeOf.get(c.id)==='留'?'留':null);
-  const opts=[['删','删'],['留','留']].concat(ARCH?[['归档','归档']]:[]);
+  const opts=[['删','删'],['留','留']].concat(canArch(c)?[['归档','归档']]:[]);
   const paint=()=>{for(const [k,b] of btns)b.setAttribute('aria-pressed',String(cur()===k));el.classList.toggle('on',picked.has(c.id))};
   for(const [k,name] of opts){const b=E('button',name);b.type='button';
     b.onclick=()=>{if(k==='留'){picked.delete(c.id);modeOf.set(c.id,'留')}else{picked.add(c.id);modeOf.set(c.id,k)}paint();update()};
     btns.push([k,b]);g.append(b)}
   paint();row.append(g);
-  if(ARCH)row.append(E('small','归档＝先搬到外接硬盘，核对无误再清掉'));
+  if(canArch(c))row.append(E('small','归档＝先搬到外接硬盘，核对无误再清掉'));
+  else if(ARCH)row.append(E('small','这张卡含软件自带的清理命令，没法归档，只能删或留'));
   return row;
 }
 function itemEl(c){
@@ -608,13 +613,15 @@ function update(){
 function render(){renderView();update()}
 
 /*SEL-BEGIN*/
-// 选择指纹：sha256(JSON{"answers":[…],"cards":[…],"seal":"…"})[:12]，键序固定、无空白、不转义非 ASCII；
-// 与 plan.py selection_sig 逐字节一致（tests/test_selection.py 会抽出这段在 node 里对照）。
-function selPayload(sealDigest,ids,ans){
-  return '{"answers":'+JSON.stringify(ans.slice().sort())+',"cards":'+JSON.stringify(ids.slice().sort())+',"seal":'+JSON.stringify(sealDigest)+'}';
+// 选择指纹：sha256(JSON{"answers":[…],"archive_to":"…","cards":[…],"seal":"…"})[:12]，键序固定、无空白、不转义非 ASCII；
+// archive_to 只在选了归档、目录非空时出现（字典序在 answers 与 cards 之间）；空时不出现，与 0.5 的签名一致。
+// 与 plan.py selection_sig 逐字节一致（tests/test_selection.py、tests/test_review_fixes_act.py 会抽出这段在 node 里对照）。
+function selPayload(sealDigest,ids,ans,arch){
+  const at=String(arch==null?'':arch).trim().replace(/\/+$/,'');
+  return '{"answers":'+JSON.stringify(ans.slice().sort())+(at?',"archive_to":'+JSON.stringify(at):'')+',"cards":'+JSON.stringify(ids.slice().sort())+',"seal":'+JSON.stringify(sealDigest)+'}';
 }
-async function selSig(sealDigest,ids,ans){
-  const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(selPayload(sealDigest,ids,ans)));
+async function selSig(sealDigest,ids,ans,arch){
+  const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(selPayload(sealDigest,ids,ans,arch)));
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,12);
 }
 /*SEL-END*/
@@ -622,7 +629,7 @@ async function agentMessage(){
   const ids=selected().map(c=>c.id).sort();
   const ans=cards.filter(c=>isDecide(c)&&picked.has(c.id)).map(c=>c.id+'='+(modeOf.get(c.id)||'删')).sort(); // 选了 删 / 归档 的待定项进清单；选“留”的与没动的一样不进清单，也不会被处理
   const note=cleanNote($('note').value);
-  const sel=await selSig(seal?seal.digest:'',ids,ans);
+  const sel=await selSig(seal?seal.digest:'',ids,ans,archCards().length?archiveNorm($('arch').value):'');
   return ['叁笙清理选择','scan_id: '+(facts.scan_id||plan.scan_id||''),'seal: '+(seal?seal.digest:''),
     '清理: '+(ids.join(', ')||'无'),'回答: '+(ans.join(' / ')||'无'),'sel: '+sel,
     ...(archCards().length?[archiveLine($('arch').value)]:[]),

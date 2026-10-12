@@ -79,7 +79,7 @@
 
 - **进行中**：进行中的项目里的东西一律不出删除卡，`check` 强制整卡降为 `keep`（原因“项目还在进行中”）；会话也算：Codex 会话的工作目录、Claude Code 的项目目录属于该项目，同样保留。
 - **别碰**：整个项目目录并入保护名单（脚本强制，执行时 `protect.py` 也会拦），含该项目的卡整卡保留。
-- **做完了**：项目里的中间稿、会话、构建产物可以进入判断，`decide` 卡的问题预填“删”（只是预填，用户仍要确认）。成品必须有副本或交付证据才放行，规则和没有台账时完全一样。
+- **做完了**：项目里的中间稿、会话、构建产物可以进入判断，`decide` 卡的问题预填“删”（只是预填，用户仍要确认；含交互对话的卡除外，永不预填）。成品必须有副本或交付证据才放行，规则和没有台账时完全一样。
 - **归档**：同“做完了”；并且卡里的东西全属于归档项目时，原本标成“删了找不回”的卡进推荐档（风险区例外，账号数据与用户资产仍只在“全部可删”档）。
 - **不能怎么用**：用户标的状态是 `user_stated`，**不能单独把卡升为 `clean`**，也不能替代 `merged / delivered / copy_verified`、引用核对、进程与 24 小时改动检查。标了“做完了”但没有结束证据的卡，仍然只能是 `decide`。项目各自的成品目录会并入成品目录与引用检查范围，这是让副本核对和引用检查更完整，不是放宽。
 - 项目归属拿不准（路径不在项目里、会话也对不上）时按没有台账处理，不要猜。
@@ -150,10 +150,10 @@ python3 scripts/scan.py probe done-evidence --run <run> --path <P>
 各设置对写卡的影响：
 
 - `tools[x]=unused`：该工具的无风险 `decide` 卡预填"删"；`often`：没有对应的 `check` 行为，只表示第二轮跳过深查（第 11 节）。
-- `conversation_policy=library`：含交互会话的卡整卡降 `keep`；`done`：属于做完/归档项目的会话卡可预填"删"，仍逐个确认。
+- `conversation_policy=library`：含交互会话的卡整卡降 `keep`；`done`：只影响提问措辞与保留天数，**含交互会话的卡永不预填**（逐个确认）。
 - `rejects_policy=drop`：`ai-images` 类无风险卡预填"删"；`keep`：没有结束证据的 `ai-images` 卡降 `keep`。
 - `worktree_policy=whole`：工作树卡预填"删"；`build_only`：整棵工作树根降 `decide`，只清构建产物；`ask`：至少推荐档。
-- `installer_policy=auto`：安装包卡按"删"处理（仍不适用 review / interactive）。
+- `installer_policy=auto`：**整张卡的条目全是安装包**（只认 `.dmg/.pkg/.mpkg/.xip/.iso`，不认 `.zip`，也不看卡片 id）才按"删"处理（仍不适用 review / interactive）；混有文档、`.zip` 或别的文件的卡不受影响。
 - `big_file_age_days=N`：`large-old-files` 卡里不到 N 天的降 `keep`；`0`：整卡降 `keep`（"录屏和大视频别问"）。
 - `done_project_policy=archive`：做完项目的 `decide` 卡预填"归档"；`keep`：不再预填（第 8 节）。
 - `governance_mode`：治理区文案（第 14 节）。
@@ -162,5 +162,6 @@ python3 scripts/scan.py probe done-evidence --run <run> --path <P>
 - `read_scope`：`peek.py` 据此拦截读取（第 10 节，contract.md 第 9 节）。
 - `default_choice`：看板默认勾选档（同 0.5）。
 - 卡对象写了 `rebuild: "slow"`，或首卡是 `model-caches`：从稳妥档提为推荐档，慢重建缓存不进稳妥档（见 `package-managers` 卡）。
+- **设置按 Agent 标的类别生效**：`tools[x]`、`rejects_policy`、`worktree_policy`、`done_project_policy` 等都认写卡时 `cards_used` 的**第一项**（即规则键里的类别）。写卡时 `cards_used` 第一项必须如实反映这张卡的实际来源；写错或漏写，对应设置就不会生效（宁可不生效，不会误放行），也别为了让设置生效而改标。
 - `cloud_policy`：只决定有没有云盘“只留云端”的建议（`proposal.cloud_suggestions`），只给建议和官方入口，不写进任何卡，也不动云盘里的文件。
 - 设置页的“补充”（第 17 题）：用户原话不存，你翻译成一句规则或备注，用 `memory.py pending add` 记成待确认，等清理看板上用户点“对”才生效，生效后也只是预填或保留，不是放行。

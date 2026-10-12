@@ -141,7 +141,8 @@ def _new_pending(profile, text, kind, value):
 
 
 def _undo(profile, entry):
-    """撤销一条记忆造成的改动（不存盘）。"""
+    """撤销一条记忆造成的改动（不存盘）。返回提示列表（如“之后改过，没动”）。"""
+    notes = []
     kind = entry.get("kind")
     ref = entry.get("ref") if isinstance(entry.get("ref"), dict) else {}
     if kind == "rule":
@@ -165,15 +166,25 @@ def _undo(profile, entry):
         prot = [x for x in (profile.get("protect") or []) if x not in paths]
         profile["protect"] = prot
     elif kind == "setting":
-        fields = {ref.get("field"): ref.get("old")}
+        # (字段, 原值, 写入时的值是否记了, 写入时的值)；当前值不等于我写的值就不回滚（之后被别处改过）。
+        # 旧日志没有 new 的，没法确认“还是我写的”，保守不回滚。
+        rows = [(ref.get("field"), ref.get("old"), "new" in ref, ref.get("new"))]
+        also_new = ref.get("also_new") if isinstance(ref.get("also_new"), dict) else {}
         if isinstance(ref.get("also"), dict):            # 一次回答连带改了的别的字段（如旧对话的保留天数）
-            fields.update(ref["also"])
-        for field, old in fields.items():
-            if isinstance(field, str) and field:
-                if old is not None:
-                    profile[field] = old
-                else:
-                    profile.pop(field, None)
+            rows += [(f, o, f in also_new, also_new.get(f)) for f, o in ref["also"].items()]
+        for field, old, known, new in rows:
+            if not (isinstance(field, str) and field):
+                continue
+            if not known:
+                notes.append(f"“{field}”的记录里没留下当时写的值，没法确认之后有没有被改过，没动")
+                continue
+            if profile.get(field) != new:
+                notes.append(f"“{field}”之后改过，没动")
+                continue
+            if old is not None:
+                profile[field] = old
+            else:
+                profile.pop(field, None)
     elif kind == "project":
         store = profile.get("projects")
         cur = store.get(ref.get("key")) if isinstance(store, dict) else None
@@ -188,9 +199,10 @@ def _undo(profile, entry):
         if isinstance(gov, dict):
             gov.pop(ref.get("path"), None)
     elif kind == "note":
-        notes = profile.get("notes")
-        if isinstance(notes, dict):
-            notes.pop(ref.get("path"), None)
+        store = profile.get("notes")
+        if isinstance(store, dict):
+            store.pop(ref.get("path"), None)
+    return notes
 
 
 # ------------------------------------------------------------ identity
@@ -407,9 +419,12 @@ def _apply_pending(profile, item):
         paths, errs = prefs._home_paths([x for x in raws if isinstance(x, str) and x.strip()])
         if not paths:
             return [], ["“" + text + "”里的目录现在不能当保护目录：" + ("；".join(errs) or "没有可用目录")]
-        profile["protect"] = list(dict.fromkeys(list(profile.get("protect") or []) + paths))
+        before = list(profile.get("protect") or [])
+        profile["protect"] = list(dict.fromkeys(before + paths))
         short = "、".join(paths)
-        _log(profile, "protect", text or f"永不触碰：{short}", ref={"paths": paths}, scan_id=scan_id)
+        added = [x for x in dict.fromkeys(paths) if x not in before]      # 只记本次真正新增的，忘掉时不动原有保护
+        if added:
+            _log(profile, "protect", text or f"永不触碰：{short}", ref={"paths": added}, scan_id=scan_id)
         return [f"已记下：永不触碰 {short}"], []
     if kind == "rule":
         value2, err = _normalize_pending_value("rule", value)
@@ -519,9 +534,9 @@ def forget(ids):
         if e.get("forgotten"):
             done.append(f"已经忘过了：{e.get('text') or mid}")
             continue
-        _undo(p, e)
+        extra = _undo(p, e)
         e["forgotten"] = True
-        done.append(f"已忘掉：{e.get('text') or mid}")
+        done.append(f"已忘掉：{e.get('text') or mid}" + ("（" + "；".join(extra) + "）" if extra else ""))
     if ok:
         prefs.save(p)
     return done, errs

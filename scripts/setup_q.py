@@ -757,9 +757,10 @@ def _log_answer(profile, before, done_lines, scan_id):
     changed = [f for f in LOGGED_FIELDS if profile.get(f) != before.get(f)]
     if changed:
         main, rest = changed[0], changed[1:]
-        ref = {"field": main, "old": copy.deepcopy(before.get(main))}
+        ref = {"field": main, "old": copy.deepcopy(before.get(main)), "new": copy.deepcopy(profile.get(main))}
         if rest:
             ref["also"] = {f: copy.deepcopy(before.get(f)) for f in rest}
+            ref["also_new"] = {f: copy.deepcopy(profile.get(f)) for f in rest}
         prefs._note(profile, "setting", "；".join(done_lines) or main, ref, scan_id)
     added = [x for x in (profile.get("protect") or []) if x not in (before.get("protect") or [])]
     if added:

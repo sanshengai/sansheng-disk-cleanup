@@ -104,8 +104,9 @@ def test_profile_delete_mode_trash_is_default_and_no_trash_overrides(env):
     digest, dirs = setup(env, spec=(("c01", "clean"), ("c02", "clean")))
     assert run_full(env, digest, "c01") == 0
     assert item_of(env)["disposal"]["mode"] == "trash" and trash_dirs(env)
-    assert run_full(env, digest, "c02", "--no-trash") == 0
+    assert run_full(env, digest, "c02", "--no-trash", "--reason", "别放废纸篓，直接删") == 0   # 覆盖“先放废纸篓”必须带用户原话
     assert item_of(env, "c02")["disposal"]["mode"] == "delete" and not dirs["c02"].exists()
+    assert env.receipt()["no_trash_reason"]                    # 原话写进回执（with_gate 追加的 --reason test 排在后面，所以这里只验非空；精确值见 test_review_fixes_act）
 
 
 def test_trash_and_no_trash_together_are_rejected(env):
@@ -324,7 +325,7 @@ def test_go_from_board_reads_archive_target_line(env, vol):
     digest, dirs = setup(env, spec=(("c01", "clean"), ("c02", "decide")))
     ans = ["c02=归档"]
     text = export_text(digest, ["c01"], ans, extra=[f"归档到: {vol}"],
-                       sel=plan.selection_sig(digest, ["c01", "c02"], ans))
+                       sel=plan.selection_sig(digest, ["c01", "c02"], ans, str(vol)))
     assert go(env, text) == 0
     assert not dirs["c01"].exists() and not dirs["c02"].exists()
     assert (vol / "叁笙归档-scan1" / "work" / "d2" / "x.bin").exists()

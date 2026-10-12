@@ -34,15 +34,45 @@ HIDDEN_CHILD = "（凭证类，已隐去）"
 # ---------------------------------------------------------------- 分类规则（常量表，按 never > extended > deep > basic 匹配）
 
 # 凭证、密钥、登录信息：任何设置都不能读。目录规则管目录本身及其下全部。
-NEVER_DIRS = ("Library/Keychains", ".ssh", ".gnupg")
-NEVER_FILES = (".netrc", ".aws/credentials", ".config/gh/hosts.yml",
-               ".codex/auth.json", ".claude/.credentials.json")
+NEVER_DIRS = ("Library/Keychains", ".ssh", ".gnupg", ".aws", ".azure", ".kube", ".config/gcloud", ".config/gh",
+              ".config/op")
+NEVER_FILES = (".netrc", ".npmrc", ".pypirc", ".git-credentials", ".docker/config.json",
+               ".codex/auth.json", ".claude/.credentials.json", ".gemini/oauth_creds.json")
+# 家目录相对路径通配（小写；fnmatch 的 * 可跨 /）：Agent 配置里常有 API key / token，shell 配置里常有 export 的密钥，
+# shell 历史里常有手敲的密钥，一律挡掉（宁可多挡）。
+NEVER_REL_GLOBS = (
+    ".claude.json*", ".claude/settings*.json", ".codex/*.toml", ".cursor/mcp.json", ".gemini/settings*.json",
+    ".cargo/credentials*", ".config/*/config", ".config/*/config.*",
+    ".zshrc", ".zshrc.*", ".bashrc", ".bashrc.*", ".zprofile", ".zprofile.*", ".bash_profile", ".bash_profile.*",
+    ".profile", ".profile.*", ".zshenv", ".zshenv.*", ".zlogin", ".zlogout", ".bash_login", ".bash_logout",
+    ".zsh_history*", ".bash_history*",
+)
 NEVER_NAME_GLOBS = ("*.keychain*", "*.pem", "*.key", "*.p12", "*.kdbx",
                     "id_rsa*", "id_ed25519*", "Login Data*", "Cookies*",
                     "Web Data", "key4.db", "logins.json")
-NEVER_NAME_WORDS = ("password", "密码")                       # 文件名里出现就按凭证处理（宁可多挡）
+NEVER_NAME_WORDS = ("password", "密码", "凭证", "密钥")        # 文件名里出现就按凭证处理（宁可多挡；中文无词界，按子串）
+# 文件名按「词」匹配：把名字（含扩展名）按非字母数字、驼峰边界、字母与数字边界切成词，词在下面这组里就按凭证处理。
+# 例：auth.json、my-token.txt、OAuthClient.json、client_secret_123.json、access.token 命中；
+# author.md、authority.txt、tokenizer.json、secretary.docx、authentic.md 不命中（整词才算，不是任意子串）。
+NEVER_NAME_TOKENS = frozenset(("credential", "credentials", "secret", "secrets", "token", "tokens",
+                               "oauth", "auth", "passwd", "apikey"))
 NEVER_PATH_WORDS = ("1password", "bitwarden", "keepass")      # 密码管理器的数据目录
 _ENV_NAME = re.compile(r"^\.env(\..+)?$")                     # .env / .env.local；~/.envelope 不算
+_CAMEL_A = re.compile(r"([a-z0-9])([A-Z])")                   # fooBar -> foo Bar
+_CAMEL_B = re.compile(r"([A-Z]+)([A-Z][a-z])")                # 连续大写后接驼峰：XMLHttp -> XML Http
+_WORD = re.compile(r"[a-z]+|[0-9]+")
+
+
+def name_tokens(name):
+    """文件名切词（小写）。传入要保留原始大小写，驼峰才切得开：'OAuthClient.json' -> oauth/client/json。"""
+    spaced = _CAMEL_B.sub(r"\1 \2", _CAMEL_A.sub(r"\1 \2", name or ""))
+    return _WORD.findall(spaced.lower())
+
+
+def has_credential_word(name):
+    """文件名里有没有整词的 credential/secret/token/oauth/auth。"""
+    return any(t in NEVER_NAME_TOKENS for t in name_tokens(name))
+
 
 # 聊天软件收到的文件、邮件附件、照片图库、截图：能看到文件名与大小就够了。
 EXTENDED_MAIL_DIR = "library/mail"                            # Mail 下任一层叫 Attachments 的目录
@@ -99,10 +129,14 @@ def _home_rel(path, home):
     return None
 
 
-def _never(rel, segs, name):
+def _never(rel, segs, name, orig_name=None):
     if rel is not None:
         if any(_under(rel, d.lower()) for d in NEVER_DIRS) or rel in NEVER_FILES:
             return True
+        if any(fnmatch.fnmatchcase(rel, g.lower()) for g in NEVER_REL_GLOBS):
+            return True
+    if has_credential_word(orig_name if orig_name is not None else name):
+        return True
     if _ENV_NAME.match(name):
         return True
     if any(fnmatch.fnmatchcase(name, g.lower()) for g in NEVER_NAME_GLOBS):
@@ -140,11 +174,12 @@ def classify(path, home=None):
     """给一个路径定档：never / deep / extended / basic。先取真实路径，再按家目录相对路径与文件名匹配（不区分大小写）。
     家目录外的路径也照文件名规则走（图片、密码管理器这类不看家目录）。"""
     home = os.path.realpath(home or protect.HOME).lower()
-    real = os.path.realpath(os.path.expanduser(str(path))).lower()
+    real_orig = os.path.realpath(os.path.expanduser(str(path)))
+    real = real_orig.lower()
     rel = _home_rel(real, home)
     segs = [s for s in real.strip("/").split("/") if s]
     name = os.path.basename(real)
-    if _never(rel, segs, name):
+    if _never(rel, segs, name, os.path.basename(real_orig)):
         return "never"
     if _extended(rel, segs, name):
         return "extended"

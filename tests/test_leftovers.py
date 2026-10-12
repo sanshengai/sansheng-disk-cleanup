@@ -1,7 +1,10 @@
 """leftovers.py 的测试。夹具全部在 tmp_path；monkeypatch protect.HOME、scan.installed_apps、mdfind、brew、pgrep。"""
 import os
+import plistlib
+import subprocess
 import sys
 import time
+import types
 
 import pytest
 
@@ -61,6 +64,24 @@ class Env:
             return set(self.running)
         monkeypatch.setattr(leftovers, "_process_names", fake_process_names)
 
+        self.app_groups = {}         # App/扩展路径 -> app-group 列表；缺省 = 读得到、没有 app-group
+        self.app_groups_fail = set() # 这些路径读不到（返回 None）
+
+        def fake_read_app_groups(path):
+            if path in self.app_groups_fail:
+                return None
+            return list(self.app_groups.get(path, []))
+        monkeypatch.setattr(leftovers, "_read_app_groups", fake_read_app_groups)
+
+        self.launchctl_loaded = set()   # 已加载的 label
+        self.launchctl_fail = False     # True = launchctl 超时（抛异常）
+
+        def fake_launchctl_loaded(label):
+            if self.launchctl_fail:
+                raise subprocess.TimeoutExpired("launchctl", 5)
+            return label in self.launchctl_loaded
+        monkeypatch.setattr(leftovers, "_launchctl_loaded", fake_launchctl_loaded)
+
     def install(self, *bids, complete=True):
         apps = make_apps(*bids, complete=complete)
         self.mp.setattr(scan, "installed_apps", lambda: apps)
@@ -90,8 +111,22 @@ class Env:
         os.utime(p, (t, t))
         return p
 
+    def launch_agent(self, name, program=None, args=None, label=None, age_days=90):
+        """放一个合法的 LaunchAgents plist（Program 或 ProgramArguments）。"""
+        data = {"Label": label or name}
+        if program is not None:
+            data["Program"] = program
+        if args is not None:
+            data["ProgramArguments"] = args
+        p = "%s/Library/LaunchAgents/%s.plist" % (self.home, name)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "wb") as f:
+            plistlib.dump(data, f)
+        t = time.time() - age_days * DAY
+        os.utime(p, (t, t))
+        return p
+
     def probe(self, **kw):
-        import types
         return leftovers.probe_leftovers(types.SimpleNamespace(**kw))
 
 
@@ -424,8 +459,8 @@ def test_standard_library_dirs_are_never_leftovers(env):
 
 
 def test_launch_agents_and_cookies_need_bundle_id_at_least_8(env):
-    env.libfile("LaunchAgents", "com.gone.oldagent.plist")
-    env.libfile("LaunchAgents", "com.a.b.plist")             # id 只有 7 个字符：不看、也不计数
+    env.launch_agent("com.gone.oldagent", program="/nonexistent/old-tool")
+    env.launch_agent("com.a.b", program="/nonexistent/old-tool")   # id 只有 7 个字符：不看、也不计数
     env.libfile("Cookies", "com.gone.big.cookie.binarycookies")
     env.libfile("Cookies", "com.a.b.binarycookies")          # 同上
     res = env.probe()
