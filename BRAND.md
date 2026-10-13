@@ -1,6 +1,6 @@
 # 品牌素材与代码许可
 
-本项目代码和随附文档采用 [MIT License](LICENSE)。正式 Logo 文件 `assets/logo.png`、该 Logo 在生成看板中的内嵌副本，以及「叁笙早安 AI」品牌标识不属于 MIT 授权的品牌素材；品牌权利单独保留。
+本项目代码和随附文档采用 [MIT License](LICENSE)。正式 Logo 文件 `assets/logo.png` 与深色背景版 `assets/logo-dark.png`、该 Logo 在生成看板中的内嵌副本，以及「叁笙早安 AI」品牌标识不属于 MIT 授权的品牌素材；品牌权利单独保留。
 
 允许在使用本 Skill 时按原比例显示随附的正式 Logo，并随本 Skill 的原始包及其生成的看板、成果页和分享图保留和再分发该 Logo。此授权用于识别本工具来源，不表示对修改版、第三方产品或服务的认可。
 
@@ -10,7 +10,7 @@
 
 ## English
 
-Code and accompanying documentation are licensed under [MIT](LICENSE). The official `assets/logo.png`, its embedded copies in generated dashboards, and the Sansheng brand identity are excluded from the MIT grant for brand assets.
+Code and accompanying documentation are licensed under [MIT](LICENSE). The official `assets/logo.png` and its dark-background version `assets/logo-dark.png`, its embedded copies in generated dashboards, and the Sansheng brand identity are excluded from the MIT grant for brand assets.
 
 You may display the supplied logo at its original proportions while using this Skill, and retain and redistribute it with the original Skill package and its generated dashboards. This identifies the tool's source and does not imply endorsement of modifications or third-party products or services.
 

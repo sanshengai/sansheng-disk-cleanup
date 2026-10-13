@@ -1,6 +1,9 @@
 # 叁笙清理 · sansheng-disk-cleanup
 
-<img src="assets/logo.png" alt="叁笙早安 AI" width="220">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
+  <img src="assets/logo.png" alt="叁笙早安 AI" width="220">
+</picture>
 
 **最懂「AI 垃圾」的磁盘清理 Skill**
 
