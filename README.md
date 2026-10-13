@@ -1,20 +1,51 @@
-# sansheng-disk-cleanup · 叁笙清理
+# 叁笙清理 · sansheng-disk-cleanup
 
-**会读懂你的电脑的 macOS 磁盘清理 Skill**：认得 AI 工作留下的东西，认不出的大目录会先去调查“这是谁、为哪个任务留下的”，第一次用一页选择题认识你，以后越用越懂你。
+<img src="assets/logo.png" alt="叁笙早安 AI" width="220">
 
-中文说明在前，English overview 在文末。当前版本 0.6.0，仅支持 macOS；Windows 尚未支持。
+**最懂「AI 垃圾」的磁盘清理 Skill**
 
-<img src="assets/logo.png" alt="叁笙早安 AI" width="280">
+Codex、Claude Code 用了几个月，磁盘满了却不知道满在哪？通用清理软件只认浏览器缓存和日志，AI 对话记录、批量生成的图、项目中间稿、模型缓存，它们既不认识也不敢动。叁笙清理专清这些。
 
-<img src="assets/screenshots/setup-tools.png" alt="第一次使用：一页选择题。它先把电脑上认出来的工具列给你，写明各占多少空间、最后一次用是什么时候，你只要点“常用 / 偶尔 / 不用了”（示例数据）" width="760">
+<img src="assets/screenshots/report-desktop.png" alt="作者本机实测的成果页：一次腾出 23.9 GB，其中 21.3 GB 是 AI 工作留下的" width="760">
 
-*第一次使用只需要答这一页（示例数据）：它先看一遍你的电脑，再带着看到的东西来问你。可以一键“全部按推荐”，以后不再出现。*
+*作者本机实测：一次腾出 23.9 GB，其中 21.3 GB 是 AI 留下的——对话记录 10.1 GB、项目中间稿 7.7 GB、生成的图 2.0 GB。*
 
-## 和普通清理软件有什么不同
+觉得有用，请先到 [GitHub 仓库](https://github.com/sanshengai/sansheng-disk-cleanup) 点个 Star。安装只要把这句话发给你的 AI（Claude Code、Codex 等支持 `SKILL.md` 的 Agent）：
 
-1. **它会自己去调查。** 认不出的大目录，它不会只按清单匹配，而是去看里面是什么、是谁留下的、为哪个任务，查清楚了记下来，下次直接认得。
-2. **它认得 AI 工作留下的东西。** AI 对话记录、批量出图（同一张图常常存三份：原图、会话记录、历史数据库各一份）、工作树和构建产物，是 AI 重度用户最大的占用来源，常规清理软件只清得到表面。
-3. **它记得你的习惯，越用越懂你。** 第一次用一页选择题认识你的电脑；每次清理后告诉你“这次我记住了”，哪条不对，随手划掉就忘掉。
+```text
+请从 https://github.com/sanshengai/sansheng-disk-cleanup 安装这个 Skill，然后帮我看看磁盘空间都去哪了。
+```
+
+当前版本 0.6.1，仅支持 macOS；Windows 尚未支持。English overview 在文末。
+
+## 三个亮点
+
+### 有脑：认得 AI 垃圾，查清再删
+
+它认得各家 AI 工具把对话、图片、中间稿存在哪；删之前先查清每一项**是谁留下的、为哪个任务、做完没有、还有谁在用**，查不清就不动。认不出的大目录，它会去看里面是什么，查清楚记下来，下次直接认得。密码、未提交的代码、正在用的对话由脚本强制保护，AI 也放行不了。
+
+<img src="assets/screenshots/setup-tools.png" alt="作者本机：它认出 6 个 AI 工具和开发环境，合计 113.3 GB，每行写着体积和最后使用时间" width="760">
+
+*作者本机：认出 6 个 AI 工具和开发环境，合计 113.3 GB，单 Codex 就占 73.7 GB。*
+
+### 能成长：越用越懂你
+
+第一次用一页选择题认识你：哪些工具常用、项目做完没有、成品放在哪、删掉的东西放不放废纸篓。以后照你的习惯来，每次清理后告诉你“这次我记住了”，记错了随手划掉。会一直涨的东西（AI 工具一直存对话、脚本重复存图），经你同意从源头改掉，下次清理告诉你是不是真的停了。
+
+### 能互动：一页看板，你来拍板
+
+不用看命令行：一页看板看清空间都去哪了，勾一勾、点一下就决定；小事在对话里回一句“好”就行。删之前先预演、再试删一条，删掉的先进废纸篓，清完给一页成果页。
+
+| 清理看板（示例数据） | 手机上同样能用 |
+|---|---|
+| <img src="assets/screenshots/board-overview.png" alt="清理看板：按你的设置、新项目单题卡、待确认的规则、整盘构成、三档按钮" width="420"> | <img src="assets/screenshots/board-mobile.png" alt="清理看板，手机宽度" width="200"> |
+
+## 还有这些
+
+- **你决定它能看什么**：四档读取范围——基础（项目说明、脚本、日志）、扩展（聊天收到的文件、邮件附件、照片截图，只看名字和大小）、深度（聊天正文、图片内容）、永不读（密码、钥匙串、浏览器登录数据、密钥，脚本强制）。读到的内容会发给你所用的 AI 服务商，成果页列出这次读了哪些文件。
+- **删和留之外的第三条路**：先放废纸篓能反悔；做完的项目可以搬到外接硬盘，逐个文件校验一致才处理原件；iCloud 和网盘只给“只留云端”的官方做法，不动你的文件。
+- **安全不变**：设置和记忆只改变“问不问、默认勾哪些”，**不改变能不能删**；不用 sudo、不装常驻程序，只在本机运行。
+- **能分享**：成果页可以存一张分享图，发朋友圈或群里。
 
 ## 第一次怎么用
 
@@ -26,15 +57,7 @@
 
 以后每次：扫描 → 清理看板（或在对话里回一句“好”）→ 成果页。
 
-## 安装
-
-如果觉得这个 Skill 有用，请先到 [GitHub 仓库](https://github.com/sanshengai/sansheng-disk-cleanup) 点个 Star，这对独立开发者是很大的鼓励。
-
-**最省事：把这句话发给你的 AI**（Claude Code、Codex 等支持 `SKILL.md` 的 Agent）：
-
-```text
-请从 https://github.com/sanshengai/sansheng-disk-cleanup 安装这个 Skill，然后帮我看看磁盘空间都去哪了。
-```
+## 手动安装
 
 也可以自己克隆到 Agent 的 Skill 目录，例如 Claude Code：
 
@@ -42,29 +65,7 @@
 git clone https://github.com/sanshengai/sansheng-disk-cleanup ~/.claude/skills/sansheng-disk-cleanup
 ```
 
-需要 Python 3.9 及以上，只用标准库；装有 `rg` 时引用检查更快、更全。GitHub 打不开时，可以到[官网](https://sanshengai.top)下载备用安装包。
-
-## 亮点
-
-1. **你决定它能看什么**：四档读取范围——基础（项目说明、脚本、日志）、扩展（聊天软件收到的文件、邮件附件、照片截图，只看名字和大小）、深度（聊天正文、图片内容）、永不读（密码、钥匙串、浏览器登录数据、密钥，由脚本强制，不能勾掉）。读到的内容会发给你所用的 AI 服务商，所以每次成果页都列出这次读了哪些文件。
-2. **删和留之外的第三条路**：删掉的东西可以先放进废纸篓（能反悔）；做完的项目可以搬到外接硬盘，逐个文件校验一致后才处理原文件；iCloud 和网盘里已下载的文件夹，只给“只留云端”的官方做法，不动你的文件。
-3. **治本，不只是再删一次**：发现会一直涨的东西（AI 工具一直存对话、脚本每次重复存图），经你同意从源头改，改动可以撤销，下次清理告诉你是不是真的停了。
-4. **一句话就清**：大多数时候不用开网页勾选，它给出“稳妥 / 推荐 / 全部可删”三档和一段说明，你回一句就开始；要你拿主意的事情多时才发看板，勾好后一条命令走完预演、试点、正式执行和成果页。
-5. **安全不变**：你的设置和它的记忆只改变“问不问、预填什么、默认勾到哪”，**不改变能不能删**。能不能删，仍要逐项核对证据、引用、进程和 24 小时内的改动；删除前先预演、再试删一条、才正式执行；凭证、记忆、当前会话、未提交的代码、聊天记录由脚本强制保护。
-
-### 看看长什么样
-
-以下截图用的是虚构的示例数据（示例用户 alex、示例项目 my-app / photo-book / blog），界面由真实模板渲染。
-
-| 清理看板 | 清理完的成果页 |
-|---|---|
-| <img src="assets/screenshots/board-overview.png" alt="清理看板：按你的设置、新项目单题卡、待确认的规则、整盘构成、三档按钮" width="420"> | <img src="assets/screenshots/report-desktop.png" alt="成果页：腾出多少、前后对比、各类占比" width="420"> |
-| **手机上同样能用：设置页** | **手机上同样能用：清理看板** |
-| <img src="assets/screenshots/setup-mobile.png" alt="设置页，手机宽度" width="220"> | <img src="assets/screenshots/board-mobile.png" alt="清理看板，手机宽度" width="220"> |
-
-成果页还能存一张分享图：
-
-<img src="assets/screenshots/share-card.png" alt="分享图（示例数据）" width="300">
+需要 Python 3.9 及以上，只用标准库；装有 `rg` 时引用检查更快、更全。GitHub 打不开时，可以到[官网](https://sanshengai.top/tools/disk-cleanup/)下载备用安装包。
 
 ## 为什么需要它
 
@@ -144,12 +145,12 @@ python3 scripts/feedback.py gaps --run <run目录>      # 认不出来源的大�
 
 ## English overview
 
-A macOS disk-cleanup Skill for heavy AI-tool users that **learns to read your computer**. Unlike a plain cleaner, it (1) investigates unknown large folders to work out who made them and for which task instead of only matching a list, (2) understands what AI work leaves behind — agent sessions, batch image generation (each image is often stored three times), worktrees and build outputs, and (3) remembers your habits: the first run is a one-page questionnaire, and every cleanup ends with "what I remembered this time", which you can strike out.
+**The disk-cleanup Skill that knows AI junk best.** After months of Codex and Claude Code, the disk is full and nobody knows why. On the author's Mac one run freed 23.9 GB, 21.3 GB of it left behind by AI work (conversation logs 10.1 GB, project intermediates 7.7 GB, generated images 2.0 GB). Three things set it apart: **it thinks** — it knows where each AI tool keeps conversations, images and drafts, and checks who made each item, for which task, whether that task is done and who still uses it before suggesting removal; **it learns** — a one-page questionnaire on the first run, then it follows your habits and fixes things that keep growing at the source, with your consent; **it lets you decide** — a one-page board shows where the space went, you tick and click, and every run starts with a dry run and a one-item pilot.
 
 New in 0.6: a quick first scan, then a one-page setup tailored to your machine (one click for all recommended answers; say "change settings" any time); four read levels you control (basic / extended / deep, and credentials are never read; every run lists the files it read, and read content is sent to the AI service you use); a third path besides delete and keep — move to Trash (reversible), archive to an external drive (every file verified by hash before the original is touched), and read-only "keep it in the cloud" guidance for iCloud and other cloud folders; and fixing growth at the source (with your consent and an undo) with a follow-up check on the next run. Settings and memory only change what it asks and what is pre-selected, never whether something is allowed to be deleted: every item is still checked for evidence, references, running processes and changes within 24 hours, with a dry run and a one-item pilot before the real run.
 
 Install by telling your agent: `Please install the Skill from https://github.com/sanshengai/sansheng-disk-cleanup and show me where my disk space went.` Python 3.9+, standard library only. No daemons, no sudo, nothing uploaded.
 
-Version 0.6.0, macOS only. Code is MIT-licensed; the logo is covered separately by [BRAND.md](BRAND.md).
+Version 0.6.1, macOS only. Code is MIT-licensed; the logo is covered separately by [BRAND.md](BRAND.md).
 
 好用的话，欢迎去 GitHub 点个 Star。If it helps, a GitHub Star is welcome.
