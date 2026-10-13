@@ -1,5 +1,7 @@
 # 叁笙清理 · sansheng-disk-cleanup
 
+**中文** | [English](./README_EN.md)
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
   <img src="assets/logo.png" alt="叁笙早安 AI" width="220">
@@ -19,7 +21,7 @@ Codex、Claude Code 用了几个月，磁盘满了却不知道满在哪？通用
 请从 https://github.com/sanshengai/sansheng-disk-cleanup 安装这个 Skill，然后帮我看看磁盘空间都去哪了。
 ```
 
-当前版本 0.6.1，仅支持 macOS；Windows 尚未支持。English overview 在文末。
+当前版本 0.6.1，仅支持 macOS；Windows 尚未支持。
 
 ## 三个亮点
 
@@ -146,14 +148,4 @@ python3 scripts/feedback.py gaps --run <run目录>      # 认不出来源的大�
 
 代码与随附文档采用 [MIT License](LICENSE)。内置的二维码编码库 `scripts/vendor/qrcodegen.py` 来自 [Project Nayuki](https://www.nayuki.io/page/qr-code-generator-library)（MIT），保留原版权声明。正式 Logo 与品牌权利单独保留，随原始 Skill 和生成的看板显示、再分发 Logo 的范围见 [品牌说明](BRAND.md)。
 
-## English overview
-
-**The disk-cleanup Skill that knows AI junk best.** After months of Codex and Claude Code, the disk is full and nobody knows why. On the author's Mac one run freed 23.9 GB, 21.3 GB of it left behind by AI work (conversation logs 10.1 GB, project intermediates 7.7 GB, generated images 2.0 GB). Three things set it apart: **it thinks** — it knows where each AI tool keeps conversations, images and drafts, and checks who made each item, for which task, whether that task is done and who still uses it before suggesting removal; **it learns** — a one-page questionnaire on the first run, then it follows your habits and fixes things that keep growing at the source, with your consent; **it lets you decide** — a one-page board shows where the space went, you tick and click, and every run starts with a dry run and a one-item pilot.
-
-New in 0.6: a quick first scan, then a one-page setup tailored to your machine (one click for all recommended answers; say "change settings" any time); four read levels you control (basic / extended / deep, and credentials are never read; every run lists the files it read, and read content is sent to the AI service you use); a third path besides delete and keep — move to Trash (reversible), archive to an external drive (every file verified by hash before the original is touched), and read-only "keep it in the cloud" guidance for iCloud and other cloud folders; and fixing growth at the source (with your consent and an undo) with a follow-up check on the next run. Settings and memory only change what it asks and what is pre-selected, never whether something is allowed to be deleted: every item is still checked for evidence, references, running processes and changes within 24 hours, with a dry run and a one-item pilot before the real run.
-
-Install by telling your agent: `Please install the Skill from https://github.com/sanshengai/sansheng-disk-cleanup and show me where my disk space went.` Python 3.9+, standard library only. No daemons, no sudo, nothing uploaded.
-
-Version 0.6.1, macOS only. Code is MIT-licensed; the logo is covered separately by [BRAND.md](BRAND.md).
-
-好用的话，欢迎去 GitHub 点个 Star。If it helps, a GitHub Star is welcome.
+好用的话，欢迎去 GitHub 点个 Star。
