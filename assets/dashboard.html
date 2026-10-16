@@ -212,6 +212,11 @@ function ruleLines(confirmIds,rejectIds){
   if(r.length)out.push('不要规则: '+r.join(','));
   return out;
 }
+function reviewMessage(scanId,questions,answers){
+  const rows=questions.filter(q=>answers.has(q.id)).map(q=>({id:q.id,title:q.title,answer:answers.get(q.id)}));
+  return ['叁笙清理 · 待核查答复','scan_id: '+cleanNote(scanId),
+    '答复: '+safeLine(JSON.stringify(rows)),'这里只选择核查方向，不授权删除。'].join('\n');
+}
 </script>
 <script>
 'use strict';
@@ -252,6 +257,8 @@ function setPick(c,on){ // 勾上 / 取消；decide 卡勾上默认是“删”�
 let view='overview';
 // 项目问题：一题一卡。status 是当前回答，orig 是打开页面时的状态（null＝还没标；久没动的“进行中”项目 orig 是 active）
 const PQ=(D.proposal&&D.proposal.project_questions)||[];
+const REVIEW=(D.proposal&&D.proposal.review_questions)||[];
+const reviewAns=new Map();
 const newQ=PQ.find(q=>q.type==='new_projects');
 const PROJ=new Map();
 function addProj(p){if(PROJ.has(p.key))return PROJ.get(p.key);const r={p,orig:p.status||null,status:p.status||null};PROJ.set(p.key,r);return r}
@@ -412,22 +419,44 @@ function renderFrontier(v,id){
   box.append(ol);v.append(box);
 }
 
+function renderReviews(v){
+  if(!REVIEW.length)return;
+  const box=E('section',null,'asks');box.append(E('h2','这些内容，你想清理吗？'));
+  box.append(E('p','暂时保留的内容中，这些还需你判断。选择“想清理，继续查”后，Agent 会补查任务、引用和副本，再给可执行清单；这里的回答不会删除文件。','hint'));
+  for(const q of REVIEW){
+    const el=E('div',null,'tip');el.append(E('div',q.title+' · '+gb(q.bytes),'tt'),E('p',q.question));
+    const row=E('div',null,'seg');row.setAttribute('role','group');row.setAttribute('aria-label',q.title);
+    for(const answer of ['想清理，继续查','保留','暂不确定']){
+      const b=E('button',answer);b.type='button';b.setAttribute('aria-pressed',String(reviewAns.get(q.id)===answer));
+      b.onclick=()=>{reviewAns.set(q.id,answer);render()};row.append(b);
+    }
+    el.append(row);box.append(el);
+  }
+  const copy=E('button','复制核查答复，发给 Agent','primary');copy.type='button';copy.disabled=!reviewAns.size;
+  copy.onclick=async()=>{
+    const msg=reviewMessage(facts.scan_id||plan.scan_id||'',REVIEW,reviewAns);
+    try{await navigator.clipboard.writeText(msg);$('feedback').textContent='已复制核查答复。发给 Agent 后继续调查，尚未授权删除。'}
+    catch(e){$('fallback').hidden=false;$('fallback').value=msg;$('fallback').select();$('feedback').textContent='请选择并复制下方核查答复，发给 Agent。'}
+  };
+  box.append(copy);v.append(box);
+}
 function renderOverview(v){
   const known=sum(cards), can=sum(cards.filter(act)), keep=known-can;
   const walked=cov.walked_bytes||0, rest=Math.max(0,used-known), sysArea=Math.max(0,used-walked);
   v.append(E('h1','已用的 '+gb(used)+' 都去哪了'));
   renderAsks(v);
+  renderReviews(v);
   renderComposition(v);
   renderModels(v);
   renderCloud(v);
-  v.append(E('p','逐项查清了 '+gb(known)+' 的来历：其中 '+gb(can)+' 可以腾出，要你在左边各类里勾选；'+gb(keep)+' 查过但要留着。其余 '+gb(rest)+' 没有逐项分析，下面说明是什么。','lead'));
+  v.append(E('p','本轮计划涉及 '+gb(known)+'：其中 '+gb(can)+' 进入清理候选，要你在左边各类里勾选；'+gb(keep)+' 暂时保留（含待核查项）。其余 '+gb(rest)+' 未纳入本轮计划，下面列出占用情况。','lead'));
   const rows=CATS.map(c=>Object.assign({c},catStats(c.id))).filter(x=>x.cards.length);
   const st=E('div',null,'stack');st.setAttribute('role','img');
   const segs=rows.map(x=>[x.c.name,x.total,colorOf(x.c.id)]).concat([['你在用的项目、数据和应用',Math.max(0,rest-sysArea),'var(--rest)'],['系统区域',Math.min(rest,sysArea),'var(--sys)']]);
   st.setAttribute('aria-label',segs.map(s=>s[0]+' '+gb(s[1])).join('，'));
   for(const [n,b,col] of segs){if(!b)continue;const s=E('span');s.style.width=(100*b/Math.max(1,used))+'%';s.style.background=col;s.title=n+' '+gb(b);st.append(s)}
   v.append(st);
-  const sc=E('div',null,'scale');sc.append(E('span','彩色：逐项查过的 '+gb(known)),E('span','浅灰：在用的文件 · 深灰：系统区域'));v.append(sc);
+  const sc=E('div',null,'scale');sc.append(E('span','彩色：本轮计划涉及 '+gb(known)),E('span','浅灰：未纳入计划 · 深灰：系统区域'));v.append(sc);
   const tb=E('table',null,'cats'), hd=E('tr');
   for(const [h,cls] of [['',''],['占用',''],['可以腾出',''],['已勾','hide-m']])hd.append(E('th',h,cls));
   const thead=E('thead');thead.append(hd);tb.append(thead);const body=E('tbody');
@@ -447,7 +476,7 @@ function renderOverview(v){
   tr1.append(t1,E('td','约 '+gb(sysArea)),E('td','—','muted'),E('td','—','hide-m muted'));body.append(tr1);
   const tr2=E('tr');const t2=E('td');const s2=E('span',null,'sw');s2.style.background='var(--rest)';t2.append(s2,'你在用的项目、数据和应用');
   const areas=(facts.areas||[]).map(a=>short(a.path)+' '+gb(a.bytes)).join('、');
-  t2.append(E('span','扫过了，但都是在用的文件，不算垃圾，这次不逐项判断。'+(areas?'大头在：'+areas+'（目录总大小，含上面已查过的部分）。':''),'ex'));
+  t2.append(E('span','这部分未纳入本轮逐项计划，不能据此判断是否可清理。'+(areas?'大头在：'+areas+'（目录总大小，含上面已查过的部分）。':''),'ex'));
   tr2.append(t2,E('td','约 '+gb(Math.max(0,rest-sysArea))),E('td','—','muted'),E('td','—','hide-m muted'));body.append(tr2);
   tb.append(body);v.append(tb);
   renderTips(v);

@@ -60,6 +60,48 @@ def test_propose_tiers_and_sel(env):
     assert "好" in p["message"] and "都删" in p["message"]
 
 
+@pytest.mark.parametrize("with_question", [False, True])
+def test_no_executable_items_still_delivers_board(env, with_question):
+    d = env.work / "unfinished-task"
+    mkfile(d / "asset.bin")
+    c = card("c01", [delete_item(d)], verdict="keep",
+             question="这个任务还要继续吗？" if with_question else None)
+    env.write([node(d)], [c])
+    env.seal()
+    onboard(env)
+    p = propose(env)
+    assert p["mode"] == "board"
+    assert "不代表没有可清理内容" in p["message"]
+    assert "回复“好”" not in p["message"]
+    assert all(not o["cards"] for o in p["options"].values())
+    assert len(p["review_questions"]) == int(with_question)
+    assert plan.main(["board", "--run", str(env.run)]) == 0
+    board_proposal = plan.proposal_for_board(str(env.run), p["scan_id"])
+    assert board_proposal["review_questions"] == p["review_questions"]
+    # 询问仍不形成执行授权；即使指定推荐档也必须拒绝，原文件不变。
+    assert act.main(["go", "--run", str(env.run), "--choice", "recommended"]) == 2
+    assert (d / "asset.bin").exists()
+
+
+
+def test_review_reply_is_rejected_by_execution_entry(env):
+    _, dirs = setup(env)
+    onboard(env)
+    reply = env.run / "review-reply.txt"
+    reply.write_text('叁笙清理 · 待核查答复\nscan_id: test\n答复: [{"id":"c01","answer":"想清理，继续查"}]\n这里只选择核查方向，不授权删除。')
+    assert act.main(["go", "--run", str(env.run), "--from-board", str(reply)]) == 2
+    assert all((d / "a.bin").exists() for d in dirs.values())
+
+
+def test_empty_plan_has_no_delete_invitation(env):
+    env.write([], [])
+    env.seal()
+    onboard(env)
+    p = propose(env)
+    assert p["mode"] == "board" and not p["review_questions"]
+    assert "回复“好”" not in p["message"]
+
+
 def test_propose_board_vs_chat(env):
     setup(env)
     assert propose(env)["mode"] == "board"            # 没有 onboarded_at：第一次使用发看板

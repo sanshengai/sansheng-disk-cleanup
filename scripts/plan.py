@@ -2059,7 +2059,7 @@ onboard_projects = setup_q.onboard_projects
 
 
 def proposal_for_board(run, scan_id):
-    """proposal.json 里看板要用的三项（project_questions / prefill / stage）。没有、读不了或 scan_id 对不上（换过扫描）就不给。"""
+    """proposal.json 里看板要用的展示字段。没有、读不了或 scan_id 对不上（换过扫描）就不给。"""
     try:
         pr = read_json(os.path.join(run, "proposal.json"))
     except (OSError, ValueError):
@@ -2067,7 +2067,8 @@ def proposal_for_board(run, scan_id):
     if not isinstance(pr, dict) or (scan_id and pr.get("scan_id") != scan_id):
         return None
     return {"stage": pr.get("stage"), "project_questions": pr.get("project_questions") or [], "prefill": pr.get("prefill") or {},
-            "cloud_suggestions": pr.get("cloud_suggestions") or []}
+            "cloud_suggestions": pr.get("cloud_suggestions") or [],
+            "review_questions": pr.get("review_questions") or []}
 
 
 def pending_means(kind, value):
@@ -2389,6 +2390,13 @@ def build_proposal(run):
     # 要你看的 = 待你决定、且没有被本机规则覆盖的卡
     attention = [c for c in live if c.get("verdict") == "decide" and not c["rule"]]
     reasons = needs_board(profile, attention)
+    review_questions = [{"id": cid, "title": c.get("title") or cid, "question": c["ask"],
+                         "bytes": c.get("bytes") or 0}
+                        for cid, c in shown.items() if c.get("verdict") == "keep" and c.get("ask")]
+    if review_questions:
+        reasons.append(f"有 {len(review_questions)} 项暂不能删除，需要你选择是否继续核查")
+    if not live:
+        reasons.append("本轮没有可执行清理项，仍须交付占用与保留依据看板")
     inter = [c for c in live if c["interactive"]]
     if inter:
         reasons.append(f"有 {len(inter)} 项含 AI 交互对话，人可能还会回来续聊，要在看板里逐个确认")
@@ -2415,12 +2423,19 @@ def build_proposal(run):
                         ([c for c in careful if c["id"] not in in_default], "另有删了就找不回的：")):
         if group:
             lines.append(lead + "；".join(f"{c['title']} {_gb(c['bytes'])}" for c in group) + "。")
-    reply = [f"回复“好”按{_WORDS[default]}删"]
+    reply = [f"回复“好”按{_WORDS[default]}删"] if d["cards"] else []
     for preset, word, label in CHOICES:
         o = options[preset]
         if preset != default and o["cards"] and o["cards"] != d["cards"]:
             reply.append(f"“{word}”{label}，共 {_gb(o['bytes'])}")
-    lines.append("；".join(reply) + "；想看细节我发看板。")
+    if reply:
+        lines.append("；".join(reply) + "；想看细节我发看板。")
+    elif not live:
+        lines.append("本轮没有通过校验的可执行清理项，不代表没有可清理内容。请查看看板中的占用、保留依据和待核查问题；本轮尚未删除文件。")
+    else:
+        lines.append("推荐档没有可执行项，请在看板中逐项决定。")
+    if review_questions:
+        lines.append(f"另有 {len(review_questions)} 项需要你选择是否继续核查；这些答复不是删除授权。")
     if kept:
         lines.append(f"按你的规则留着、没有列出的有 {len(kept)} 项。")
     for q in questions:
@@ -2444,7 +2459,8 @@ def build_proposal(run):
     proposal = {"schema": "proposal/1", "scan_id": seal.get("scan_id"), "seal": seal["digest"],
                 "created_at": now_iso(), "stage": stage, "mode": "board" if reasons else "chat", "board_reasons": reasons,
                 "default": default, "attention": [c["id"] for c in attention], "questions": questions,
-                "project_questions": pquestions, "prefill": prefill, "projects_by_card": projects_by_card,
+                "project_questions": pquestions, "review_questions": review_questions,
+                "prefill": prefill, "projects_by_card": projects_by_card,
                 "options": options, "message": "".join(lines),
                 # 0.6 初始设置：治本建议怎么写、删除用废纸篓还是直接删（没设就是直接删，和 0.5 一致）、第二轮能读哪些文件
                 "governance_mode": profile.get("governance_mode") if profile.get("governance_mode") in setup_q.SINGLE["governance"][1] else "guide",

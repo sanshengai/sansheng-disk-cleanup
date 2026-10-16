@@ -41,6 +41,16 @@ def run_node(expr_js, tmp_path):
     return json.loads(subprocess.run(["node", str(f)], capture_output=True, text=True, timeout=30, check=True).stdout)
 
 
+@pytest.mark.skipif(not HAS_NODE, reason="本机没有 node")
+def test_review_export_cannot_authorize_cleanup(tmp_path):
+    text = run_node("reviewMessage('scan1',[{id:'c01',title:'旧任务'}],new Map([['c01','想清理，继续查']]))", tmp_path)
+    assert text.startswith('叁笙清理 · 待核查答复\n')
+    assert '不授权删除' in text
+    assert '清理:' not in text and 'seal:' not in text and 'sel:' not in text
+    ex, errors = prefs.parse_board_export(text)
+    assert ex is None and errors
+
+
 def sample_payload(**over):
     GB = 10 ** 9
     cats = [
@@ -197,6 +207,21 @@ def open_page(browser, tmp_path, payload=None, **ctx):
 
 def no_hscroll(page):
     return page.evaluate("document.documentElement.scrollWidth<=window.innerWidth+1")
+
+
+@pw
+def test_review_choices_are_visible_and_never_select_delete(browser, tmp_path):
+    payload = sample_payload()
+    payload['proposal']['review_questions'] = [
+        {'id': 'c05', 'title': '旧任务素材', 'question': '还要继续用吗？', 'bytes': 2000000000}]
+    page, errors = open_page(browser, tmp_path, payload, viewport={'width': 390, 'height': 844})
+    page.get_by_role('button', name='想清理，继续查', exact=True).click()
+    assert page.get_by_role('button', name='复制核查答复，发给 Agent').is_enabled()
+    assert page.evaluate("picked.has('c05')") is False
+    msg = page.evaluate("reviewMessage(facts.scan_id,REVIEW,reviewAns)")
+    assert prefs.parse_board_export(msg)[1]
+    assert no_hscroll(page) and not errors
+    page.close()
 
 
 @pw

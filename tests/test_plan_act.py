@@ -1418,7 +1418,15 @@ POISON_ENV = {
 ENV_ALLOWED = {"HOME", "USER", "LOGNAME", "LANG", "TMPDIR", "PATH"}
 
 
-def test_m1_native_runs_in_empty_fixed_cwd_with_whitelisted_env(env):
+@pytest.fixture
+def native_locale_env(monkeypatch):
+    # 测试自己声明语言变量，避免 macOS / Python 启动时补入的 LC_CTYPE 影响白名单断言。
+    for name in list(os.environ):
+        if name.startswith("LC_"):
+            monkeypatch.delenv(name)
+
+
+def test_m1_native_runs_in_empty_fixed_cwd_with_whitelisted_env(env, native_locale_env):
     target = env.home / ".npm"
     mkfile(target / "a.bin")
     age(target)
@@ -1458,7 +1466,7 @@ def test_m1_native_runs_in_empty_fixed_cwd_with_whitelisted_env(env):
     (["docker", "builder", "prune", "-f"], "Library/Containers/com.docker.docker"),
     (["hf", "cache", "prune", "-y"], ".cache/huggingface"),
 ])
-def test_m1_poisoned_env_never_reaches_any_cache_tool(env, argv, rel):
+def test_m1_poisoned_env_never_reaches_any_cache_tool(env, native_locale_env, argv, rel):
     target = _make_target(env, rel, False)
     for k, v in POISON_ENV.items():
         env.mp.setenv(k, v)

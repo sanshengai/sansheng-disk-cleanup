@@ -171,6 +171,8 @@
   - `decide`：需要用户回答 `question`；
   - `keep`：保留，写明依据；
   - `govern`：持续增长的源头，只放进 `governance`，不进 items。
+
+- `keep` 卡可带非空 `question`：表示暂时不能执行、但需要用户选择调查方向。`propose` 将其放进 `review_questions` 并要求发看板；不封存为执行条目，不改变安全条件。看板单独导出“叁笙清理 · 待核查答复”，只有卡号、标题与核查方向，`act.py go --from-board` 拒绝该抬头。用户答复后须补查并重新出清理清单。
 - `items[].scope`：
   - `all`：整个路径；
   - `ignored-only`：只删 git 忽略的文件，被跟踪文件永不删除；
