@@ -2105,6 +2105,13 @@ def _render_template(template, logo_path, placeholder, payload, out_path):
         raise ValueError(f"模板里没有 {placeholder} 占位符")
     with open(logo_path, "rb") as f:
         logo = "data:image/png;base64," + base64.b64encode(f.read()).decode("ascii")
+    dark_path = os.path.join(os.path.dirname(logo_path), "logo-dark.png")
+    if os.path.isfile(dark_path):
+        with open(dark_path, "rb") as f:
+            dark_logo = "data:image/png;base64," + base64.b64encode(f.read()).decode("ascii")
+    else:
+        dark_logo = logo
+    html = html.replace("__LOGO_DARK_DATA__", dark_logo)
     html = html.replace("__LOGO_DATA__", logo).replace(placeholder, _json_for_html(payload))
     tmp = f"{out_path}.tmp-{os.getpid()}"
     with open(tmp, "w", encoding="utf-8") as f:
