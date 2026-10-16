@@ -618,7 +618,8 @@ function fillSetline(){
 }
 function update(){
   const s=selected();
-  $('selected').textContent=s.length?'已选 '+s.length+' 项，预计腾出 '+gb(sum(s)):'尚未选择';
+  const trashMode=(D.proposal||{}).delete_mode==='trash';
+  $('selected').textContent=s.length?'已选 '+s.length+' 项，'+(trashMode?'待移入废纸篓 ':'预计腾出 ')+gb(sum(s)):'尚未选择';
   const ok=!!(seal&&seal.digest);
   const le=ledgerEntries(), extra=le.length>0||hiddenKeys.size>0||ruleAns.size>0;
   const na=archCards().length, archBad=na>0&&!archivePathOk($('arch').value);
@@ -627,7 +628,7 @@ function update(){
   $('archhint').className='hint'+(archBad?' bad':'');
   $('copy').disabled=!ok||(!s.length&&!extra)||archBad;
   $('selection-help').textContent=!ok?'计划尚未封存，先让 Agent 运行 plan.py seal'
-    :'这个页面自己不会删东西。复制清单粘贴给 Agent，它会先演练一遍、再删一条试试，确认没问题才删其余的；没勾的一律不动。';
+    :'这个页面自己不会删东西。复制清单粘贴给 Agent，它会先演练一遍、再删一条试试，确认没问题才处理其余的；没勾的一律不动。'+(trashMode?'当前设置为先放废纸篓，本轮不会立即释放空间。如需立即腾出，请同时告诉 Agent“本轮直接永久删除”。':'当前设置为直接永久删除，完成后即可腾出空间，删除后不可撤销。');
   $('selection-help').className='hint'+(ok?'':' bad');
   $('ledger-hint').textContent=le.length?'改了项目状态，Agent 会先重新核对再执行':'';
   const q=$('quick');q.replaceChildren();const ap=activePreset();

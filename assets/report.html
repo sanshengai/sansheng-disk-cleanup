@@ -81,7 +81,7 @@ footer a{text-decoration:none}footer a:hover{color:var(--green)}footer .r{margin
 <header><div class="brand"><a href="https://sanshengai.top/" target="_blank" rel="noopener" title="叁笙早安 AI 官网"><img class="logo" id="logo" src="__LOGO_DATA__" alt="叁笙早安 AI"></a><strong>叁笙清理</strong></div><div class="when" id="when"></div></header>
 <main class="wrap">
 <section class="hero">
-  <div class="k">这次清理腾出了</div>
+  <div class="k" id="headline">这次清理腾出了</div>
   <div class="big" id="freed"></div>
   <div class="sub" id="sub"></div>
   <div class="bars" id="bars"></div>
@@ -118,10 +118,14 @@ const fmtDate=s=>{if(!s)return'';try{return new Date(s).toLocaleString('zh-CN',{
 
 $('when').textContent=R.finished_at?'清理于 '+fmtDate(R.finished_at):'';
 // 首屏
-{const v=$('freed');v.textContent=g1(R.freed);v.append(E('small','GB'));}
+const pendingTrash=R.freed===0&&(R.disposal||{}).trash>0;
+const headlineBytes=pendingTrash?R.disposal.trash:R.freed;
+const [headlineNumber,headlineUnit]=gb(headlineBytes).split(' ');
+if(pendingTrash)$('headline').textContent='已移入废纸篓，等待彻底删除';
+{const v=$('freed');v.textContent=headlineNumber;v.append(E('small',headlineUnit));}
 $('sub').innerHTML='';
 $('sub').append('已用 ',E('b',g1(R.used_before)+' GB'),' → ',E('b',g1(R.used_after)+' GB'),'，可用空间从 '+g1(R.free_before)+' GB 增加到 '+g1(R.free_after)+' GB');
-if(R.disposal&&R.disposal.trash>0){$('sub').append(E('div','另有 '+gb(R.disposal.trash)+' 已移入废纸篓，清空废纸篓后才会真正腾出，上面的数字不含它。','hint'))}
+if(R.disposal&&R.disposal.trash>0){$('sub').append(E('div',(pendingTrash?'文件已整理完成，实际释放仍为 0 B。':'另有 '+gb(R.disposal.trash)+' 已移入废纸篓。')+'如需立即腾出空间，请告诉 Agent“彻底删除本轮文件”，它会只处理本轮已确认的文件。','hint'))}
 {const b=$('bars'),T=Math.max(1,R.disk_total);
  const row=(label,parts)=>{b.append(E('div',label,'lb'));const bar=E('div',null,'bar');bar.setAttribute('role','img');
    bar.setAttribute('aria-label',label+'：'+parts.map(p=>p[2]+' '+gb(p[0])).join('，'));
@@ -147,7 +151,7 @@ if(R.ai_freed>0){const c=E('div',null,'callout');c.append('其中 ',E('b',gb(R.a
  if(D.trash>0||arch.length){$('disp-sec').hidden=false;const box=$('disp');
    const row=(label,v,desc)=>{const d=E('div');const l=E('div');l.append(E('b',label));if(desc)l.append(E('div',desc,'d'));d.append(l,E('div',v,'v'));box.append(d)};
    row('已腾出',gb(D.freed),'已经真正删掉，空间已经回来了（首屏的数字就是它）');
-   if(D.trash>0)row('已移入废纸篓',gb(D.trash),'清空废纸篓后才会腾出，我不会替你清空'+((D.trash_dirs||[]).length?'；在废纸篓里找「'+D.trash_dirs[0]+'」':''));
+   if(D.trash>0)row('已移入废纸篓',gb(D.trash),'彻底删除后才会腾出；可让 Agent 仅永久删除本轮文件'+((D.trash_dirs||[]).length?'；目录：'+D.trash_dirs.join('、'):''));
    for(const a of arch)row('已搬到 '+a.volume,gb(a.bytes),'一份校验过的副本在外接硬盘上'+(a.source==='trash'?'，原文件在废纸篓里':'，原文件已删除'))}}
 // 从源头改好的
 {const F=R.fixed||[];if(F.length){$('fixed-sec').hidden=false;
@@ -183,9 +187,9 @@ function drawPoster(){
   x.fillStyle='#faf7f0';x.fillRect(0,0,W,H);
   const logo=$('logo');
   const finish=()=>{
-    x.fillStyle='#243c2d';x.font=`500 44px ${F}`;x.fillText('叁笙清理帮我腾出了',P,300);
-    x.fillStyle='#2f5d3a';x.font=`700 190px ${F}`;const num=g1(R.freed);x.fillText(num,P-6,500);
-    const w=x.measureText(num).width;x.font=`600 72px ${F}`;x.fillText('GB',P+w+18,500);
+    x.fillStyle='#243c2d';x.font=`500 44px ${F}`;x.fillText(pendingTrash?'已移入废纸篓，等待彻底删除':'叁笙清理帮我腾出了',P,300);
+    x.fillStyle='#2f5d3a';x.font=`700 190px ${F}`;const num=headlineNumber;x.fillText(num,P-6,500);
+    const w=x.measureText(num).width;x.font=`600 72px ${F}`;x.fillText(headlineUnit,P+w+18,500);
     // 前后对比条
     const bw=W-2*P,T=Math.max(1,R.disk_total);
     const bar=(y,label,parts)=>{x.fillStyle='#68756a';x.font=`400 30px ${F}`;x.fillText(label,P,y-16);
@@ -194,6 +198,7 @@ function drawPoster(){
     bar(740,'清理后 已用 '+g1(R.used_after)+' GB',[[R.used_after,'#2f5d3a'],[R.freed,'#e2c483']]);
     // AI 部分与前三类（前三类是全部类别里最大的，不只是 AI，所以单独加小标题）
     let y=870;
+    if(pendingTrash){x.fillStyle='#68756a';x.font=`400 30px ${F}`;x.fillText('实际释放 0 B；彻底删除后才腾出空间',P,y);y+=64}
     if(R.ai_freed>0){x.fillStyle='#243c2d';x.font=`600 40px ${F}`;x.fillText('其中 '+gb(R.ai_freed)+' 是 AI 工作留下的',P,y);y+=64}
     x.fillStyle='#6b7a6e';x.font=`400 28px ${F}`;x.fillText('腾出最多的三类',P,y);y+=52;
     x.font=`400 32px ${F}`;
@@ -216,7 +221,7 @@ drawPoster();
 if(R.star&&R.star.show&&/^https:\/\/github\.com\//.test(R.star.url||'')){const a=E('a','去 GitHub 点个 Star');a.href=R.star.url;a.target='_blank';a.rel='noopener';
   $('star').append('好用的话，',a);$('star').hidden=false}
 $('save').onclick=()=>{
-  try{const a=document.createElement('a');a.download='叁笙清理-腾出'+g1(R.freed)+'GB.png';a.href=$('poster').toDataURL('image/png');a.click();
+  try{const a=document.createElement('a');a.download='叁笙清理-'+(pendingTrash?'已暂存':'腾出')+headlineNumber+headlineUnit+'.png';a.href=$('poster').toDataURL('image/png');a.click();
     $('save-hint').textContent='已保存到下载文件夹。'}
   catch(e){$('save-hint').textContent='浏览器没让保存：在上面的图上点右键，选“存储图像为…”。'}
 };

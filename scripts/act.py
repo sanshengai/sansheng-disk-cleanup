@@ -1407,6 +1407,10 @@ def cmd_run(args):
         print("拒绝执行：你的设置是“删除先放废纸篓”（delete_mode=trash），--no-trash 要直接删就必须同时给 "
               "--trash-reason \"<用户的原话>\"（原话会写进回执）；没有原话就不要用 --no-trash", file=sys.stderr)
         return 2
+    if resolve_delete_mode(args, profile) == 'trash':
+        print('处置方式：先放废纸篓，本步不会立即释放空间；如需立即腾出，需用户授权本轮永久删除。', flush=True)
+    else:
+        print('处置方式：直接永久删除，完成后腾出空间；删除不可撤销。', flush=True)
     run = os.path.realpath(args.run)
     seal, err = load_seal(run, args.seal)
     if err:

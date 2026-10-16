@@ -179,7 +179,8 @@ def test_rendered_page_embeds_new_blocks_and_script_parses(env):
     html = Path(path).read_text(encoding="utf-8")
     for sec in ("disp-sec", "fixed-sec", "mem-sec", "reads-sec"):
         assert f'id="{sec}" hidden' in html                       # 默认隐藏，有数据时脚本才显示
-    assert "这些内容发给了你的 AI 服务商" in html and "忘掉: " in html and "清空废纸篓" in html
+    assert "这些内容发给了你的 AI 服务商" in html and "忘掉: " in html and "彻底删除本轮文件" in html
+    assert "已移入废纸篓，等待彻底删除" in html and "实际释放仍为 0 B" in html
     assert "__REPORT_JSON__" not in html
     data = json.loads(re.search(r"const R=(\{.*?\});\nconst \$=", html, re.S).group(1))
     assert data["remembered"][0]["id"] == "m1" and data["reads"]["content"] == 1 and data["disposal"]["trash"] == 0

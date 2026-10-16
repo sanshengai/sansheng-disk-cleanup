@@ -75,6 +75,21 @@ def load_receipts(run):
     if _identity(full) not in seen:
         found.append(full)
     found.sort(key=lambda r: (r.get("started_at") or "", 0 if r.get("pilot") else 1))
+    # 保留原始移动回执；仅将有永久删除回执的精确文件转为已腾出。
+    journal_path = os.path.join(run, 'finalize-trash.json')
+    if os.path.exists(journal_path):
+        j = plan.read_json(journal_path)
+        if j.get('seal') != full.get('seal') or j.get('scan_id') != full.get('scan_id'):
+            raise ValueError('永久删除回执与本轮不一致')
+        done = {(i['card'], i['source'], i['dir']) for i in j.get('removed', [])}
+        for rc in found:
+            for c in rc.get('cards', []):
+                for it in c.get('items', []):
+                    d = it.get('disposal') or {}
+                    if d.get('mode') == 'trash' and (c['id'], it['path'], d.get('dir')) in done:
+                        it['disposal'] = dict(d, mode='delete', finalized=True)
+        if j.get('finished_at'):
+            full['finished_at'] = j['finished_at']
     return full, found
 
 
@@ -184,7 +199,11 @@ def load_fixed(run):
 
 def build_disposal(receipts, freed):
     """处置方式口径：已腾出 / 已移入废纸篓（清空后才腾出）/ 已搬到外接硬盘（按盘名）。"""
-    trash_dirs = sorted({os.path.basename(rc["trash_dir"]) for rc in receipts if rc.get("trash_dir")})
+    trash_dirs = sorted({os.path.basename(it['disposal']['dir']) for rc in receipts
+                         for c in rc.get('cards', []) for it in c.get('items', [])
+                         if it.get('status') in ('removed', 'partial')
+                         and (it.get('disposal') or {}).get('mode') == 'trash'
+                         and it['disposal'].get('dir')})
     return {"freed": freed, "trash": trashed_total(receipts), "trash_dirs": trash_dirs,
             "archived": [{"volume": v, "source": src, "bytes": b}
                          for (v, src), b in sorted(archived_by_volume(receipts).items()) if b > 0]}
