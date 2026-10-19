@@ -2068,7 +2068,8 @@ def proposal_for_board(run, scan_id):
         return None
     return {"stage": pr.get("stage"), "project_questions": pr.get("project_questions") or [], "prefill": pr.get("prefill") or {},
             "cloud_suggestions": pr.get("cloud_suggestions") or [],
-            "review_questions": pr.get("review_questions") or []}
+            "review_questions": pr.get("review_questions") or [],
+            "delete_mode": pr.get("delete_mode"), "governance_mode": pr.get("governance_mode")}
 
 
 def pending_means(kind, value):
@@ -2153,10 +2154,11 @@ def cmd_board(args):
     scan_id = facts.get("scan_id") or plan.get("scan_id")
     proposal = proposal_for_board(run, scan_id)
     # 0.6：台账表和全局设置不再放在清理看板里（改设置在对话里说“改设置”，打开设置页）。看板只带：
-    # 顶部“按你的设置”摘要、新项目 / 久没动项目的单题卡、待确认规则、归档开关
+    # 按需展开的设置详情、新项目 / 久没动项目的单题卡、待确认规则、归档开关
     payload = {"facts": facts_summary(facts, plan), "plan": bplan, "check": result,
                "seal": {"digest": digest}, "seal_digest": digest,
                "setup_summary": setup_q.summary_lines(profile),
+               "delete_mode": profile.get("delete_mode") if profile.get("delete_mode") in ("delete", "trash") else "delete",
                "project_questions": (proposal or {}).get("project_questions") or [],
                "pending_rules": pending_rules_of(profile), "archive_enabled": True,
                "cloud_suggestions": (proposal or {}).get("cloud_suggestions") or [],

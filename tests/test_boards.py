@@ -187,6 +187,8 @@ def test_board_injects_setup_summary_questions_and_proposal_fields(env):
     d = dashboard_data(env)
     pr = d["proposal"]
     assert pr["stage"] == "cleanup" and pr["prefill"] == {"c01": "删"}
+    assert d["delete_mode"] == "trash" and pr["delete_mode"] == "trash"
+    assert pr["governance_mode"] == "guide"
     q = next(x for x in pr["project_questions"] if x["type"] == "new_projects")
     assert q["count"] == 1 and q["projects"][0]["name"] == "旧稿"
     assert d["plan"]["cards"][0]["prefill"] == "删" and d["plan"]["cards"][0]["projects"][0]["key"] == os.path.realpath(proj)
@@ -243,7 +245,7 @@ def test_dashboard_template_new_design():
                  "我的项目", "回到清单", "AI 对话留多久", "平时默认清到哪一档", "settingsLine", "projRow", "renderProjects"):      # 0.6：台账整表与全局设置区已删
         assert gone not in html, gone
     for want in ("这个项目做完了", "还在做", "改了项目状态，Agent 会先重新核对再执行", "是进行中还是做完了？", "做完了吗？",
-                 "prefillOf", "ledgerLine(ledgerEntries())", "要改就跟我说“改设置”"):
+                 "prefillOf", "ledgerLine(ledgerEntries())", "修改时在对话里说“改设置”"):
         assert want in html, want
     assert "'GitHub','https://github.com/sanshengai/sansheng-disk-cleanup'" in html
     assert "'反馈问题','https://github.com/sanshengai/sansheng-disk-cleanup/issues'" in html

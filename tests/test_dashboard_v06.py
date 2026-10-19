@@ -111,7 +111,7 @@ def build_page(payload, dest):
 def test_template_has_no_ledger_table_or_global_settings():
     for gone in ("我的项目", "AI 对话留多久", "平时默认清到哪一档", "成品在哪", "renderProjects", "settingsLine", "D.settings", "D.projects"):
         assert gone not in HTML, gone
-    for want in ("setup_summary", "要改就跟我说“改设置”", "project_questions", "pending_rules", "archive_enabled", "composition", "purgeable_bytes",
+    for want in ("setup_summary", "修改时在对话里说“改设置”", "project_questions", "pending_rules", "archive_enabled", "composition", "purgeable_bytes",
                  "没有本地模型", "governance_mode", "系统可自动回收约"):
         assert want in HTML, want
     # 导出行：原有的一个不少，新增的三类
@@ -243,17 +243,24 @@ def test_investigated_review_is_not_asked_again_or_selected(browser, tmp_path):
 
 
 @pw
-def test_growth_is_before_cleanup_and_keeps_unknown_difference(browser, tmp_path):
+def test_growth_has_own_view_and_keeps_selection_and_unknown_difference(browser, tmp_path):
     payload = sample_payload()
     payload['growth'] = {'baseline': {'created_at': '2026-10-01T00:00:00Z'},
         'created_at': '2026-10-08T00:00:00Z', 'disk_used_delta': 100_000_000_000,
         'known_delta': 70_000_000_000, 'unattributed_delta': 30_000_000_000,
         'areas': [{'path': '/sample/project', 'delta': 70_000_000_000}], 'rows': []}
     page, errors = open_page(browser, tmp_path, payload, viewport={'width': 390, 'height': 844})
-    headings = page.locator('h2').all_text_contents()
-    assert headings.index('这段时间，空间增加在哪里') < headings.index('这次可以处理什么')
-    assert '尚未归因 +30.0 GB' in page.inner_text('body')
-    assert '不能直接判为垃圾' in page.inner_text('body')
+    assert page.locator('h1').inner_text() == '空间总览'
+    assert '尚未归因' not in page.inner_text('#view')
+    picked = page.evaluate('[...picked]')
+    page.get_by_role('button', name=re.compile('空间变化')).click()
+    assert page.locator('h1').inner_text() == '空间变化'
+    assert page.locator('.growth-stats').inner_text().splitlines()[-2:] == ['尚未归因', '+30.0 GB']
+    assert '新增占用不等于垃圾' in page.inner_text('body')
+    assert page.locator('#selection-bar').is_hidden() and page.locator('#note-row').is_hidden()
+    page.get_by_role('button', name=re.compile('总览')).click()
+    assert page.evaluate('[...picked]') == picked
+    assert page.locator('#selection-bar').is_visible()
     assert no_hscroll(page) and not errors
     page.close()
 
@@ -263,16 +270,60 @@ def test_overview_shows_summary_questions_rules_composition_models(browser, tmp_
     page, errors = open_page(browser, tmp_path, viewport={"width": 1280, "height": 900})
     text = page.inner_text("body")
     assert errors == []
-    assert "按你的设置：旧对话：偶尔回去接着做（30 天内用过的留着）；安装包：直接清；删除：先放进废纸篓（要改就跟我说“改设置”）" in text
+    assert '旧对话：偶尔回去接着做' not in text
+    assert not page.locator('#setline').evaluate('(e)=>e.open')
+    page.locator('#setline summary').click()
+    assert '偶尔回去接着做（30 天内用过的留着）' in page.inner_text('#setline')
+    assert page.locator('#setline dd').all_text_contents() == ['偶尔回去接着做（30 天内用过的留着）', '直接清', '先放进废纸篓']
     assert "发现新项目《新短剧》2.3 GB，是进行中还是做完了？" in text and "发现新项目《小游戏》800.0 MB，是进行中还是做完了？" in text
     assert "还有 1 个新项目，下次再问" in text
     assert "你标成进行中的《旧课件》已经 45 天没动了，做完了吗？" in text
     assert "下载里的视频都是课程，别动" in text and page.locator(".qcard").count() == 5
-    assert "整个硬盘的构成" in text and "其中系统可自动回收约 18.0 GB" in text
-    assert "本地模型 40.0 GB" in text and "没有本地模型" not in text
+    assert "已用空间构成" in text and "系统可自动回收约 18.0 GB" in text
+    assert page.get_by_role('cell', name='本地模型').count() == 1 and "没有本地模型" not in text
     assert "我的项目" not in text and "AI 对话留多久" not in text
     # 项目台账整表没了；表格只剩类别表
     assert page.locator(".prow").count() == 0
+
+
+@pw
+@pytest.mark.parametrize('width', [1440, 800, 393, 320])
+def test_capacity_labels_and_scan_time_fit_without_repeated_headline(browser, tmp_path, width):
+    p = sample_payload()
+    p['facts']['disk'] = {'total': 1000_000_000_000, 'used': 660_000_000_000, 'free': 340_000_000_000}
+    page, errors = open_page(browser, tmp_path, p, viewport={'width': width, 'height': 900})
+    assert page.locator('#used-value').inner_text() == '660.0 GB'
+    assert page.locator('#free-value').inner_text() == '340.0 GB'
+    assert '北京时间' in page.locator('#scan-time').inner_text()
+    assert page.locator('#scan-time').evaluate('''e=>{const r=document.createRange();r.selectNodeContents(e);return r.getClientRects().length===1}''')
+    assert '还剩' not in page.inner_text('#view') and '已用 660' not in page.inner_text('#view')
+    assert no_hscroll(page) and not errors
+    page.close()
+
+
+@pw
+def test_capacity_extreme_ratio_keeps_true_width_and_readable_labels(browser, tmp_path):
+    p = sample_payload()
+    p['facts']['disk'] = {'total': 500_000_000_000, 'used': 499_000_000_000, 'free': 1_000_000_000}
+    page, errors = open_page(browser, tmp_path, p, viewport={'width': 320, 'height': 844})
+    page.wait_for_function("document.getElementById('disk').classList.contains('labels-below')")
+    assert page.locator('#free-legend').is_visible() and page.locator('#free-legend').inner_text() == '剩余 1.0 GB'
+    ratio = page.locator('#disk-free').evaluate("e=>e.getBoundingClientRect().width/e.parentElement.getBoundingClientRect().width")
+    assert abs(ratio - .002) < .0001
+    assert no_hscroll(page) and not errors
+    page.close()
+
+
+@pw
+@pytest.mark.parametrize('mode,visible,absent', [('trash', '先放废纸篓，清空后释放空间。', '永久删除'), ('delete', '永久删除，不可撤销。', '先放废纸篓')])
+def test_disposal_hint_is_brief_and_shows_actual_mode_on_phone(browser, tmp_path, mode, visible, absent):
+    p = sample_payload(delete_mode=mode)
+    page, errors = open_page(browser, tmp_path, p, viewport={'width': 393, 'height': 844})
+    assert page.locator('#selection-help').is_visible()
+    assert page.locator('#selection-help').inner_text() == visible
+    assert absent not in page.inner_text('#selection-help')
+    assert not errors
+    page.close()
 
 
 @pw

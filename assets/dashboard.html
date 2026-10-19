@@ -13,11 +13,20 @@ button:hover{border-color:var(--green)}button:disabled{opacity:.45;cursor:defaul
 :focus-visible{outline:3px solid var(--gold);outline-offset:2px}
 input[type=checkbox]{width:17px;height:17px;margin:0;accent-color:var(--green);cursor:pointer}
 header,.page{max-width:1240px;margin:auto;padding-left:28px;padding-right:28px}
-header{display:flex;align-items:center;gap:20px;padding-top:8px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+header{display:flex;align-items:center;gap:28px;padding-top:14px;padding-bottom:14px;border-bottom:1px solid var(--line)}
 .brand{display:flex;align-items:center;gap:14px;flex:none}.logo{width:104px;height:36px;object-fit:contain}
 .brand strong{font-size:16px;font-weight:600;border-left:1px solid var(--line);padding-left:14px}
-.disk{margin-left:auto;width:min(420px,45%);font-size:12px;color:var(--muted);text-align:right}
-.disk .bar{height:6px;background:var(--track);border-radius:3px;overflow:hidden;margin-top:3px}.disk .bar span{display:block;height:100%;background:var(--green)}
+.disk{margin-left:auto;width:min(560px,60%);min-width:0;font-size:12px;color:var(--muted)}
+.disk-meta{display:flex;justify-content:space-between;gap:4px 16px;flex-wrap:wrap;margin-bottom:7px}
+.disk-meta span,.disk-meta time{white-space:nowrap}
+.capacity{display:flex;height:48px;border-radius:7px;overflow:hidden;background:var(--track);color:var(--ink)}
+.capacity-segment{display:flex;align-items:center;justify-content:center;flex:none;min-width:0;text-align:center}
+.capacity-used{background:var(--gbg);color:var(--onG)}.capacity-free{background:var(--track)}
+.capacity-label{display:flex;align-items:baseline;justify-content:center;gap:6px;padding:0 10px;white-space:nowrap;font-size:12px}
+.capacity-label strong{font-size:16px;font-weight:600}
+.capacity-legend{display:none;justify-content:space-between;gap:8px;margin-top:5px;font-size:12px;color:var(--ink)}
+.disk.labels-below .capacity{height:16px}.disk.labels-below .capacity-label{visibility:hidden}.disk.labels-below .capacity-legend{display:flex}
+.disk.labels-below .capacity-legend span{white-space:nowrap}
 .page{display:grid;grid-template-columns:232px minmax(0,1fr);gap:28px;padding-top:16px}
 /* 左侧目录：挂在页面左边，跟着滚动停住 */
 .side{position:sticky;top:0;height:calc(100vh - 150px);display:flex;flex-direction:column}
@@ -52,7 +61,7 @@ header{display:flex;align-items:center;gap:20px;padding-top:8px;padding-bottom:8
 .nav button[aria-current=true]{background:rgba(255,255,255,.12);color:#fff}
 /* 右侧 */
 .main{min-width:0;padding-bottom:20px}
-.main h1{font-size:21px;font-weight:600;margin:0;line-height:1.35}
+.main h1{font-size:23px;font-weight:600;margin:0 0 20px;line-height:1.35}
 .lead{margin:4px 0 0;color:var(--muted)}
 .stack{display:flex;height:18px;border-radius:4px;overflow:hidden;background:var(--track);margin:16px 0 6px}
 .stack span{display:block;height:100%;min-width:2px}.stack span+span{border-left:2px solid var(--paper)}
@@ -106,8 +115,10 @@ code{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:any
 .lvl.safe{color:var(--green);border-color:var(--green)}.lvl.recommended{color:var(--muted);border-color:var(--line)}.lvl.all{color:var(--amber);border-color:var(--gold)}
 .newtip{display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--white);border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:8px;padding:8px 14px;margin:0 0 14px}
 .newtip button{flex:none;background:var(--gbg);border-color:var(--gbg);color:var(--onG)}
-.setline{margin:0 0 12px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--white);font-size:13px;color:var(--muted)}
-.setline b{color:var(--ink);font-weight:600}
+.setline{margin:22px 0 12px;font-size:13px;color:var(--muted)}
+.setline summary{cursor:pointer;width:max-content}.setline[open] summary{margin-bottom:10px}
+.setting-list{display:grid;grid-template-columns:10em minmax(0,1fr);gap:8px 16px;margin:0;padding:12px 0;border-top:1px solid var(--line)}
+.setting-list dt{color:var(--ink)}.setting-list dd{margin:0;overflow-wrap:anywhere}
 .asks{margin:14px 0 6px}.asks h2{font-size:15px;margin:0 0 6px}
 .qcard{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;padding:12px 14px;margin-bottom:8px;border:1px solid var(--line);border-radius:8px;background:var(--white)}
 .qcard.done{opacity:.8}
@@ -121,6 +132,19 @@ code{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:any
 .comp .stack{margin:6px 0}.comp .legend{display:flex;flex-wrap:wrap;gap:2px 18px;font-size:13px}.comp .legend span.k{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}
 .comp .purge{margin:4px 0 0;font-size:13px;color:var(--muted)}
 .comp{overflow-wrap:anywhere}.comp a{color:var(--green);text-underline-offset:3px}.asks>summary{cursor:pointer;font-weight:600}
+.composition{margin:0 0 28px}.composition .stack{height:32px;margin:12px 0 14px;border-radius:6px}
+.composition .legend{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px 24px}
+.composition .legend-item{display:flex;flex-direction:column;gap:2px}.composition .legend-item>span{font-size:12px;color:var(--muted)}
+.composition .legend-item strong{padding-left:16px;font-size:20px;font-weight:600}
+.section-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin:22px 0 0}
+.section-head h2{font-size:16px;font-weight:600;margin:0}.section-head p{margin:0;font-size:13px;color:var(--muted)}
+.section-head strong{color:var(--green);font-size:18px;font-weight:600;margin-left:6px}
+.growth-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;padding:18px 0 22px;border-bottom:1px solid var(--line)}
+.growth-stats small{display:block;font-size:12px;color:var(--muted)}.growth-stats strong{font-size:24px;font-weight:600;white-space:nowrap}
+.growth-list{list-style:none;margin:24px 0;padding:0}.growth-list li{margin:0 0 24px}
+.growth-row{display:flex;align-items:baseline;justify-content:space-between;gap:16px}.growth-row code{font-size:14px}.growth-row strong{white-space:nowrap}
+.growth-track{height:7px;border-radius:3px;overflow:hidden;background:var(--track);margin:7px 0}.growth-track span{display:block;height:100%;background:var(--green)}
+.growth-list p{margin:6px 0}.growth-list details{font-size:12px;color:var(--muted)}.growth-list summary{cursor:pointer;width:max-content}
 .models{margin:12px 0 0;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--white);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
 .models.go{cursor:pointer}.models.go:hover{border-color:var(--green)}
 .deep{margin:16px 0 0}.deep ol{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
@@ -166,22 +190,25 @@ code{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:any
  .quick button{padding:3px 8px}
  .archrow{padding-left:16px;padding-right:16px}
  .seg{flex-wrap:wrap}
- .selbar .in{gap:8px;flex-wrap:wrap}.selbar #selection-help{display:none}.selbar strong{font-size:13px;white-space:nowrap}
+ .selbar .in{gap:8px;flex-wrap:wrap}.selbar #selection-help{font-size:11px}.selbar strong{font-size:13px;white-space:nowrap}
  .quick{order:3;width:100%;flex-wrap:nowrap;overflow-x:auto}
+ .growth-stats{gap:12px}.growth-stats strong{font-size:19px}
+ .setting-list{grid-template-columns:1fr;gap:2px}.setting-list dd{margin-bottom:8px}
 }
+@media(max-width:420px){.capacity-label{flex-direction:column;align-items:center;gap:0;line-height:1.25;padding:0 6px}.capacity-label strong{font-size:14px}.composition .legend{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.growth-stats{grid-template-columns:1fr 1fr}.growth-stats>div:first-child{grid-column:1/-1}.growth-stats>div:first-child strong{font-size:28px}}
 
 </style>
 <header><div class="brand"><a href="https://sanshengai.top/" target="_blank" rel="noopener" title="叁笙早安 AI 官网"><picture><source media="(prefers-color-scheme: dark)" srcset="__LOGO_DARK_DATA__"><img class="logo" src="__LOGO_DATA__" alt="叁笙早安 AI"></picture></a><strong>叁笙清理</strong></div>
-<div class="disk"><span id="disk-text"></span><div class="bar" role="img" aria-label="硬盘已用比例"><span id="disk-used"></span></div></div></header>
+<div class="disk" id="disk"><div class="disk-meta"><span id="disk-total"></span><time id="scan-time"></time></div><div class="capacity" id="capacity" role="img"><div class="capacity-segment capacity-used" id="disk-used"><span class="capacity-label">已用 <strong id="used-value"></strong></span></div><div class="capacity-segment capacity-free" id="disk-free"><span class="capacity-label">剩余 <strong id="free-value"></strong></span></div></div><div class="capacity-legend" aria-hidden="true"><span id="used-legend"></span><span id="free-legend"></span></div></div></header>
 <div class="page">
 <aside class="side" aria-label="目录"><div class="dockbox"><nav class="dock" id="nav"></nav></div><div class="side-foot" id="side-foot"></div></aside>
-<main class="main"><div class="setline" id="setline" hidden></div><div id="view"></div>
-<div class="note"><label for="note">还有哪些不要清理 <span>（选填，会一起发给 Agent）</span></label><input id="note" type="text" placeholder="例如：保留上周的图片原稿"></div>
+<main class="main"><div id="view"></div><details class="setline" id="setline" hidden></details>
+<div class="note" id="note-row"><label for="note">保留备注 <span>（选填）</span></label><input id="note" type="text" placeholder="例如：保留上周的图片原稿"></div>
 <div class="feedback" id="feedback" aria-live="polite"></div>
 <textarea id="fallback" class="fallback" aria-label="选中下面内容，复制给 Agent" hidden readonly></textarea>
 <div class="main-foot" id="main-foot"></div></main>
 </div>
-<div class="selbar"><div class="archrow" id="archrow"><label for="arch"><strong>归档到哪块外接硬盘</strong><input id="arch" type="text" autocomplete="off" spellcheck="false" placeholder="/Volumes/移动硬盘/叁笙归档"></label><div class="hint" id="archhint"></div></div><div class="in"><div><strong id="selected">尚未勾选</strong><div class="hint" id="selection-help"></div></div>
+<div class="selbar" id="selection-bar"><div class="archrow" id="archrow"><label for="arch"><strong>归档到哪块外接硬盘</strong><input id="arch" type="text" autocomplete="off" spellcheck="false" placeholder="/Volumes/移动硬盘/叁笙归档"></label><div class="hint" id="archhint"></div></div><div class="in"><div><strong id="selected">尚未勾选</strong><div class="hint" id="selection-help"></div></div>
 <div class="quick" id="quick" role="group" aria-label="一键选择"></div>
 <div class="copywrap"><button class="primary" id="copy" type="button">复制清单，发给 Agent</button><div class="hint" id="ledger-hint"></div></div></div></div>
 <script type="application/json" id="plan-data">__PLAN_JSON__</script>
@@ -290,8 +317,23 @@ const openAsks=()=>QCARDS.filter(q=>{const r=PROJ.get(q.key);return r.status===r
 const dk=facts.disk||{}, cov=facts.coverage||{};
 const used=dk.used!=null?dk.used:(dk.total>0?dk.total-dk.free:0);
 const scanTime=facts.created_at?new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(facts.created_at)):'';
-$('disk-text').textContent=(dk.total>0?'硬盘 '+gb(dk.total)+'，已用 '+gb(used)+'，还剩 '+gb(dk.free):'硬盘容量未读到')+(scanTime?' · 扫描于 '+scanTime+'（北京时间）':'');
-if(dk.total>0)$('disk-used').style.width=Math.min(100,100*used/dk.total)+'%';
+$('disk-total').textContent=dk.total>0?'总容量 '+gb(dk.total):'硬盘容量未读到';
+$('scan-time').textContent=scanTime?'扫描 '+scanTime+'（北京时间）':'';
+if(facts.created_at)$('scan-time').dateTime=facts.created_at;
+const usedPct=dk.total>0?Math.max(0,Math.min(100,100*used/dk.total)):0;
+$('disk-used').style.width=usedPct+'%';$('disk-free').style.width=(100-usedPct)+'%';
+$('used-value').textContent=dk.total>0?gb(used):'—';$('free-value').textContent=dk.total>0?gb(dk.free):'—';
+$('used-legend').textContent='已用 '+$('used-value').textContent;$('free-legend').textContent='剩余 '+$('free-value').textContent;
+$('capacity').setAttribute('aria-label',dk.total>0?'已用 '+gb(used)+'，剩余 '+gb(dk.free):'硬盘容量未读到');
+// 比例很悬殊时将标注移到横条下方，保留真实比例，不裁掉数字。
+function fitDiskLabels(){
+  $('disk').classList.remove('labels-below');
+  const narrow=[...document.querySelectorAll('.capacity-segment')].some(s=>s.clientWidth<s.firstElementChild.scrollWidth);
+  $('disk').classList.toggle('labels-below',narrow);
+}
+new ResizeObserver(fitDiskLabels).observe($('disk'));
+const deleteMode=D.delete_mode||(D.proposal||{}).delete_mode||'delete';
+const signedGB=n=>(n>0?'+':n<0?'−':'')+gb(Math.abs(n));
 
 function catStats(id){const cs=cards.filter(c=>catOf(c)===id);const a=cs.filter(act);
   return {cards:cs,total:sum(cs),can:sum(a),sel:sum(cs.filter(isSel)),acts:a.length}}
@@ -306,7 +348,8 @@ function renderNav(){
   const root=$('nav');root.replaceChildren();
   const top=E('div',null,'mod mod-top'), tn=E('div',null,'nav');
   const n=openAsks();
-  tn.append(navBtn('overview','总览',n?[['待答 '],[String(n),'b']]:[['已用 '],[g1(used),'b']]));
+  tn.append(navBtn('overview','总览',n?[['待答 '],[String(n),'b']]:[]));
+  if(D.growth)tn.append(navBtn('growth','空间变化',D.growth.baseline?[[signedGB(D.growth.disk_used_delta)]]:[['首次记录']]));
   top.append(tn);root.append(top);
   const sections=[];
   for(const c of CATS){const s=catStats(c.id);if(!s.cards.length)continue;
@@ -376,14 +419,18 @@ function renderAsks(v){
 const COMP_COLOR={home:'#2f5d3a',apps:'#a57924',system:'#a9ad9f',other:'#dcd6c4'};
 function renderComposition(v){
   const comp=(facts.composition||[]).filter(x=>x&&x.bytes>0);if(!comp.length)return;
-  const tot=comp.reduce((n,x)=>n+x.bytes,0), box=E('section',null,'comp');box.append(E('h2','整个硬盘的构成'));
+  const tot=comp.reduce((n,x)=>n+x.bytes,0), box=E('section',null,'comp composition');box.append(E('h2','已用空间构成'));
   const st=E('div',null,'stack');st.setAttribute('role','img');st.setAttribute('aria-label',comp.map(x=>x.name+' '+gb(x.bytes)).join('，'));
   const lg=E('div',null,'legend');
   comp.forEach((x,i)=>{const col=COMP_COLOR[x.id]||COLORS[i%COLORS.length];
     const sg=E('span');sg.style.width=(100*x.bytes/tot)+'%';sg.style.background=col;sg.title=x.name+' '+gb(x.bytes);st.append(sg);
-    const it=E('span');const k=E('span',null,'k');k.style.background=col;it.append(k,x.name+' '+gb(x.bytes)+'（'+Math.round(100*x.bytes/tot)+'%）');lg.append(it)});
+    const it=E('div',null,'legend-item'), label=E('span');const k=E('span',null,'k');k.style.background=col;
+    const names={home:'文件与软件数据',apps:'应用程序',system:'系统',other:comp.some(c=>c.id==='system')?'其他':'系统与其他'};
+    label.append(k,names[x.id]||x.name);it.append(label,E('strong',gb(x.bytes)));lg.append(it)});
   box.append(st,lg);
-  if(facts.purgeable_bytes>0)box.append(E('p','其中系统可自动回收约 '+gb(facts.purgeable_bytes)+'：硬盘不够用时 macOS 会自己清，不用你动手。','purge'));
+  const notes=[];if(facts.purgeable_bytes>0)notes.push('系统可自动回收约 '+gb(facts.purgeable_bytes));
+  if(comp.some(x=>x.estimated))notes.push('部分容量为估算');
+  if(notes.length)box.append(E('p',notes.join(' · '),'purge'));
   v.append(box);
 }
 // 本地模型单独一行（没有也写明）
@@ -453,68 +500,63 @@ function renderReviews(v){
 }
 function renderGrowth(v){
   const g=D.growth;if(!g)return;
-  const box=E('section',null,'comp');box.append(E('h2','这段时间，空间增加在哪里'));
+  const box=E('section',null,'comp');box.append(E('h1','空间变化'));
   const date=t=>new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(t));
-  const delta=n=>(n>0?'+':n<0?'−':'')+gb(Math.abs(n));
+  const delta=signedGB;
   if(!g.baseline){box.append(E('p','第一次空间记录已保存，下次扫描会自动比较同一范围。','hint'))}
   else{
     box.append(E('p',date(g.baseline.created_at)+' → '+date(g.created_at)+'（北京时间）','hint'));
-    box.append(E('p','磁盘已用 '+delta(g.disk_used_delta)+'；已定位目录净变化 '+delta(g.known_delta)+'；尚未归因 '+delta(g.unattributed_delta)+'。','lead'));
-    const list=E('ol');
-    for(const a of (g.areas||[]).filter(r=>r.delta>0).slice(0,4)){
-      const li=E('li');li.append(E('code',shp(a.path)),document.createTextNode('  '+delta(a.delta)));
+    const stats=E('div',null,'growth-stats');
+    for(const [name,n] of [['占用净变化',g.disk_used_delta],['已定位',g.known_delta],['尚未归因',g.unattributed_delta]]){
+      const stat=E('div');stat.append(E('small',name),E('strong',delta(n)));stats.append(stat)}
+    box.append(stats);
+    const list=E('ol',null,'growth-list'), areas=(g.areas||[]).filter(r=>r.delta>0).sort((a,b)=>b.delta-a.delta).slice(0,6);
+    const max=Math.max(1,...areas.map(a=>a.delta));
+    for(const a of areas){
+      const li=E('li'), row=E('div',null,'growth-row');row.append(E('code',shp(a.path)),E('strong',delta(a.delta)));li.append(row);
+      const bar=E('div',null,'growth-track'), fill=E('span');fill.style.width=(100*a.delta/max)+'%';bar.append(fill);li.append(bar);
       const children=(g.rows||[]).filter(r=>r.path.startsWith(a.path+'/')&&r.delta>0).sort((a,b)=>b.delta-a.delta);
       const child=children.find(r=>r.explanation)||children[0];
       if(child)li.append(E('p','其中 '+shp(child.path)+'  '+delta(child.delta),'hint'));
-      if(a.explanation)li.append(E('p',a.explanation,'hint'));
+      if(a.explanation){const detail=E('details');detail.append(E('summary','来源说明'),E('p',a.explanation));li.append(detail)}
       list.append(li);
     }
     box.append(list);
-    box.append(E('p','父目录包含下面的子目录，不能相加。新增占用需要查来源和用途，不能直接判为垃圾。','hint'));
+    box.append(E('p','子目录已包含在父目录中；新增占用不等于垃圾。','hint'));
   }
   const link=E('a','查看增长明细与历次记录 →');link.href='growth.html';link.target='_blank';link.rel='noopener';box.append(link);v.append(box);
 }
 function renderOverview(v){
-  const known=sum(cards), can=sum(cards.filter(act)), keep=known-can;
+  const known=sum(cards), can=sum(cards.filter(act));
   const walked=cov.walked_bytes||0, rest=Math.max(0,used-known), sysArea=Math.max(0,used-walked);
-  v.append(E('h1','硬盘还剩 '+gb(dk.free)));
-  renderGrowth(v);
-  const action=E('section',null,'comp');action.append(E('h2','这次可以处理什么'));
-  action.append(E('p',can?gb(can)+' 进入清理候选，可在左侧分类中查看影响并勾选。':'本轮尚无可执行的清理候选。','lead'));
-  action.append(E('p',(REVIEWED.size?'已核查 '+REVIEWED.size+' 项；':'')+'另有 '+(REVIEW.length-REVIEWED.size)+' 项待确认核查方向。回答问题不会删除文件。','hint'));v.append(action);
+  v.append(E('h1','空间总览'));
   renderComposition(v);
-  renderModels(v);
-  renderCloud(v);
-  v.append(E('p','本轮核查目录共占 '+gb(known)+'：其中 '+gb(can)+' 进入清理候选，'+gb(keep)+' 暂时保留。目录占用总量不等于可释放空间。其余 '+gb(rest)+' 未纳入本轮逐项计划。','lead'));
+  const head=E('div',null,'section-head');head.append(E('h2','分类占用'));
+  const action=E('p',can?'本轮可清理':'暂无可清理项');if(can)action.append(E('strong',gb(can)));head.append(action);v.append(head);
   const rows=CATS.map(c=>Object.assign({c},catStats(c.id))).filter(x=>x.cards.length);
-  const st=E('div',null,'stack');st.setAttribute('role','img');
-  const segs=rows.map(x=>[x.c.name,x.total,colorOf(x.c.id)]).concat([['你在用的项目、数据和应用',Math.max(0,rest-sysArea),'var(--rest)'],['系统区域',Math.min(rest,sysArea),'var(--sys)']]);
-  st.setAttribute('aria-label',segs.map(s=>s[0]+' '+gb(s[1])).join('，'));
-  for(const [n,b,col] of segs){if(!b)continue;const s=E('span');s.style.width=(100*b/Math.max(1,used))+'%';s.style.background=col;s.title=n+' '+gb(b);st.append(s)}
-  v.append(st);
-  const sc=E('div',null,'scale');sc.append(E('span','彩色：本轮计划涉及 '+gb(known)),E('span','浅灰：未纳入计划 · 深灰：系统区域'));v.append(sc);
   const tb=E('table',null,'cats'), hd=E('tr');
-  for(const [h,cls] of [['',''],['占用',''],['可以腾出',''],['已勾','hide-m']])hd.append(E('th',h,cls));
+  for(const [h,cls] of [['',''],['占用',''],['可清理',''],['已勾','hide-m']])hd.append(E('th',h,cls));
   const thead=E('thead');thead.append(hd);tb.append(thead);const body=E('tbody');
   let section=null;
   for(const x of rows){
     if(x.c.section!==section){section=x.c.section;const g=E('tr',null,'grp');const td=E('td',section);td.colSpan=4;g.append(td);body.append(g)}
     const tr=E('tr',null,'go');tr.tabIndex=0;tr.onclick=tr.onkeydown=e=>{if(e.type==='keydown'&&e.key!=='Enter')return;view=x.c.id;render();window.scrollTo({top:0})};
     const td=E('td');const sw=E('span',null,'sw');sw.style.background=colorOf(x.c.id);td.append(sw,x.c.name);
+    if(x.c.desc)td.append(E('span',x.c.desc,'ex'));
     tr.append(td,E('td',gb(x.total)),E('td',x.acts?gb(x.can):'都留着',x.acts?'can':'muted'),E('td',x.sel?gb(x.sel):'—','hide-m'+(x.sel?'':' muted')));
     body.append(tr);
   }
   // 没逐项分析的部分：系统区域 + 扫过但没逐项判断的目录
   const g=E('tr',null,'grp');const gtd=E('td','没逐项分析的 '+gb(rest));gtd.colSpan=4;g.append(gtd);body.append(g);
-  const home=(cov.roots||[])[0]||'';const short=p=>home&&p&&p.startsWith(home+'/')?'~'+p.slice(home.length):p;
-  const tr1=E('tr');const t1=E('td');const s1=E('span',null,'sw');s1.style.background='var(--sys)';t1.append(s1,'系统区域');
-  t1.append(E('span','macOS 系统本身、虚拟内存、系统快照、系统临时文件等。扫描只进用户目录和应用程序，这部分没逐项看；系统会自己管理，清理软件也不该动。','ex'));
+  const tr1=E('tr');const t1=E('td');const s1=E('span',null,'sw');s1.style.background='var(--sys)';t1.append(s1,'未覆盖的占用');
+  t1.append(E('span','扫描范围外，尚未归类。','ex'));
   tr1.append(t1,E('td','约 '+gb(sysArea)),E('td','—','muted'),E('td','—','hide-m muted'));body.append(tr1);
-  const tr2=E('tr');const t2=E('td');const s2=E('span',null,'sw');s2.style.background='var(--rest)';t2.append(s2,'你在用的项目、数据和应用');
-  const areas=(facts.areas||[]).map(a=>short(a.path)+' '+gb(a.bytes)).join('、');
-  t2.append(E('span','这部分未纳入本轮逐项计划，不能据此判断是否可清理。'+(areas?'大头在：'+areas+'（目录总大小，含上面已查过的部分）。':''),'ex'));
+  const tr2=E('tr');const t2=E('td');const s2=E('span',null,'sw');s2.style.background='var(--rest)';t2.append(s2,'其他文件与应用');
+  t2.append(E('span','未纳入本轮清理计划。','ex'));
   tr2.append(t2,E('td','约 '+gb(Math.max(0,rest-sysArea))),E('td','—','muted'),E('td','—','hide-m muted'));body.append(tr2);
   tb.append(body);v.append(tb);
+  if(!rows.some(x=>x.c.id==='ai-models'))renderModels(v);
+  renderCloud(v);
   renderAsks(v);
   renderReviews(v);
   renderTips(v);
@@ -643,20 +685,25 @@ function renderCategory(v,id){
 }
 function renderView(){
   const v=$('view');v.replaceChildren();
+  $('note-row').hidden=view==='growth';$('selection-bar').hidden=view==='growth';
+  $('setline').hidden=view!=='overview'||!(D.setup_summary||[]).some(x=>typeof x==='string'&&x.trim());
+  if(view==='growth'){renderGrowth(v);return}
   if(view!=='overview'){const t=askTip();if(t)v.append(t)}
-  if(view!=='overview'&&catIndex.has(view))renderCategory(v,view);else renderOverview(v);
+  if(catIndex.has(view))renderCategory(v,view);else renderOverview(v);
 }
 function selected(){return cards.filter(isSel)}
 const archCards=()=>cards.filter(c=>isDecide(c)&&picked.has(c.id)&&modeOf.get(c.id)==='归档');
-// 设置摘要：一行，逐句来自 plan.py 的 setup_summary
+// 设置详情按需展开，首页不重复铺开全部偏好。
 function fillSetline(){
   const el=$('setline'), a=(D.setup_summary||[]).filter(x=>typeof x==='string'&&x.trim());
   if(!a.length){el.hidden=true;return}
-  el.replaceChildren(E('b','按你的设置：'),document.createTextNode(a.map(x=>x.trim().replace(/[。；;]+$/,'')).join('；')+'（要改就跟我说“改设置”）'));el.hidden=false;
+  const list=E('dl',null,'setting-list');
+  for(const line of a){const i=line.indexOf('：');list.append(E('dt',i<0?'偏好':line.slice(0,i)),E('dd',i<0?line:line.slice(i+1)))}
+  el.replaceChildren(E('summary','清理设置'),list,E('p','修改时在对话里说“改设置”。','hint'));el.hidden=false;
 }
 function update(){
   const s=selected();
-  const trashMode=(D.proposal||{}).delete_mode==='trash';
+  const trashMode=deleteMode==='trash';
   $('selected').textContent=s.length?'已选 '+s.length+' 项，'+(trashMode?'待移入废纸篓 ':'预计腾出 ')+gb(sum(s)):'尚未选择';
   const ok=!!(seal&&seal.digest);
   const le=ledgerEntries(), extra=le.length>0||hiddenKeys.size>0||ruleAns.size>0;
@@ -665,12 +712,12 @@ function update(){
   $('archhint').textContent=na?(archBad?'要写成外接硬盘的路径，形如 /Volumes/盘名/文件夹；内置硬盘不行。填好前不能复制。':'共 '+na+' 项选了归档：先搬到这里，核对无误才从电脑上清掉。'):'';
   $('archhint').className='hint'+(archBad?' bad':'');
   $('copy').disabled=!ok||(!s.length&&!extra)||archBad;
-  $('selection-help').textContent=!ok?'计划尚未封存，先让 Agent 运行 plan.py seal'
-    :'这个页面自己不会删东西。复制清单粘贴给 Agent，它会先演练一遍、再删一条试试，确认没问题才处理其余的；没勾的一律不动。'+(trashMode?'当前设置为先放废纸篓，本轮不会立即释放空间。如需立即腾出，请同时告诉 Agent“本轮直接永久删除”。':'当前设置为直接永久删除，完成后即可腾出空间，删除后不可撤销。');
+  $('selection-help').textContent=!ok?'计划待复核，暂不能执行。':trashMode?'先放废纸篓，清空后释放空间。':'永久删除，不可撤销。';
   $('selection-help').className='hint'+(ok?'':' bad');
   $('ledger-hint').textContent=le.length?'改了项目状态，Agent 会先重新核对再执行':'';
-  const q=$('quick');q.replaceChildren();const ap=activePreset();
+  const q=$('quick');q.replaceChildren();const ap=activePreset(), seenPresets=new Set();
   for(const [p,name] of PRESET){const cs=presetCards(p);if(!cs.length)continue;
+    const key=cs.map(c=>c.id).sort().join(',');if(seenPresets.has(key))continue;seenPresets.add(key);
     const b=E('button',name+' '+gb(sum(cs)));b.type='button';b.title=cs.length+' 项。'+PRESET.find(x=>x[0]===p)[2];b.setAttribute('aria-pressed',String(ap===p));b.onclick=()=>choosePreset(p);q.append(b)}
   if(picked.size){const c=E('button','清空');c.type='button';c.title='取消全部选择';c.onclick=()=>choosePreset('');q.append(c)}
   renderNav();
