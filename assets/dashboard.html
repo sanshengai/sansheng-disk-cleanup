@@ -13,13 +13,13 @@ button:hover{border-color:var(--green)}button:disabled{opacity:.45;cursor:defaul
 :focus-visible{outline:3px solid var(--gold);outline-offset:2px}
 input[type=checkbox]{width:17px;height:17px;margin:0;accent-color:var(--green);cursor:pointer}
 header,.page{max-width:1240px;margin:auto;padding-left:28px;padding-right:28px}
-header{display:flex;align-items:center;gap:28px;padding-top:14px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+header{display:flex;align-items:center;gap:28px;padding-top:6px;padding-bottom:6px;border-bottom:1px solid var(--line)}
 .brand{display:flex;align-items:center;gap:14px;flex:none}.logo{width:104px;height:36px;object-fit:contain}
 .brand strong{font-size:16px;font-weight:600;border-left:1px solid var(--line);padding-left:14px}
 .disk{margin-left:auto;width:min(560px,60%);min-width:0;font-size:12px;color:var(--muted)}
-.disk-meta{display:flex;justify-content:space-between;gap:4px 16px;flex-wrap:wrap;margin-bottom:7px}
+.disk-meta{display:flex;justify-content:space-between;gap:4px 16px;flex-wrap:wrap;margin-bottom:3px}
 .disk-meta span,.disk-meta time{white-space:nowrap}
-.capacity{display:flex;height:48px;border-radius:7px;overflow:hidden;background:var(--track);color:var(--ink)}
+.capacity{display:flex;height:28px;border-radius:4px;overflow:hidden;background:var(--track);color:var(--ink)}
 .capacity-segment{display:flex;align-items:center;justify-content:center;flex:none;min-width:0;text-align:center}
 .capacity-used{background:var(--gbg);color:var(--onG)}.capacity-free{background:var(--track)}
 .capacity-label{display:flex;align-items:baseline;justify-content:center;gap:6px;padding:0 10px;white-space:nowrap;font-size:12px}
@@ -195,7 +195,7 @@ code{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:any
  .growth-stats{gap:12px}.growth-stats strong{font-size:19px}
  .setting-list{grid-template-columns:1fr;gap:2px}.setting-list dd{margin-bottom:8px}
 }
-@media(max-width:420px){.capacity-label{flex-direction:column;align-items:center;gap:0;line-height:1.25;padding:0 6px}.capacity-label strong{font-size:14px}.composition .legend{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.growth-stats{grid-template-columns:1fr 1fr}.growth-stats>div:first-child{grid-column:1/-1}.growth-stats>div:first-child strong{font-size:28px}}
+@media(max-width:420px){.capacity-label{gap:4px;line-height:1.25;padding:0 2px}.capacity-label strong{font-size:14px}.composition .legend{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.growth-stats{grid-template-columns:1fr 1fr}.growth-stats>div:first-child{grid-column:1/-1}.growth-stats>div:first-child strong{font-size:28px}}
 
 </style>
 <header><div class="brand"><a href="https://sanshengai.top/" target="_blank" rel="noopener" title="叁笙早安 AI 官网"><picture><source media="(prefers-color-scheme: dark)" srcset="__LOGO_DARK_DATA__"><img class="logo" src="__LOGO_DATA__" alt="叁笙早安 AI"></picture></a><strong>叁笙清理</strong></div>
