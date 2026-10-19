@@ -10,8 +10,15 @@ def test_confirmation_explains_disposal(browser, tmp_path, mode):
     data = sample_payload()
     data.setdefault('proposal', {})['delete_mode'] = mode
     page, errors = open_page(browser, tmp_path, data)
-    text = page.locator('#selection-help').inner_text()
-    assert ('本轮不会立即释放空间' if mode == 'trash' else '直接永久删除') in text
+    hint = page.locator('#selection-help')
+    assert hint.is_visible()
+    text = hint.inner_text()
+    if mode == 'trash':
+        assert '废纸篓' in text and '清空后释放空间' in text
+        assert '永久删除' not in text
+    else:
+        assert '永久删除' in text and '不可撤销' in text
+        assert '废纸篓' not in text
     assert not errors
     page.close()
 
