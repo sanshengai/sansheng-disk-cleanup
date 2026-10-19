@@ -47,6 +47,7 @@ Codex、Claude Code 用了几个月，磁盘满了却不知道满在哪？通用
 
 ## 还有这些
 
+- **解释空间为什么快速减少**：每次扫描留下精简记录点，下次自动比较同范围的目录；正式清理后另记磁盘实测余量。能追到增长来自哪个任务，区分新增占用与垃圾，并把暂时无法归因的差额说明白。只保存元信息，不重复扫描硬盘。
 - **你决定它能看什么**：四档读取范围——基础（项目说明、脚本、日志）、扩展（聊天收到的文件、邮件附件、照片截图，只看名字和大小）、深度（聊天正文、图片内容）、永不读（密码、钥匙串、浏览器登录数据、密钥，脚本强制）。读到的内容会发给你所用的 AI 服务商，成果页列出这次读了哪些文件。
 - **删和留之外的第三条路**：先放废纸篓能反悔；做完的项目可以搬到外接硬盘，逐个文件校验一致才处理原件；iCloud 和网盘只给“只留云端”的官方做法，不动你的文件。
 - **安全不变**：设置和记忆只改变“问不问、默认勾哪些”，**不改变能不能删**；不用 sudo、不装常驻程序，只在本机运行。
@@ -117,6 +118,8 @@ python3 scripts/scan.py probe projects --run <run目录> # 认出项目、已装
 python3 scripts/plan.py setup --run <run目录>          # 生成设置页（想改设置时加 --mode edit）
 python3 scripts/plan.py profile --apply <设置文本文件>  # 保存你在设置页的回答
 python3 scripts/scan.py scan                          # 完整扫描，结果写到 ~/.sansheng/disk-cleanup/runs/<scan_id>/
+python3 scripts/space_history.py import                # 将已有扫描、正式清理回执补入空间记录
+python3 scripts/space_history.py compare --run <run目录> # 增长报告 growth.html；可加 --baseline <scan_id> 比较更早记录
 python3 scripts/scan.py probe codex-groups            # Codex 会话按来源归组
 python3 scripts/scan.py probe item-refs --run <run目录>  # 大目录内部条目逐条查引用
 python3 scripts/scan.py probe done-evidence --run <run目录> --path <目录>  # 找“做完了”的证据

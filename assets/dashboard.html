@@ -120,6 +120,7 @@ code{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:any
 .comp{margin:14px 0 4px}.comp h2,.models h2,.deep h2{font-size:14px;font-weight:600;margin:0 0 6px;color:var(--muted)}
 .comp .stack{margin:6px 0}.comp .legend{display:flex;flex-wrap:wrap;gap:2px 18px;font-size:13px}.comp .legend span.k{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}
 .comp .purge{margin:4px 0 0;font-size:13px;color:var(--muted)}
+.comp{overflow-wrap:anywhere}.comp a{color:var(--green);text-underline-offset:3px}.asks>summary{cursor:pointer;font-weight:600}
 .models{margin:12px 0 0;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--white);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
 .models.go{cursor:pointer}.models.go:hover{border-color:var(--green)}
 .deep{margin:16px 0 0}.deep ol{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
@@ -258,6 +259,7 @@ let view='overview';
 // 项目问题：一题一卡。status 是当前回答，orig 是打开页面时的状态（null＝还没标；久没动的“进行中”项目 orig 是 active）
 const PQ=(D.proposal&&D.proposal.project_questions)||[];
 const REVIEW=(D.proposal&&D.proposal.review_questions)||[];
+const REVIEWED=new Map(((D.review_status||{}).entries||[]).filter(r=>r&&r.status==='investigated'&&REVIEW.some(q=>q.id===r.id)).map(r=>[r.id,r]));
 const reviewAns=new Map();
 const newQ=PQ.find(q=>q.type==='new_projects');
 const PROJ=new Map();
@@ -287,7 +289,8 @@ const openAsks=()=>QCARDS.filter(q=>{const r=PROJ.get(q.key);return r.status===r
 
 const dk=facts.disk||{}, cov=facts.coverage||{};
 const used=dk.used!=null?dk.used:(dk.total>0?dk.total-dk.free:0);
-$('disk-text').textContent=(dk.total>0?'硬盘 '+gb(dk.total)+'，已用 '+gb(used)+'，还剩 '+gb(dk.free):'硬盘容量未读到')+(facts.created_at?' · 扫描于 '+String(facts.created_at).replace('T',' ').slice(5,16):'');
+const scanTime=facts.created_at?new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(facts.created_at)):'';
+$('disk-text').textContent=(dk.total>0?'硬盘 '+gb(dk.total)+'，已用 '+gb(used)+'，还剩 '+gb(dk.free):'硬盘容量未读到')+(scanTime?' · 扫描于 '+scanTime+'（北京时间）':'');
 if(dk.total>0)$('disk-used').style.width=Math.min(100,100*used/dk.total)+'%';
 
 function catStats(id){const cs=cards.filter(c=>catOf(c)===id);const a=cs.filter(act);
@@ -419,11 +422,19 @@ function renderFrontier(v,id){
   box.append(ol);v.append(box);
 }
 
+let reviewsOpen=false;
 function renderReviews(v){
   if(!REVIEW.length)return;
-  const box=E('section',null,'asks');box.append(E('h2','这些内容，你想清理吗？'));
+  if(REVIEWED.size){
+    const done=E('section',null,'comp');done.append(E('h2','已经核查 '+REVIEWED.size+' 项'));
+    done.append(E('p','核查结果已记录；仍需按具体文件和任务条件判断，这份记录没有删除授权。','hint'));
+    const link=E('a','查看逐项证据与保留条件 →');link.href='review.html';link.target='_blank';link.rel='noopener';done.append(link);v.append(done);
+  }
+  const pending=REVIEW.filter(q=>!REVIEWED.has(q.id));if(!pending.length)return;
+  const box=E('details',null,'asks');box.append(E('summary','待核查 '+pending.length+' 项 · 展开选择核查方向'));
+  box.open=reviewsOpen;box.ontoggle=()=>{reviewsOpen=box.open};
   box.append(E('p','暂时保留的内容中，这些还需你判断。选择“想清理，继续查”后，Agent 会补查任务、引用和副本，再给可执行清单；这里的回答不会删除文件。','hint'));
-  for(const q of REVIEW){
+  for(const q of pending){
     const el=E('div',null,'tip');el.append(E('div',q.title+' · '+gb(q.bytes),'tt'),E('p',q.question));
     const row=E('div',null,'seg');row.setAttribute('role','group');row.setAttribute('aria-label',q.title);
     for(const answer of ['想清理，继续查','保留','暂不确定']){
@@ -440,16 +451,41 @@ function renderReviews(v){
   };
   box.append(copy);v.append(box);
 }
+function renderGrowth(v){
+  const g=D.growth;if(!g)return;
+  const box=E('section',null,'comp');box.append(E('h2','这段时间，空间增加在哪里'));
+  const date=t=>new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(t));
+  const delta=n=>(n>0?'+':n<0?'−':'')+gb(Math.abs(n));
+  if(!g.baseline){box.append(E('p','第一次空间记录已保存，下次扫描会自动比较同一范围。','hint'))}
+  else{
+    box.append(E('p',date(g.baseline.created_at)+' → '+date(g.created_at)+'（北京时间）','hint'));
+    box.append(E('p','磁盘已用 '+delta(g.disk_used_delta)+'；已定位目录净变化 '+delta(g.known_delta)+'；尚未归因 '+delta(g.unattributed_delta)+'。','lead'));
+    const list=E('ol');
+    for(const a of (g.areas||[]).filter(r=>r.delta>0).slice(0,4)){
+      const li=E('li');li.append(E('code',shp(a.path)),document.createTextNode('  '+delta(a.delta)));
+      const children=(g.rows||[]).filter(r=>r.path.startsWith(a.path+'/')&&r.delta>0).sort((a,b)=>b.delta-a.delta);
+      const child=children.find(r=>r.explanation)||children[0];
+      if(child)li.append(E('p','其中 '+shp(child.path)+'  '+delta(child.delta),'hint'));
+      if(a.explanation)li.append(E('p',a.explanation,'hint'));
+      list.append(li);
+    }
+    box.append(list);
+    box.append(E('p','父目录包含下面的子目录，不能相加。新增占用需要查来源和用途，不能直接判为垃圾。','hint'));
+  }
+  const link=E('a','查看增长明细与历次记录 →');link.href='growth.html';link.target='_blank';link.rel='noopener';box.append(link);v.append(box);
+}
 function renderOverview(v){
   const known=sum(cards), can=sum(cards.filter(act)), keep=known-can;
   const walked=cov.walked_bytes||0, rest=Math.max(0,used-known), sysArea=Math.max(0,used-walked);
-  v.append(E('h1','已用的 '+gb(used)+' 都去哪了'));
-  renderAsks(v);
-  renderReviews(v);
+  v.append(E('h1','硬盘还剩 '+gb(dk.free)));
+  renderGrowth(v);
+  const action=E('section',null,'comp');action.append(E('h2','这次可以处理什么'));
+  action.append(E('p',can?gb(can)+' 进入清理候选，可在左侧分类中查看影响并勾选。':'本轮尚无可执行的清理候选。','lead'));
+  action.append(E('p',(REVIEWED.size?'已核查 '+REVIEWED.size+' 项；':'')+'另有 '+(REVIEW.length-REVIEWED.size)+' 项待确认核查方向。回答问题不会删除文件。','hint'));v.append(action);
   renderComposition(v);
   renderModels(v);
   renderCloud(v);
-  v.append(E('p','本轮计划涉及 '+gb(known)+'：其中 '+gb(can)+' 进入清理候选，要你在左边各类里勾选；'+gb(keep)+' 暂时保留（含待核查项）。其余 '+gb(rest)+' 未纳入本轮计划，下面列出占用情况。','lead'));
+  v.append(E('p','本轮核查目录共占 '+gb(known)+'：其中 '+gb(can)+' 进入清理候选，'+gb(keep)+' 暂时保留。目录占用总量不等于可释放空间。其余 '+gb(rest)+' 未纳入本轮逐项计划。','lead'));
   const rows=CATS.map(c=>Object.assign({c},catStats(c.id))).filter(x=>x.cards.length);
   const st=E('div',null,'stack');st.setAttribute('role','img');
   const segs=rows.map(x=>[x.c.name,x.total,colorOf(x.c.id)]).concat([['你在用的项目、数据和应用',Math.max(0,rest-sysArea),'var(--rest)'],['系统区域',Math.min(rest,sysArea),'var(--sys)']]);
@@ -479,6 +515,8 @@ function renderOverview(v){
   t2.append(E('span','这部分未纳入本轮逐项计划，不能据此判断是否可清理。'+(areas?'大头在：'+areas+'（目录总大小，含上面已查过的部分）。':''),'ex'));
   tr2.append(t2,E('td','约 '+gb(Math.max(0,rest-sysArea))),E('td','—','muted'),E('td','—','hide-m muted'));body.append(tr2);
   tb.append(body);v.append(tb);
+  renderAsks(v);
+  renderReviews(v);
   renderTips(v);
 }
 function renderTips(v){

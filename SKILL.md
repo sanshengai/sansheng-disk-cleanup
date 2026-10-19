@@ -129,6 +129,25 @@ nohup python3 scripts/act.py go --run <run目录> --choice recommended > <run目
 - 需要 sudo 的对象（本地快照、系统级缓存）自己不用 sudo，只合成一两行命令交给用户执行。
 - 汇报时说明覆盖率和跳过的部分，不要把“扫描完成”说成“全盘清理完成”。
 
+## 空间记录与增长调查
+
+每次 `scan.py scan` 自动保存精简的空间记录点，并生成 `growth.json` / `growth.html`；只复用本次已测的目录元信息，不增加一轮遍历、不保存文件内容。正式清理后的磁盘实测余量另记一点，预演不记。记录保存在 `~/.sansheng/disk-cleanup/history/`，即使移走旧运行目录也能比较。
+
+用户问“最近为什么少了几十 GB / 谁在快速占空间”时，直接调查增长，不必先进入删除流程：
+
+```bash
+python3 scripts/space_history.py import                         # 一次性补入既有扫描与正式回执
+python3 scripts/space_history.py list
+python3 scripts/space_history.py compare --run <本次运行目录>    # 自动跳过不可比的局部扫描
+python3 scripts/space_history.py compare --run <本次运行目录> --baseline <指定scan_id>
+```
+
+默认比较最近一次同电脑、同磁盘容量、同主要根范围和扫描配置的记录；调查一周增长时可指定更早基准。旧记录缺少磁盘设备身份时只依据已有电脑、路径与容量，不能声称已核验卷身份。两次都实际量到、且无扫描缺口的同一目录才计算增减；上次未单列不能按零，父子目录不能重复累计。将磁盘余量变化、已定位目录净变化和尚未归因的差额分开说，别把差额推断成系统垃圾。清理后若只记了磁盘余量，不能冒充目录也重新扫描过。
+
+从增长最大的目录追到产生它的任务、工具与用途，读取仍走 `peek.py`。可将已经查证的解释写入本轮 `growth-notes.json`（`{"绝对目录路径":"解释与证据"}`）后重跑 compare，随报告展示。新增占用不等于垃圾，不改项目状态、不授予删除权限。用户选择“继续查”后继续核查并交付证据，不重复问已回答的同一道题。
+
+已核查项可写本轮 `review-status.json`（`schema: review-status/1`、`scan_id`、`entries: [{id,status:"investigated",summary}]`），并交付本轮 `review.html`，再生成看板。看板会展示已核查数量，不再重复询问这些方向；该文件仅用于展示，不能改变 verdict、封存或删除授权。
+
 ## 知识卡
 
 `references/cards/` 中，每张卡说明一类对象：存储位置、怎么判断还在用、原生清理方式、不能做的事、通常只需问用户的那一句话。

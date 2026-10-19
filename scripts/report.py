@@ -299,6 +299,16 @@ def make(run):
     report["star"] = {"show": bool(first or _star_shown_before(run)), "url": REPO_URL}
     plan.write_json(os.path.join(run, "report.json"), report)
     path = render(run, report)
+    try:
+        import space_history
+        _, receipts = load_receipts(run)
+        for receipt in receipts:
+            space_history.record_cleanup(run, receipt)
+        journal = os.path.join(run, "finalize-trash.json")
+        if os.path.isfile(journal):
+            space_history.record_cleanup(run, plan.read_json(journal))
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(f"提示：清理后空间记录没写进去（{exc}），清理回执仍保留", file=sys.stderr)
     if first:
         try:
             profile["star_asked_at"] = prefs.now_iso()

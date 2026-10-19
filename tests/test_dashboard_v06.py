@@ -215,11 +215,45 @@ def test_review_choices_are_visible_and_never_select_delete(browser, tmp_path):
     payload['proposal']['review_questions'] = [
         {'id': 'c05', 'title': '旧任务素材', 'question': '还要继续用吗？', 'bytes': 2000000000}]
     page, errors = open_page(browser, tmp_path, payload, viewport={'width': 390, 'height': 844})
+    assert not page.get_by_role('button', name='想清理，继续查', exact=True).is_visible()
+    page.get_by_text('待核查 1 项 · 展开选择核查方向', exact=True).click()
     page.get_by_role('button', name='想清理，继续查', exact=True).click()
+    assert page.locator('details.asks').evaluate('(e)=>e.open'), '回答后保持展开，便于继续答下一项'
     assert page.get_by_role('button', name='复制核查答复，发给 Agent').is_enabled()
     assert page.evaluate("picked.has('c05')") is False
     msg = page.evaluate("reviewMessage(facts.scan_id,REVIEW,reviewAns)")
     assert prefs.parse_board_export(msg)[1]
+    assert no_hscroll(page) and not errors
+    page.close()
+
+
+@pw
+def test_investigated_review_is_not_asked_again_or_selected(browser, tmp_path):
+    payload = sample_payload()
+    payload['proposal']['review_questions'] = [
+        {'id': 'c05', 'title': '旧任务素材', 'question': '还要继续用吗？', 'bytes': 2000000000}]
+    payload['review_status'] = {'entries': [{'id': 'c05', 'status': 'investigated', 'summary': 'Copy verified'}]}
+    page, errors = open_page(browser, tmp_path, payload, viewport={'width': 390, 'height': 844})
+    assert '已经核查 1 项' in page.inner_text('body')
+    assert page.get_by_role('button', name='想清理，继续查', exact=True).count() == 0
+    assert page.evaluate("picked.has('c05')") is False
+    assert page.get_by_role('link', name='查看逐项证据与保留条件 →').get_attribute('href') == 'review.html'
+    assert no_hscroll(page) and not errors
+    page.close()
+
+
+@pw
+def test_growth_is_before_cleanup_and_keeps_unknown_difference(browser, tmp_path):
+    payload = sample_payload()
+    payload['growth'] = {'baseline': {'created_at': '2026-10-01T00:00:00Z'},
+        'created_at': '2026-10-08T00:00:00Z', 'disk_used_delta': 100_000_000_000,
+        'known_delta': 70_000_000_000, 'unattributed_delta': 30_000_000_000,
+        'areas': [{'path': '/sample/project', 'delta': 70_000_000_000}], 'rows': []}
+    page, errors = open_page(browser, tmp_path, payload, viewport={'width': 390, 'height': 844})
+    headings = page.locator('h2').all_text_contents()
+    assert headings.index('这段时间，空间增加在哪里') < headings.index('这次可以处理什么')
+    assert '尚未归因 +30.0 GB' in page.inner_text('body')
+    assert '不能直接判为垃圾' in page.inner_text('body')
     assert no_hscroll(page) and not errors
     page.close()
 

@@ -36,6 +36,7 @@ import protect  # noqa: E402  保护名单直接复用，不复制
 import codex_state  # noqa: E402  Codex 父子关系，plan/act 共用
 import sysprobe  # noqa: E402  容量三口径直接复用探针，不重写
 import units  # noqa: E402  体积统一用十进制 GB 的写法
+import space_history  # noqa: E402  扫描记录点与范围可比的增长调查
 
 SCHEMA = "facts/1"
 HOME = protect.HOME
@@ -1265,30 +1266,6 @@ def format_samples(files, scopes, limit=5):
 
 # ───────────────────────── scan ─────────────────────────
 
-def latest_prev_facts(runs_dir, current_id):
-    best = None
-    try:
-        names = os.listdir(runs_dir)
-    except OSError:
-        return None
-    for name in names:
-        if name == current_id or not re.match(r"^\d{8}T\d{6}Z-", name):
-            continue
-        p = os.path.join(runs_dir, name, "facts.json")
-        try:
-            mt = os.stat(p).st_mtime_ns
-            with open(p, encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, ValueError):
-            continue
-        if data.get("schema") != SCHEMA:
-            continue
-        key = (data.get("created_at") or "", mt)
-        if best is None or key > best[0]:
-            best = (key, data)
-    return best[1] if best else None
-
-
 def pick_roots(profile):
     roots = []
     for r in profile.get("roots", ["~"]) + profile.get("extra_roots", []):
@@ -1386,8 +1363,6 @@ def do_scan(opts):
     producers = Producers()
     _APPS_CACHE.clear()   # 每次扫描只枚举一次应用
     apps = installed_apps()
-    prev = latest_prev_facts(runs_dir, scan_id)
-    prev_map = {n["path"]: n.get("bytes") for n in prev.get("nodes", [])} if prev else {}
     for n in nodes:
         reason = protect.protected_reason(n["path"], profile)
         n["protected"] = reason is not None
@@ -1396,9 +1371,7 @@ def do_scan(opts):
         n["producer"] = producers.match(n["path"], apps)
         notes = [x for x in (match_note(n["path"], profile.get("notes", {})), n.pop("git_note", None)) if x]
         n["note"] = "；".join(notes) if notes else None
-        pb = prev_map.get(n["path"])
-        n["growth"] = {"prev_scan_id": prev.get("scan_id") if prev else None, "prev_bytes": pb,
-                       "delta_bytes": (n["bytes"] - pb) if pb is not None else None}
+        n["growth"] = {"prev_scan_id": None, "prev_bytes": None, "delta_bytes": None}
 
     # 引用检查：只对未受保护的前沿节点
     refs_t0 = time.monotonic()
@@ -1494,6 +1467,13 @@ def do_scan(opts):
         facts["coverage"]["warnings"] = list(dict.fromkeys(READ_WARNINGS))
     if walker.skipped_overflow:
         facts["coverage"]["skipped_overflow"] = walker.skipped_overflow
+    try:
+        facts["disk"]["device"] = os.stat(HOME).st_dev
+        space_history.make(run_dir, facts)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        # 记录失败不丢扫描；明确报告，不能静默宣称已有增长基准。
+        facts["coverage"].setdefault("warnings", []).append("空间记录点未生成：" + str(exc))
+        print("警告：空间记录点未生成：" + str(exc), file=sys.stderr)
     out_path = os.path.join(run_dir, "facts.json")
     tmp_path = out_path + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
@@ -1510,6 +1490,8 @@ def print_summary(run_dir, facts, top=30):
     nodes = facts["nodes"]
     frontier = [n for n in nodes if n["frontier"]]
     print(run_dir)
+    if os.path.isfile(os.path.join(run_dir, "growth.html")):
+        print("空间记录与增长调查：" + os.path.join(run_dir, "growth.html"))
     ratio = (cov["frontier_bytes"] / cov["walked_bytes"] * 100) if cov["walked_bytes"] else 0.0
     print("扫描 %s：遍历 %s（%d 目录 / %d 文件），前沿节点合计 %s，覆盖 %.1f%%；用时 %.0fs（遍历 %.0fs，引用检查 %.0fs）%s" % (
         facts["scan_id"], human(cov["walked_bytes"]), cov["dirs"], cov["files"], human(cov["frontier_bytes"]),

@@ -221,6 +221,22 @@ def test_board_ignores_proposal_from_another_scan(env):
     assert dashboard_data(env)["proposal"] is None
 
 
+@pytest.mark.parametrize("matches", [True, False])
+def test_growth_and_review_are_display_only_and_bound_to_scan(env, matches):
+    one_card_env(env, "active")
+    env.check()
+    sid = "scan1" if matches else "other-scan"
+    (env.run / "growth.json").write_text(json.dumps({"schema": "space-growth/1", "scan_id": sid, "rows": []}))
+    (env.run / "review-status.json").write_text(json.dumps({"schema": "review-status/1", "scan_id": sid,
+        "entries": [{"id": "c01", "status": "investigated", "summary": "Only a copy was verified"}]}))
+    assert plan.main(["board", "--run", str(env.run)]) == 0
+    d = dashboard_data(env)
+    assert ("growth" in d) == matches and ("review_status" in d) == matches
+    # 展示记录不能把进行中项目升成删除候选，不能进入执行封存。
+    assert d["plan"]["cards"][0]["verdict"] == "keep"
+    assert not (env.run / "seal.json").exists()
+
+
 def test_dashboard_template_new_design():
     html = (ASSETS / "dashboard.html").read_text(encoding="utf-8")
     for gone in ("第一次设置", "我的设置", "setup-tip", "renderSetup", "firstTime", "SETUP", "你在用的 AI 工具", "哪些目录永远别碰", "你的成品放在哪", "dock-foot",

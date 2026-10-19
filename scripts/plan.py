@@ -2161,6 +2161,22 @@ def cmd_board(args):
                "pending_rules": pending_rules_of(profile), "archive_enabled": True,
                "cloud_suggestions": (proposal or {}).get("cloud_suggestions") or [],
                "proposal": proposal}
+    growth_path = os.path.join(run, "growth.json")
+    if os.path.isfile(growth_path):
+        try:
+            growth = read_json(growth_path)
+            if growth.get("schema") == "space-growth/1" and growth.get("scan_id") == scan_id:
+                payload["growth"] = growth
+        except (OSError, ValueError, AttributeError):
+            pass
+    review_path = os.path.join(run, "review-status.json")
+    if os.path.isfile(review_path):
+        try:
+            review = read_json(review_path)
+            if review.get("schema") == "review-status/1" and review.get("scan_id") == scan_id:
+                payload["review_status"] = review
+        except (OSError, ValueError, AttributeError):
+            pass
     out = args.out or "board.html"
     if not os.path.isabs(out):
         out = os.path.join(run, out)
