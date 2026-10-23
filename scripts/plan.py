@@ -10,6 +10,7 @@
 封存指纹写 seal.json，act.py 只信 seal.json。
 """
 import argparse
+import artifact_checkpoint
 import base64
 import contextlib
 import glob
@@ -45,7 +46,6 @@ SCOPES = ("all", "ignored-only", "files")
 EVIDENCE_PREFIXES = ("引用已核对:", "引用已核对：")   # 旧写法：只给 warning，不再放行（见 refs_reviewed）
 REFS_VERDICTS = ("history_only", "depends")
 RECENT_SECONDS = 24 * 3600
-FRONTIER_TOP = 40
 
 
 # ----------------------------------------------------------------- 通用小工具
@@ -715,7 +715,7 @@ def _item_needs_end_evidence(item, nodes):
     return not merged_producer(os.path.realpath(path), nodes)["safe"]
 
 
-def evidence_review(card, items, nodes, profile):
+def evidence_review(card, items, nodes, profile, validated_checkpoints=None):
     """复核卡片 evidence，返回 (逐条结果, 是否有通过复核的结束证据, 是否需要结束证据)。"""
     ev_list = card.get("evidence")
     ev_list = ev_list if isinstance(ev_list, list) else []
@@ -728,6 +728,11 @@ def evidence_review(card, items, nodes, profile):
             c = verify_evidence(e, ctx)
             c["evidence"] = e           # 带原文进看板：通过复核的证据让用户看见“已结束”依据的是什么
             checks.append(c)
+    if items and all(isinstance(i, dict) and i.get("checkpoint") for i in items):
+        verified = [(i["path"] in validated_checkpoints, "sealed checkpoint") for i in items] if validated_checkpoints is not None else [artifact_checkpoint.verify(i) for i in items]
+        checks.append({"kind": "git_index_checkpoint", "ok": all(v[0] for v in verified),
+                       "end": all(v[0] for v in verified),
+                       "msg": "仅这些临时索引已持久保存；不代表整个项目结束"})
     has_end = any(c["end"] for c in checks)
     needs = any(_item_needs_end_evidence(i, nodes) for i in (items if isinstance(items, list) else []))
     return checks, has_end, needs
@@ -962,6 +967,12 @@ def check_item(item, ctx):
         keep = []
 
     rec = {"path": path, "realpath": rp, "ino": st.st_ino, "dev": st.st_dev, "method": method}
+    if "checkpoint" in item:
+        ok, why = artifact_checkpoint.verify(item)
+        if not ok:
+            errs.append(f"{path}：{why}")
+        else:
+            rec["checkpoint"] = dict(item["checkpoint"])
     if method == "native":
         argv = item.get("argv")
         if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
@@ -1334,13 +1345,13 @@ PROJECT_ACTIVE_REASON = "还在进行中（台账里你标的状态），项目�
 PROJECT_PROTECTED_REASON = "你标了“别碰”，整张卡保留"
 
 
-def project_item_errors(path, entries):
+def project_item_errors(path, entries, checkpoint_ok=False):
     """进行中 / 别碰项目里的条目：返回 [错误]。做完了、归档不在这里挡（它们不改变放行条件，只影响提案）。"""
     out = []
     for e in entries:
         if e["status"] == "protected":
             out.append(f"{path}：项目「{e['name']}」{PROJECT_PROTECTED_REASON}")
-        elif e["status"] == "active":
+        elif e["status"] == "active" and not checkpoint_ok:
             out.append(f"{path}：项目「{e['name']}」{PROJECT_ACTIVE_REASON}")
     return out
 
@@ -1562,7 +1573,8 @@ def check_plan(run):
                         continue
                     hit = pindex.match(it, os.path.realpath(it["path"]))
                     per_item.append(hit)
-                    errs.extend(project_item_errors(it["path"], hit))
+                    checkpoint_ok = any(r.get("path") == it["path"] and r.get("checkpoint") for r in recs)
+                    errs.extend(project_item_errors(it["path"], hit, checkpoint_ok))
                     for e in hit:
                         seen_proj.setdefault(e["key"], {"key": e["key"], "name": e["name"], "status": e["status"]})
                 card_projects = sorted(seen_proj.values(), key=lambda x: x["key"])
@@ -1589,7 +1601,7 @@ def check_plan(run):
                 # P5.R M3：Agent 直接写成 decide 的卡也要让用户看见风险（风险区、引用没核实、更新暂存未确认）
                 risk_notes = notes
                 warns.extend(f"风险提示：{n}" for n in notes)
-            ev_checks, has_end, needs_end = evidence_review(card, items, nodes, profile)
+            ev_checks, has_end, needs_end = evidence_review(card, items, nodes, profile, {r["path"] for r in recs if r.get("checkpoint")})
             if verdict == "clean" and isess:
                 soft.append("含交互会话条目（class=interactive）：人还可能回来续聊，不得直接判 clean，降为 decide 由你确认")
             if verdict == "clean" and needs_end and not has_end:
@@ -1868,7 +1880,7 @@ def facts_summary(facts, plan=None):
     home = os.path.realpath(str((facts.get("host") or {}).get("home") or "")) or None
     item_cats = _plan_item_categories(plan)
     top = []
-    for n in frontier[:FRONTIER_TOP]:
+    for n in frontier:
         top.append({
             "path": n.get("path"),
             "bytes": n.get("bytes"),
@@ -1879,7 +1891,7 @@ def facts_summary(facts, plan=None):
         })
     # 看板总览“没逐项分析的部分在哪”：扫描根下第一层目录（整目录大小，含已查过的部分）
     areas = sorted((n for n in nodes if n.get("depth") == 1), key=lambda n: n.get("bytes") or 0, reverse=True)
-    areas = [{"path": n.get("path"), "bytes": n.get("bytes")} for n in areas[:6]]
+    areas = [{"path": n.get("path"), "bytes": n.get("bytes")} for n in areas]
     return {"scan_id": facts.get("scan_id"), "created_at": facts.get("created_at"),
             "disk": facts.get("disk"), "coverage": facts.get("coverage"), "frontier": top, "areas": areas,
             "composition": composition_of(facts), "purgeable_bytes": purgeable_bytes(facts)}

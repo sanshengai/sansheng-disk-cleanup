@@ -460,8 +460,8 @@ function renderCloud(v){
 }
 // 点进一个类别：这一类里最大的 20 个目录（来自扫描的前沿节点）
 function renderFrontier(v,id){
-  const fs=(facts.frontier||[]).filter(f=>f&&f.category===id).sort((a,b)=>(b.bytes||0)-(a.bytes||0)).slice(0,20);if(!fs.length)return;
-  const box=E('section',null,'deep');box.append(E('h2','这一类里最大的 '+fs.length+' 个目录'));
+  const fs=(facts.frontier||[]).filter(f=>f&&f.category===id).sort((a,b)=>(b.bytes||0)-(a.bytes||0));if(!fs.length)return;
+  const box=E('details',null,'deep');box.append(E('summary','展开这一类全部 '+fs.length+' 个已扫描目录'));
   const ol=E('ol');
   for(const f of fs){const li=E('li');li.append(E('code',shp(f.path)),E('span',gb(f.bytes),'sz'));
     const n=f.refs&&f.refs.count;
@@ -477,8 +477,9 @@ function renderReviews(v){
     done.append(E('p','核查结果已记录；仍需按具体文件和任务条件判断，这份记录没有删除授权。','hint'));
     const link=E('a','查看逐项证据与保留条件 →');link.href='review.html';link.target='_blank';link.rel='noopener';done.append(link);v.append(done);
   }
-  const pending=REVIEW.filter(q=>!REVIEWED.has(q.id));if(!pending.length)return;
-  const box=E('details',null,'asks');box.append(E('summary','待核查 '+pending.length+' 项 · 展开选择核查方向'));
+  // investigated 只表示查过，不代表用户已决定。
+  const pending=REVIEW;if(!pending.length)return;
+  const box=E('details',null,'asks');box.append(E('summary','待决定 '+pending.length+' 项 · 展开选择核查方向'));
   box.open=reviewsOpen;box.ontoggle=()=>{reviewsOpen=box.open};
   box.append(E('p','暂时保留的内容中，这些还需你判断。选择“想清理，继续查”后，Agent 会补查任务、引用和副本，再给可执行清单；这里的回答不会删除文件。','hint'));
   for(const q of pending){

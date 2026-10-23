@@ -10,6 +10,8 @@
 import os
 import re
 import sqlite3
+import json
+from pathlib import Path
 
 UUID_RE = re.compile(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", re.I)
 PARENT_RE = re.compile(rb'"parent_thread_id"\s*:\s*"([0-9a-fA-F-]{36})"')
@@ -50,6 +52,8 @@ def _db_relations(base):
 
 def meta_parent(path):
     """rollout 首行里的父线程号；读不到返回 None。只读前 256KB。"""
+    if str(path).endswith(".zst"):
+        return None  # 压缩会话从 state DB 取关系，不把压缩字节当 JSON。
     try:
         with open(path, "rb") as f:
             head = f.read(HEAD_BYTES)
@@ -66,11 +70,85 @@ def scan_rollouts(base):
     for sub in ("sessions", "archived_sessions"):
         for dirpath, _, filenames in os.walk(os.path.join(base, sub)):
             for fn in filenames:
-                if fn.startswith("rollout-") and fn.endswith(".jsonl"):
+                if fn.startswith("rollout-") and fn.endswith((".jsonl", ".jsonl.zst")):
                     m = UUID_RE.search(fn)
                     if m:
                         out[m.group(1).lower()] = os.path.join(dirpath, fn)
     return out
+
+
+def thread_metadata(base):
+    """只读最小元信息；错误明确返回，不读提示词和消息正文。"""
+    out, errors = {}, []
+    for db in sorted(Path(base).glob("state_*.sqlite")):
+        try:
+            con = sqlite3.connect(db.as_uri() + "?mode=ro", uri=True, timeout=5)
+            try:
+                cols = _cols(con, "threads")
+                if "id" not in cols:
+                    raise ValueError("threads 缺少 id")
+                fields = [k for k in ("id", "cwd", "source", "originator", "cli_version", "archived", "updated_at") if k in cols]
+                for row in con.execute("SELECT " + ",".join(fields) + " FROM threads"):
+                    d = dict(zip(fields, row))
+                    if isinstance(d.get("source"), str):
+                        try:
+                            d["source"] = json.loads(d["source"])
+                        except ValueError:
+                            pass
+                    d["metadata_status"] = "state_db"
+                    out[str(d["id"]).lower()] = d
+            finally:
+                con.close()
+        except (sqlite3.Error, OSError, ValueError) as exc:
+            errors.append({"path": str(db), "error": str(exc)})
+    return out, errors
+
+
+def compressed_metadata(path):
+    p = Path(path)
+    base = next((a.parent for a in p.parents if a.name in ("sessions", "archived_sessions")), None)
+    m = UUID_RE.search(p.name)
+    if base is None or m is None:
+        return {"metadata_status": "unknown"}
+    # 以数据库和 WAL 指纹失效，避免同一批上千会话重复查库。
+    stamp = tuple((str(f), f.stat().st_size, f.stat().st_mtime_ns)
+                  for f in sorted(base.glob("state_*.sqlite*")) if f.is_file())
+    key = (str(base), stamp)
+    if key not in _metadata_cache:
+        _metadata_cache.clear()
+        _metadata_cache[key] = thread_metadata(base)
+    rows, errors = _metadata_cache[key]
+    d = dict(rows.get(m.group(1).lower(), {"metadata_status": "unknown"}))
+    if errors:
+        d["metadata_errors"] = errors
+    return d
+
+
+_metadata_cache = {}
+
+
+def latest_turns(base):
+    """最后一轮状态只作活动线索，绝不等同整个任务结束。"""
+    rows, errors = {}, []
+    def order(value):
+        return (0, float(value)) if isinstance(value, (int, float)) else (1, str(value or ""))
+    for db in sorted(Path(base).glob("thread_history_*.sqlite")):
+        try:
+            con = sqlite3.connect(db.as_uri() + "?mode=ro", uri=True, timeout=5)
+            try:
+                required = {"thread_id", "status", "started_at", "completed_at"}
+                if not required <= _cols(con, "thread_turns"):
+                    raise ValueError("无法识别 thread_turns 结构")
+                for tid, status, start, end in con.execute(
+                        "SELECT thread_id,status,started_at,completed_at FROM thread_turns"):
+                    d = {"status": status, "started_at": start, "completed_at": end}
+                    if tid not in rows or order(start) > order(rows[tid].get("started_at")):
+                        rows[tid] = d
+            finally:
+                con.close()
+        except (sqlite3.Error, OSError, ValueError) as exc:
+            errors.append({"path": str(db), "error": str(exc)})
+    return rows, errors
 
 
 def relations(home, refresh=False):

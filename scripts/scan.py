@@ -1569,6 +1569,8 @@ def _first_text(payload):
 
 def read_rollout_head(path, max_lines=400, max_bytes=8 * 1024 * 1024):
     """流式读取 rollout：首行 session_meta 与第一条真实用户消息，读到即停。"""
+    if str(path).endswith(".jsonl.zst"):
+        return codex_state.compressed_metadata(path), None
     meta = {}
     first_user = None
     read = 0
@@ -1640,6 +1642,7 @@ def _source_info(meta):
 
 def probe_codex(opts):
     base = os.path.join(HOME, ".codex")
+    lifecycle, lifecycle_errors = codex_state.latest_turns(base)
     index = {}
     try:
         with open(os.path.join(base, "session_index.jsonl"), "rb") as f:
@@ -1667,7 +1670,7 @@ def probe_codex(opts):
         top = os.path.join(base, sub)
         for dirpath, _, filenames in os.walk(top):
             for fn in filenames:
-                if not (fn.startswith("rollout-") and fn.endswith(".jsonl")):
+                if not (fn.startswith("rollout-") and fn.endswith((".jsonl", ".jsonl.zst"))):
                     continue
                 p = os.path.join(dirpath, fn)
                 m = UUID_RE.search(fn)
@@ -1696,6 +1699,9 @@ def probe_codex(opts):
             "parent_thread_id": parent, "is_subagent": bool(parent) or kind == "subagent",
             "thread_name": idx.get("thread_name"), "index_updated_at": idx.get("updated_at"),
             "first_user_message": first_user, "open": p in open_paths,
+            "last_turn": lifecycle.get(sid), "task_finished": None,
+            "metadata_status": meta.get("metadata_status", "rollout"),
+            "metadata_errors": meta.get("metadata_errors", []), "archived": meta.get("archived"),
         })
     listed.sort(key=lambda x: -x["bytes"])
 
@@ -1737,7 +1743,7 @@ def probe_codex(opts):
             "generated_images_listed": len(images), "lsof_available": lsof_entries is not None,
             "reference_roots": [tilde(r) for r in ref_roots],
         },
-        "sessions": listed, "generated_images": images,
+        "sessions": listed, "generated_images": images, "lifecycle_errors": lifecycle_errors,
     }
 
 
@@ -1819,7 +1825,7 @@ def collect_codex_threads(base, with_lsof=True):
     for sub in ("sessions", "archived_sessions"):
         for dirpath, _, filenames in os.walk(os.path.join(base, sub)):
             for fn in filenames:
-                if not (fn.startswith("rollout-") and fn.endswith(".jsonl")):
+                if not (fn.startswith("rollout-") and fn.endswith((".jsonl", ".jsonl.zst"))):
                     continue
                 m = UUID_RE.search(fn)
                 if not m:

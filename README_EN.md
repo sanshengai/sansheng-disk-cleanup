@@ -151,3 +151,9 @@ Developed by [Sansheng Good Morning AI](https://sanshengai.top), born from a rea
 Code and accompanying documentation are licensed under the [MIT License](LICENSE). The bundled QR code library `scripts/vendor/qrcodegen.py` comes from [Project Nayuki](https://www.nayuki.io/page/qr-code-generator-library) (MIT) with its original copyright notice. The official logo and brand rights are reserved separately; see [BRAND.md](BRAND.md) for how the logo may be displayed and redistributed with the original Skill and its generated boards.
 
 If it helps, a GitHub Star is welcome.
+
+### Deeper investigation
+
+Active projects and frequently used tools remain in scope for analysis. The deep inventory groups every child directory by size and file timestamps, including groups below the ordinary scan threshold. Compressed Codex rollouts are counted, and the latest turn status is kept separate from task completion. Investigated questions remain visible until a decision is made.
+
+Old disposable Git indexes may be cleaned only after their entire tree is verified against a commit reachable from a retained branch, followed by reference, activity, dry-run and pilot checks. The executor verifies the proof again before deletion. Source files, real Git indexes and task receipts remain protected.

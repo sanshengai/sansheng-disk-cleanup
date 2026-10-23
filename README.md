@@ -152,3 +152,9 @@ python3 scripts/feedback.py gaps --run <run目录>      # 认不出来源的大�
 代码与随附文档采用 [MIT License](LICENSE)。内置的二维码编码库 `scripts/vendor/qrcodegen.py` 来自 [Project Nayuki](https://www.nayuki.io/page/qr-code-generator-library)（MIT），保留原版权声明。正式 Logo 与品牌权利单独保留，随原始 Skill 和生成的看板显示、再分发 Logo 的范围见 [品牌说明](BRAND.md)。
 
 好用的话，欢迎去 GitHub 点个 Star。
+
+### 深度调查
+
+进行中的项目和常用工具也会分析占用：按子任务、文件类型和时间下钻，不遗漏大量小目录。Codex 压缩会话计入统计；最后一轮完成与整个任务完成分开判断。看板显示全部已扫描目录，查过但尚未决定的事项继续保留。
+
+对旧临时 Git 索引，可以验证完整内容是否已保存在保留分支的提交中，再经过引用、活动、预演和试点检查清理。源代码、真实 Git 索引和任务回执继续保留；不能证明可删的文件不会仅因时间久就删除。

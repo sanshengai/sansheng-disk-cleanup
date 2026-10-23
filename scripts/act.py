@@ -780,6 +780,11 @@ def _execute_item(index, item, profile, dry_run, now, run=None, disp=None):
         res.d["disposal"] = {"mode": "native", "dir": None}      # 原生命令按各工具自己的方式清，不走废纸篓和归档
         return run_native(item, rp, res, dry_run, now, run)
 
+    if "checkpoint" in item:
+        ok, why = plan.artifact_checkpoint.verify(item)
+        if not ok:
+            return res.skip_item("临时产物复核失败：" + why)
+
     cand = collect_candidates(item, rp, profile, res)
     if cand is None:
         return res.d

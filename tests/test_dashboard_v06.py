@@ -216,7 +216,7 @@ def test_review_choices_are_visible_and_never_select_delete(browser, tmp_path):
         {'id': 'c05', 'title': '旧任务素材', 'question': '还要继续用吗？', 'bytes': 2000000000}]
     page, errors = open_page(browser, tmp_path, payload, viewport={'width': 390, 'height': 844})
     assert not page.get_by_role('button', name='想清理，继续查', exact=True).is_visible()
-    page.get_by_text('待核查 1 项 · 展开选择核查方向', exact=True).click()
+    page.get_by_text('待决定 1 项 · 展开选择核查方向', exact=True).click()
     page.get_by_role('button', name='想清理，继续查', exact=True).click()
     assert page.locator('details.asks').evaluate('(e)=>e.open'), '回答后保持展开，便于继续答下一项'
     assert page.get_by_role('button', name='复制核查答复，发给 Agent').is_enabled()
@@ -228,14 +228,15 @@ def test_review_choices_are_visible_and_never_select_delete(browser, tmp_path):
 
 
 @pw
-def test_investigated_review_is_not_asked_again_or_selected(browser, tmp_path):
+def test_investigated_review_still_requires_decision(browser, tmp_path):
     payload = sample_payload()
     payload['proposal']['review_questions'] = [
         {'id': 'c05', 'title': '旧任务素材', 'question': '还要继续用吗？', 'bytes': 2000000000}]
     payload['review_status'] = {'entries': [{'id': 'c05', 'status': 'investigated', 'summary': 'Copy verified'}]}
     page, errors = open_page(browser, tmp_path, payload, viewport={'width': 390, 'height': 844})
     assert '已经核查 1 项' in page.inner_text('body')
-    assert page.get_by_role('button', name='想清理，继续查', exact=True).count() == 0
+    page.get_by_text('待决定 1 项 · 展开选择核查方向', exact=True).click()
+    assert page.get_by_role('button', name='想清理，继续查', exact=True).is_visible()
     assert page.evaluate("picked.has('c05')") is False
     assert page.get_by_role('link', name='查看逐项证据与保留条件 →').get_attribute('href') == 'review.html'
     assert no_hscroll(page) and not errors
@@ -342,17 +343,19 @@ def test_no_models_and_null_purgeable(browser, tmp_path):
 
 
 @pw
-def test_category_drilldown_lists_top20_with_refs(browser, tmp_path):
+def test_category_drilldown_lists_all_with_refs(browser, tmp_path):
     page, errors = open_page(browser, tmp_path, viewport={"width": 1280, "height": 900})
     page.get_by_role("button", name=re.compile("缓存与暂存")).first.click()
     rows = page.locator(".deep li")
-    assert errors == [] and rows.count() == 20                                # 25 个只取最大的 20 个
+    assert errors == [] and rows.count() == 25                                # 全部目录可见，不丢掉低位条目
+    page.locator(".deep summary").click()
     first = rows.first.inner_text()
     assert "~/Library/Caches/dir00" in first and "3.0 GB" in first and "没查引用" in first
     body = page.locator(".deep").inner_text()
     assert "没发现被引用" in body and "被 4 处文件引用" in body
-    assert "dir24" not in body and "ollama" not in body                         # 别的类别、排在 20 名外的不出现
+    assert "dir24" in body and "ollama" not in body                         # 别的类别、排在 20 名外的不出现
     page.get_by_role("button", name=re.compile("本地模型")).first.click()
+    page.locator(".deep summary").click()
     assert "~/.ollama/models" in page.locator(".deep").inner_text()
 
 
