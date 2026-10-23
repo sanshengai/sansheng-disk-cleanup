@@ -8,7 +8,7 @@
     {
       "name": "sansheng-disk-cleanup",
       "description": "Disk cleanup for heavy AI users on macOS: evidence-based judgment of agent sessions, generated images, worktree intermediates and caches, with a branded selection dashboard.",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "source": "./",
       "author": {
         "name": "叁笙 (sansheng)"
