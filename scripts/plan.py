@@ -730,7 +730,7 @@ def evidence_review(card, items, nodes, profile, validated_checkpoints=None):
             checks.append(c)
     if items and all(isinstance(i, dict) and i.get("checkpoint") for i in items):
         verified = [(i["path"] in validated_checkpoints, "sealed checkpoint") for i in items] if validated_checkpoints is not None else [artifact_checkpoint.verify(i) for i in items]
-        checks.append({"kind": "git_index_checkpoint", "ok": all(v[0] for v in verified),
+        checks.append({"kind": "artifact_checkpoint", "ok": all(v[0] for v in verified),
                        "end": all(v[0] for v in verified),
                        "msg": "仅这些临时索引已持久保存；不代表整个项目结束"})
     has_end = any(c["end"] for c in checks)
@@ -969,6 +969,9 @@ def check_item(item, ctx):
     rec = {"path": path, "realpath": rp, "ino": st.st_ino, "dev": st.st_dev, "method": method}
     if "checkpoint" in item:
         ok, why = artifact_checkpoint.verify(item)
+        dependencies = artifact_checkpoint.dependencies(item)
+        if any(within(dep, os.path.realpath(target)) for dep in dependencies for target in ctx.get("cleanup_paths", [])):
+            ok, why = False, "清理范围包含复制件的保留仓库或任务回执"
         if not ok:
             errs.append(f"{path}：{why}")
         else:
@@ -1545,7 +1548,7 @@ def check_plan(run):
             ctx = {"profile": profile, "nodes": nodes, "reviews": reviews, "matched": set(), "item_refs": item_refs,
                    "cur_roots": cur_roots, "stale_roots": stale_roots, "run": run,
                    "legacy": any(isinstance(e, str) and e.startswith(EVIDENCE_PREFIXES) for e in evidence),
-                   "soft": []}
+                   "soft": [], "cleanup_paths": [i.get("path") for c in cards if c.get("verdict") in ("clean", "decide") for i in c.get("items", []) if isinstance(i, dict) and isinstance(i.get("path"), str)]}
             if any(r["verdict"] == "depends" for r in reviews):
                 errs.append("refs_reviewed 结论为 depends：引用对象仍依赖这批东西，整卡降为 keep")
             young = _retention_hit(items, nodes, profile) if isess else None
