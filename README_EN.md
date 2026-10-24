@@ -21,7 +21,7 @@ If it helps, please give the [GitHub repository](https://github.com/sanshengai/s
 Please install the Skill from https://github.com/sanshengai/sansheng-disk-cleanup and show me where my disk space went.
 ```
 
-Current version 0.6.1, macOS only; Windows is not supported yet.
+See [GitHub Releases](https://github.com/sanshengai/sansheng-disk-cleanup/releases/latest) for the current release. macOS only; Windows is not supported yet.
 
 ## Three highlights
 
@@ -35,7 +35,7 @@ It knows where each AI tool keeps conversations, images and drafts. Before sugge
 
 ### It learns: understands you better each time
 
-The first run is a one-page questionnaire to get to know you: which tools you use often, which projects are done, where your finished work lives, whether deleted items should go to the Trash first. After that it follows your habits, and every cleanup ends with "what I remembered this time"; strike out anything it got wrong. For things that keep growing (an AI tool that keeps every conversation, a script that saves each image several times), it fixes the source with your consent and tells you next time whether the growth really stopped.
+The first run is a one-page questionnaire to get to know you: which tools you use often, which projects are done, where your finished work lives, whether deleted items should go to the Trash first. It then follows your confirmed retention boundaries. New observations are proposed for review, without automatically editing global memory or widening deletion permission. For things that keep growing (an AI tool that keeps every conversation, a script that saves each image several times), it fixes the source with your consent and tells you next time whether the growth really stopped.
 
 ### It lets you decide: one board, your call
 
@@ -52,11 +52,17 @@ No terminal output to read: one board shows where the space went, and you tick a
 - **Safety does not change**: settings and memory only change what it asks and what is pre-selected, **never whether something may be deleted**. No sudo, no background daemons, everything runs locally.
 - **Shareable**: the results page can save a share image for social media or group chats.
 
+## Completed-task cleanup
+
+Large folders are split by task and phase, including external Agent workspaces, duplicate payloads, old build outputs and rendering intermediates. Retained inputs, final outputs, recovery evidence and current consumers are checked before deletion. The producing Agent can also use the stage-end workflow to remove its own unneeded intermediates within existing authorization.
+
+Files changed within 24 hours remain protected by default. An explicit exception is bound to an exact selection and rechecked at deletion time; active consumers and unique inputs remain protected.
+
 ## First run
 
 1. **Quick look**: a fast scan of about 1 minute to see which tools are installed and which projects exist.
 2. **One-page questionnaire**: questions tailored to your machine (no Docker, no Docker question). About 5 minutes for heavy AI users, or one click to accept all recommendations; say "change settings" any time.
-3. **Closer look**: following your answers, it reads what it is allowed to read and looks for evidence that projects are done, skipping tools you use often and projects in progress.
+3. **Closer look**: following your answers, it examines permitted files and completion evidence, including frequently used tools and ongoing projects. Only completed subtasks without current consumers can be retired.
 4. **Cleanup board**: lists what can be cleaned and what needs your decision, with the reasoning and consequences for each item.
 5. **Results page**: how much was freed, which files were read, what it remembered, and what was fixed at the source.
 
