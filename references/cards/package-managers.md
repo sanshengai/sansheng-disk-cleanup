@@ -60,6 +60,26 @@ du -sh ~/.gradle/* 2>/dev/null | sort -h
 | Homebrew | `brew cleanup`（默认清 120 天以前的下载与旧版本，`HOMEBREW_CLEANUP_MAX_AGE_DAYS` 可调）、`brew cleanup --prune=all`（清所有缓存下载）、`-n` / `--dry-run` | 不要与 `brew install/upgrade/uninstall` 同时运行 |
 | Gradle | 原生自动清理：已发布版本相关缓存 30 天未用、快照 7 天、下载资源 30 天、创建资源 7 天、本地构建缓存 7 天、守护进程日志 14 天；无用的 `wrapper/dists` 随之删除 | 保留期可在 `~/.gradle/init.d/` 的 init 脚本里改。https://docs.gradle.org/current/userguide/directory_layout.html |
 
+## 当前用户的 Node 编译缓存
+
+`scripts/node_compile_cache.py` 是窄范围清理入口。它用 `/usr/bin/getconf DARWIN_USER_TEMP_DIR` 发现当前用户临时目录，只接受其中 `node-compile-cache` 下已识别版本族、UID 匹配的缓存文件；不读取环境变量来改目标，也不接受自填清理路径。它不修改 Node 配置、不安装常驻任务、不放宽现有保护名单。
+
+计划只选当前用户拥有、单链接普通文件，mtime 和 ctime 均超过 24 小时、无特殊标记且未被打开。完整 seal 绑定根目录和版本目录身份、精确文件身份与 SHA-256、保护配置及处置方式。`direct` 永久删除；`trash` 移到同卷废纸篓，不算已释放。不能把一份方式的计划换成另一种方式执行。
+
+在缓存树之外使用已存在、无符号链接的绝对证据目录；把 plan 输出的完整摘要传给后续命令，授权沿用用户已明确给出的本批范围。以下以永久删除为例，选择废纸篓时所有命令一致改为 `--method trash`：
+
+```sh
+python3 scripts/node_compile_cache.py plan --run <证据目录> --method direct
+python3 scripts/node_compile_cache.py check --run <证据目录> --method direct --seal <摘要>
+python3 scripts/node_compile_cache.py run --run <证据目录> --method direct --seal <摘要> --authorize '<本批用户授权原话>' --dry-run
+python3 scripts/node_compile_cache.py run --run <证据目录> --method direct --seal <摘要> --authorize '<本批用户授权原话>' --pilot
+python3 scripts/node_compile_cache.py run --run <证据目录> --method direct --seal <摘要> --authorize '<本批用户授权原话>'
+```
+
+正式执行要求同一封存计划的成功预演与一项成功试点，跳过已处理的试点文件。每次执行重新核验所选文件，分批检查打开状态，处置前再次核对目录、文件身份与完整哈希；所选文件发生变化就拒绝或停止，不将新状态自动纳入授权。无关新增、未选变化和未识别项目只记录并保留，不能借机扩大范围；所有版本目录与父目录保留。
+
+逐文件结果追加到 JSONL，并在结束时写 JSON 汇总，避免每处理一项都重写增长中的清单造成 O(N²) 写入。无关库存因并发变化无法完整统计时标为 `incomplete`，保留已完成处置回执，不将统计缺口当成“没有新增”；所选文件的严格复核继续生效。已有计划与回执不覆盖；中断或停止后先核对回执和现状，再对剩余对象另建运行目录计划。报告合并试点与正式成功项、按路径去重，分别列出 `allocated_removed`、`allocated_trashed` 与整卷 `free_delta`；这些机制和测试通过不等于已实测完成清理。
+
 ## 不能做的事
 
 - 不手删 `~/.gradle/caches/journal-1` 和 `modules-2/*.lock`：前者是原生清理依赖的访问记录。整桶 `rm -rf ~/.gradle` 会连 `wrapper/dists`、`jdks` 一起删，工程下次要重新下载整套发行包与 JDK。
