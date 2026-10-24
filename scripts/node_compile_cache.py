@@ -140,8 +140,14 @@ def unopened_batch(paths):
 
 def inventory_delta(plan, root, completed):
     expected = {e['path']: e for e in plan['inventory'] if e['path'] not in completed}
-    actual = {e['path']: e for e in inventory(root)}
-    return {'new_files_retained': sorted(set(actual) - set(expected)),
+    try:
+        actual = {e['path']: e for e in inventory(root)}
+    except OSError as exc:
+        # Statistics must not discard completed mutation receipts when Node concurrently
+        # replaces an unselected cache file. Selected files have separate strict checks.
+        return {'status': 'incomplete', 'reason': str(exc), 'new_files_retained': [],
+                'missing_unselected': [], 'changed_unselected_retained': []}
+    return {'status': 'complete', 'new_files_retained': sorted(set(actual) - set(expected)),
             'missing_unselected': sorted(set(expected) - set(actual)),
             'changed_unselected_retained': sorted(p for p in set(actual) & set(expected)
                                                   if actual[p] != expected[p] and not stat.S_ISDIR(actual[p]['mode']))}

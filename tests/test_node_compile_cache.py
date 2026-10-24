@@ -333,3 +333,18 @@ def test_full_inventory_and_profile_loads_are_not_per_leaf(scene, monkeypatch):
     assert len(receipt['entries']) == 130
     assert counts == {'inventory': 2, 'profile': 3, 'dump': 2}
     assert len(out.with_suffix('.jsonl').read_text().splitlines()) == 130
+
+
+def test_concurrent_stat_failure_does_not_discard_completed_receipt(scene, monkeypatch):
+    s = scene
+    preview(s)
+    original = n.inventory
+    def disappear(root):
+        if not s.source.exists():
+            raise FileNotFoundError('unselected cache concurrently disappeared')
+        return original(root)
+    monkeypatch.setattr(n, 'inventory', disappear)
+    receipt, out = n.execute(s.plan, s.seal, s.run, 'direct', '已授权', pilot=True)
+    assert receipt['overall_status'] == 'completed'
+    assert receipt['unselected_after']['status'] == 'incomplete'
+    assert json.loads(out.read_text())['entries'][0]['status'] == 'removed'
