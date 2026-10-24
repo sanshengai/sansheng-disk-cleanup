@@ -523,3 +523,21 @@ def test_invariant_test_would_also_catch_a_sealed_card_that_was_not_executable_b
     assert "act" not in base["records"] and base["check"]["act"]["verdict_out"] == "keep"
     with pytest.raises(AssertionError):
         assert_no_escalation(base, other)
+
+
+def test_build_only_distinguishes_leaf_selection_from_whole_tree(env):
+    build(env)
+    with_answers(env, {"worktrees": "build_only"})
+    before = outputs(env)
+    assert before["check"]["wtc"]["verdict_out"] == "decide"
+    plan_path = env.run / "plan.json"
+    document = json.loads(plan_path.read_text())
+    entry = next(c for c in document["cards"] if c["id"] == "wtc")["items"][0]
+    entry.update(scope="files", files=[str(Path(entry["path"]) / "a.bin")])
+    plan_path.write_text(json.dumps(document))
+    after = outputs(env)
+    assert after["check"]["wtc"]["verdict_out"] == "clean"
+    entry.update(scope="all")
+    entry.pop("files")
+    plan_path.write_text(json.dumps(document))
+    assert outputs(env)["check"]["wtc"]["verdict_out"] == "decide"

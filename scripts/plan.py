@@ -1665,7 +1665,9 @@ def check_plan(run):
                 elif S["worktree"] == "ask":
                     wt_ask = True
                 elif S["worktree"] == "build_only" and verdict == "clean" \
-                        and any(_is_worktree_root(os.path.realpath(i["path"]), nodes) for i in real_items):
+                        and any(_is_worktree_root(os.path.realpath(i["path"]), nodes)
+                                and not (i.get("method") == "delete" and i.get("scope") == "files")
+                                for i in real_items):
                     soft.append(WT_BUILD_ONLY_REASON)
                     setting_q = WT_BUILD_ONLY_QUESTION
         elif verdict == "govern" and items:
