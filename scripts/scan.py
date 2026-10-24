@@ -2674,9 +2674,16 @@ def probe_item_refs(opts):
             if primary is None:
                 continue
             prefs_ = primary.get("refs") or {}
+            retired = False
+            if planmod.retired_test_copy.is_item(it):
+                try:
+                    retired = planmod.retired_test_copy.load_scope(it, profile, run) is not None
+                except (OSError, ValueError, TypeError, KeyError, IndexError):
+                    pass  # Failed proofs never expand a protected search scope.
             if os.path.normpath(str(primary.get("path"))) == rp:
                 # 节点本身就是这一条：扫描时查过就用那个结果；非前沿节点（扫描时没查它自己的引用，如模型目录、SDK 目录）要补查
                 if not ((prefs_.get("checked") is not True and prefs_.get("reason") in ("non-frontier", "no-search-scope"))
+                        or (retired and prefs_.get("reason") in ("protected", "--no-refs"))
                         or (prefs_.get("checked") is True and stale)):
                     continue
             elif prefs_.get("checked") is True and not stale:

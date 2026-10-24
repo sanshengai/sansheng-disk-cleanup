@@ -11,6 +11,7 @@
 """
 import argparse
 import artifact_checkpoint
+import retired_test_copy
 import run_authorization
 import base64
 import contextlib
@@ -978,10 +979,16 @@ def check_item(item, ctx):
     if stat.S_ISLNK(st.st_mode):
         return [f"{path}：item 路径本身是符号链接，不接受（请直接给出真实路径）"], None
     rp = os.path.realpath(path)
-    reason = protect.protected_reason(rp, ctx["profile"])
+    retired = None
+    if retired_test_copy.is_item(item):
+        try:
+            retired = retired_test_copy.load_scope(item, ctx["profile"], ctx.get("run"))
+        except (OSError, ValueError, TypeError, KeyError, IndexError) as exc:
+            errs.append(f"{path}：退役测试副本复核失败：{exc}")
+    reason = retired.reason(rp) if retired else protect.protected_reason(rp, ctx["profile"])
     if reason:
         errs.append(f"{path}：属于保护路径（{reason}）")
-    if not protect.under_roots(rp, ctx["profile"]):
+    if not retired and not protect.under_roots(rp, ctx["profile"]):
         errs.append(f"{path}：不在 profile.roots 之内")
 
     if item.get("class") is not None and item.get("class") not in ITEM_CLASSES:
@@ -1006,7 +1013,7 @@ def check_item(item, ctx):
         except (OSError, ValueError, TypeError, KeyError) as exc:
             errs.append(f"{path}：{exc}")
     if "checkpoint" in item:
-        ok, why = artifact_checkpoint.verify(item)
+        ok, why = (True, "retired test copy verified") if retired else artifact_checkpoint.verify(item)
         dependencies = artifact_checkpoint.dependencies(item)
         if any(dependency_selected(dep, ctx) for dep in dependencies):
             ok, why = False, "清理范围包含复制件的保留仓库或任务回执"
@@ -1057,7 +1064,7 @@ def check_item(item, ctx):
                     if stat.S_ISDIR(fst.st_mode):
                         errs.append(f"{f}：files 只能列文件，不能列目录")
                         continue
-                    pr = entry_protected(cf, ctx["profile"])
+                    pr = retired.reason(cf) if retired else entry_protected(cf, ctx["profile"])
                     if pr:
                         errs.append(f"{f}：属于保护路径（{pr}）")
                         continue
@@ -1118,7 +1125,8 @@ def check_item(item, ctx):
             node_refs = n.get("refs") if isinstance(n.get("refs"), dict) else {}
             ir_exact = ir_item if _ir_usable(ir_item, ctx) else None
             node_unsearched = (node_refs.get("checked") is not True
-                               and node_refs.get("reason") in ("non-frontier", "no-search-scope"))
+                               and (node_refs.get("reason") in ("non-frontier", "no-search-scope")
+                                    or (retired and node_refs.get("reason") in ("protected", "--no-refs"))))
             node_stale = node_refs.get("checked") is True and bool(ctx.get("stale_roots"))
             if ir_exact is not None and ((n is primary and exact and node_unsearched) or node_stale):
                 # 条目正好是一个非前沿节点本身（扫描时没查它自己的引用）、或扫描时没有可搜的目录 / 扫描后新增了成品目录：
@@ -1128,6 +1136,8 @@ def check_item(item, ctx):
                     errs.append(f"{label}：定向引用检查发现 {ir_exact.get('count')} 处引用，但卡片 evidence 中没有样本取自 item_refs.json 的 refs_reviewed（history_only）")
             elif node_stale:
                 errs.append(_stale_msg(label, ctx))
+            if retired and retired.reason(str(n.get("path", ""))) is None:
+                nn = dict(nn, protected=False)
             errs.extend(_node_errors(nn, label, lambda: refs_rescue(ctx, label), allow_recent))
         refs = n.get("refs") if isinstance(n.get("refs"), dict) else {}
         count = refs.get("count")

@@ -104,3 +104,16 @@ Git `locked initializing` 且无 index 的旧目录可能是中断检出；statu
 修改生产器后核对实际调用的版本：主脚本修好不代表历史复制脚本已更新。定制副本不能盲目覆盖，应迁移共享生命周期逻辑并验证原有功能。清理失败要检查退出码及目录实际存在性，不能只打印“成功”。
 
 按本机观察提出常驻工作集、单任务峰值和并发余量建议；目标空余容量不是扩大删除权限的依据。稳定个人边界沿用私有配置，具体任务证据留账本，不不断追加全局记忆。每次交付报告“已释放、待决策、证据不足、仍在生产”各自的具体对象和体积。
+
+## 系统临时目录内已退役测试副本
+
+当原始测试已完成、用户授权关闭该次试验，且所选副本与持久保留端逐叶 SHA256 相同，可用 `retired_test_copy` checkpoint。它只豁免系统临时目录的这一条位置保护，不放开整个 `/tmp`，不覆盖用户保护、正在运行的生产器、文件占用或引用检查。当前支持有原始 Vitest `RUN` 目录与完整通过计数的回执；其他测试格式保持拒绝，不补造日志。
+
+checkpoint 为 `{kind:"retired_test_copy", path:"绝对证明路径", sha256:"证明文件完整SHA256"}`。证明文件使用 `schema:"retired-test-copy/1"`、`role:"test_copy"`、`status:"retired"`，并包含：
+
+- `task_root`：系统临时根下当前用户拥有的单个任务目录的规范绝对路径，不能是临时根本身。item.path 须是该目录内的子目录。
+- `retirement_reason`：真实阶段退役决定及恢复方式。用户泛泛要求腾空间不等于已结束任何正在使用的试验。
+- `retained_evidence`：留在任务临时目录外的原测试源码、原正负日志等 `{path,sha256}`；`test_receipt` 是其中原成功日志的同一引用，加 `format:"vitest"`。RUN 目录须属于本任务根，全部测试通过。
+- `files`：非空的 `{path,retained_copy,sha256}` 数组，精确等于 item 的 `scope:"files"` 清单。两端须为独立普通文件；保留端位于既有 deliverable_roots，不能同时列入任何删除卡。
+
+沿原入口创建本轮 `run_authorization.py --retire-completed-outputs` 授权，需要近期例外时另加 `--allow-recent`；不改全局 profile。再运行原引用检查、check、seal、propose 和 act。检查与执行共用同一证明校验，执行时每个叶文件在实际处置前重新验证源、保留端 SHA 和证据身份；任一漂移仅跳过该文件，不转为整目录删除。未选、不同内容、无保留副本和唯一证据继续保留。

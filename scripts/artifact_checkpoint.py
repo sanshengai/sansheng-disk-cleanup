@@ -68,6 +68,9 @@ def verify(item):
         if not isinstance(item, dict):
             return False, "证明条目必须为对象"
         proof = item.get("checkpoint")
+        if isinstance(proof, dict) and proof.get("kind") == "retired_test_copy":
+            import retired_test_copy
+            return retired_test_copy.verify(item)
         if isinstance(proof, dict) and proof.get("kind") == "retired_build_copy":
             import retired_worktree
             return retired_worktree.verify_item(item)
@@ -208,6 +211,9 @@ def dependencies(item):
     proof = item.get("checkpoint") or {}
     if not isinstance(proof, dict):
         return []
+    if proof.get("kind") == "retired_test_copy":
+        import retired_test_copy
+        return retired_test_copy.dependencies(item)
     if proof.get("kind") == "retired_build_copy":
         import retired_worktree
         return retired_worktree.dependencies(item)

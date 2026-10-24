@@ -548,7 +548,7 @@ class ItemResult:
 
 # ----------------------------------------------------------------- 单个条目
 
-def verify_identity(item, profile):
+def verify_identity(item, profile, retired=None):
     """路径仍是封存时那一个；返回 (真实路径, None) 或 (None, 跳过原因)。"""
     path = item["path"]
     try:
@@ -564,15 +564,15 @@ def verify_identity(item, profile):
         return None, f"路径解析结果已变化（封存时 {item['realpath']}，现在 {rp}）"
     if (st.st_ino, st.st_dev) != (item["ino"], item["dev"]):
         return None, "路径已被替换（ino/dev 与封存时不一致）"
-    reason = protected(rp, profile)
+    reason = retired.reason(rp) if retired else protected(rp, profile)
     if reason:
         return None, f"保护路径：{reason}"
-    if not protect.under_roots(rp, profile):
+    if not retired and not protect.under_roots(rp, profile):
         return None, "不在 profile.roots 之内"
     return rp, None
 
 
-def collect_candidates(item, rp, profile, res):
+def collect_candidates(item, rp, profile, res, retired=None):
     """按 scope 现场枚举要删除的文件与目录。返回 (files[(path,st)], dirs, root_dir_removable) 或 None（整条跳过）。"""
     scope = item["scope"]
     keep = item.get("keep") or []
@@ -604,7 +604,7 @@ def collect_candidates(item, rp, profile, res):
             if is_kept(p, rp, keep):
                 res.d["kept_count"] += 1
                 continue
-            pr = protected(p, profile, entry=True)
+            pr = retired.reason(p) if retired else protected(p, profile, entry=True)
             if pr:
                 res.add_skip(p, f"保护路径：{pr}")
                 continue
@@ -690,7 +690,7 @@ def collect_candidates(item, rp, profile, res):
     return files, [], False
 
 
-def delete_files(files, res, parent_cache, disp=None, authorized_files=None):
+def delete_files(files, res, parent_cache, disp=None, authorized_files=None, leaf_guard=None):
     disp = disp or Disposer()
     for p, st0 in files:
         parent = os.path.dirname(p)
@@ -715,6 +715,12 @@ def delete_files(files, res, parent_cache, disp=None, authorized_files=None):
                     raise ValueError("授权后文件身份或内容变化")
             except (OSError, ValueError, TypeError, KeyError) as exc:
                 res.add_skip(p, str(exc))
+                continue
+        if leaf_guard is not None:
+            try:
+                leaf_guard(p)
+            except (OSError, ValueError, TypeError, KeyError, IndexError) as exc:
+                res.add_skip(p, "退役测试保留副本复核失败：" + str(exc))
                 continue
         kind, why = disp.dispose(p)
         if kind == "skip":
@@ -774,7 +780,13 @@ def _execute_item(index, item, profile, dry_run, now, run=None, disp=None):
     if item.get("method") not in ("delete", "native") or (
             item["method"] == "delete" and item.get("scope") not in plan.SCOPES):
         return res.skip_item("封存条目的 method/scope 不合法")
-    rp, why = verify_identity(item, profile)
+    retired = None
+    if plan.retired_test_copy.is_item(item):
+        try:
+            retired = plan.retired_test_copy.load_scope(item, profile, run)
+        except (OSError, ValueError, TypeError, KeyError, IndexError) as exc:
+            return res.skip_item("退役测试副本复核失败：" + str(exc))
+    rp, why = verify_identity(item, profile, retired)
     if why:
         return res.skip_item(why)
 
@@ -800,11 +812,11 @@ def _execute_item(index, item, profile, dry_run, now, run=None, disp=None):
             return res.skip_item("本轮授权复核失败：" + str(exc))
 
     if "checkpoint" in item:
-        ok, why = plan.artifact_checkpoint.verify(item)
+        ok, why = (True, "retired test copy verified") if retired else plan.artifact_checkpoint.verify(item)
         if not ok:
             return res.skip_item("临时产物复核失败：" + why)
 
-    cand = collect_candidates(item, rp, profile, res)
+    cand = collect_candidates(item, rp, profile, res, retired)
     if cand is None:
         return res.d
     files, dirs, root_removable = cand
@@ -828,7 +840,8 @@ def _execute_item(index, item, profile, dry_run, now, run=None, disp=None):
         return res.finish()
 
     parent_cache = {}
-    delete_files(files, res, parent_cache, disp, authorized_files)
+    delete_files(files, res, parent_cache, disp, authorized_files,
+                 retired.verify_leaf if retired else None)
     if item["scope"] == "ignored-only":
         # 只清理因删除而变空的目录（根目录自身保留）
         touched = set()
