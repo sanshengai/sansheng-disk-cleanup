@@ -59,7 +59,7 @@ description: 面向 AI 重度用户的 macOS 磁盘清理，会读懂你的电�
 
 大型目录必须下钻到子任务；小于扫描阈值的文件也按类型、创建/修改时间和用途聚合，避免数百个小目录合计几十 GB 却全部漏掉。用 `scripts/deep_inventory.py ROOT --out FILE` 采集只读清单；时间只作线索。重复文件须逐字节哈希、明确保留副本及依赖；重复统计不能直接当作可释放空间。
 
-大量旧执行现场、登记副本或中断初始化构建树，按 [task-retirement.md](references/task-retirement.md) 追踪具体阶段与实际生产脚本。通过窄 checkpoint 证明已退役副本，仍走完整保护与封存执行；不能因为父项目进行中而停止调查。
+大量旧执行现场、登记副本或中断初始化构建树，按 [task-retirement.md](references/task-retirement.md) 追踪具体阶段与实际生产脚本。通过窄 checkpoint 证明已退役副本，仍走完整保护与封存执行；不能因为父项目进行中而停止调查。怀疑 Agent 宿主在别处先生成再复制时，按 [工作区落盘链](references/cards/git-worktree-build.md#从-agent-宿主追到真正的落盘位置) 核对活跃配置、准备区、专属与原生 Agent home、最终交付位置；只扫描软件同名目录不能证明没有副本。
 
 当前用户系统临时区中的 Node 编译缓存，使用 [包管理与构建缓存卡](references/cards/package-managers.md#当前用户的-node-编译缓存) 的 `scripts/node_compile_cache.py` 专用入口；它从系统发现根目录、封存精确文件，按 plan → check → dry-run → pilot → run 执行，不开放任意临时路径清理。
 
