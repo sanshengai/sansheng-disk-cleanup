@@ -185,6 +185,8 @@ def validate(plan, seal, root, profile, method, completed=frozenset()):
     paths = [entry['path'] for entry in plan['entries']]
     if len(paths) != len(set(paths)):
         raise ValueError('清单路径重复')
+    if set(plan.get('families', {})) != {str(Path(path).parent) for path in paths}:
+        raise ValueError('版本目录身份清单缺失或多余')
     for path in paths:
         if path not in completed:
             safe_path(path, root, profile)

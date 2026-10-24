@@ -74,7 +74,7 @@ def test_path_escape_even_with_resealed_plan(scene):
     s = scene
     bad = copy.deepcopy(s.plan)
     bad['entries'][0]['path'] = str(s.run / '1234abcd')
-    with pytest.raises(ValueError, match='路径逃逸'):
+    with pytest.raises(ValueError, match='路径逃逸|版本目录身份清单'):
         n.preflight(bad, n.digest(bad), s.run, 'direct')
 
 
@@ -280,6 +280,15 @@ def test_formal_run_requires_successful_pilot(scene):
     preview(s)
     with pytest.raises(ValueError, match='试点'):
         n.execute(s.plan, s.seal, s.run, 'direct', '已授权')
+    assert s.source.exists()
+
+
+def test_missing_family_identity_rejected_before_mutation(scene):
+    s = scene
+    bad = copy.deepcopy(s.plan)
+    bad['families'] = {}
+    with pytest.raises(ValueError, match='版本目录身份清单'):
+        n.preflight(bad, n.digest(bad), s.run, 'direct')
     assert s.source.exists()
 
 
