@@ -395,6 +395,33 @@ def _reasons(p, profile=None):
             yield "ancestor", f"用户保护 {extra}"
 
 
+def chrome_clone_root():
+    """只信 macOS 的当前用户目录；不读取 TMPDIR，也不开放整个 var/folders。"""
+    import subprocess
+    from pathlib import Path
+    value = subprocess.check_output(['/usr/bin/getconf', 'DARWIN_USER_TEMP_DIR'], text=True).strip()
+    temp = Path(value).resolve()
+    if not re.fullmatch(r'/private/var/folders/[^/]{2}/[^/]+/T', str(temp)):
+        raise ValueError('无法确认当前用户系统临时目录')
+    if temp.stat().st_uid != os.getuid():
+        raise ValueError('系统临时目录不属于当前用户')
+    return temp.parent / 'X' / 'com.google.Chrome.code_sign_clone'
+
+
+def chrome_clone_path(path, profile):
+    """专用原生清理的窄入口；通用 under_roots 与保护名单不变。"""
+    from pathlib import Path
+    p = Path(path)
+    root = chrome_clone_root()
+    if p.parent != root or not re.fullmatch(r'code_sign_clone\.[A-Za-z0-9]{6}', p.name):
+        raise ValueError('只接受系统发现位置中的单个 Chrome 启动克隆')
+    if p.resolve() != p or root.resolve() != root or not p.is_dir():
+        raise ValueError('路径不存在或经过符号链接')
+    if p.stat().st_uid != os.getuid() or protected_reason(str(p), profile):
+        raise ValueError('归属或保护检查拒绝')
+    return p
+
+
 def under_roots(path, profile):
     p = real(path)
     roots = [real(r) for r in profile.get("roots", ["~"]) + profile.get("extra_roots", [])]

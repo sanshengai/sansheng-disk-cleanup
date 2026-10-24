@@ -15,7 +15,7 @@
 | `~/Library/Containers/com.apple.mail/Data/Library/Mail Downloads`（旧版 `~/Library/Mail Downloads`） | 邮件附件的打开副本 | 可再生缓存（原件在邮件里）；路径随版本变化；本机两个路径都不存在 |
 | `~/Library/Mail`、`~/Library/Messages` | 邮件库、信息库 | 用户独有成果（受保护，不动） |
 | `/private/var/vm` 下的 swap 与 sleepimage | 虚拟内存与休眠镜像 | 系统状态（不碰） |
-| `/private/var/folders`（每用户一组两级随机目录） | 按子目录角色分：`C/` 缓存；`T/` 运行中程序的临时目录；`0/` 等其余目录为系统与程序状态。只有能确认属于已退出程序、且可重建的 GPU/着色器缓存类（`C/` 下形如 `com.apple.metal*`、`com.apple.gpuarchiver`）才可作为建议 | 混合：`C/` 内上述类目为可再生缓存；`T/`、`0/` 及其余一律只报告不动。本机存在，`probe system` 实测约 36GB（含当前用户读不到的部分，`status=partial_denied`）；手工 `du` 只量到约 20G，口径更窄。部分子目录不可读，不要为读取而提权 |
+| `/private/var/folders`（每用户一组两级随机目录） | 按子目录角色分：`C/` 缓存；`T/` 运行中程序的临时目录；`0/` 等其余目录为系统与程序状态。只有能确认属于已退出程序、且可重建的 GPU/着色器缓存类（`C/` 下形如 `com.apple.metal*`、`com.apple.gpuarchiver`）才可作为建议 | 混合：`C/` 内上述类目为可再生缓存；`T/`、`0/` 及未识别内容只报告不动；`X/` 内经验证的旧版 Chrome 启动克隆仅走 browsers 卡的专用原生清理，不开放整目录删除。本机存在，`probe system` 实测约 36GB（含当前用户读不到的部分，`status=partial_denied`）；手工 `du` 只量到约 20G，口径更窄。部分子目录不可读，不要为读取而提权 |
 | `/Applications/Install macOS*.app` | macOS 安装器 | 可再生缓存（可重新下载），但默认不勾。判据三条同时满足才进入候选：bundle id 为 `com.apple.InstallAssistant.*`（只看名字不够）、主版本不等于当前系统、未在运行。用户可能留着做重装或制作启动盘，须问。本机不存在 |
 | `~/Library/iTunes/*Software Updates`（iPhone/iPad 固件，`.ipsw`） | 设备刷机固件包，单个常 5–8GB | 可再生缓存（需要时可重新下载）；不要连带碰同级的设备备份。本机目录不存在 |
 | `~/Library/Logs/DiagnosticReports` | 当前用户的崩溃与诊断报告 | 可再生缓存（用户可读可清）；正在排查故障时保留。本机存在，3.8M |

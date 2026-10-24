@@ -122,3 +122,24 @@ du -sh ~/Library/Caches/115Browser ~/Library/Application\ Support/115Browser ~/L
 "Chrome 的缓存目前约 <X> GB，旧版本框架和更新暂存还有约 <Y> GB。这些都能重新下载，但我只在浏览器完全退出后才动。可以先退出 Chrome 吗？另外只清缓存、不清登录、历史和密码，可以吗？"
 
 灰区和用户数据只在用户明确说"清登录态/站点数据"后，指导她在浏览器的"清除浏览数据"里自己操作。
+
+
+## macOS Chrome 启动克隆（code_sign_clone）
+
+系统以当前用户的 `getconf DARWIN_USER_TEMP_DIR` 定位 `T/`，同级 `X/com.google.Chrome.code_sign_clone/` 里可能积累启动克隆。它们是应用程序副本，不是浏览记录、成果或用户资料。Chromium 每启动实例创建克隆，正常析构时调用独立清理助手；强杀进程、异常终止或助手失败可能留下残留。不能仅凭目录名、年龄或当前没有名为 Chrome 的进程就删除。
+
+先按创建时间、应用版本、主程序 inode 分组，再调查产生它的启动器、任务回执和关闭方式。代码中的 `fast: true` / `SIGKILL` 是可验证的风险路径，但没有逐次日志时不能声称所有残留都由它造成。整改优先复用合适的浏览器实例，在 finally 中请求 `Browser.close` 并等待进程退出，超时才强杀；测试与渲染工具适合时选 Chrome for Testing / headless shell（先检查现有依赖与渲染兼容性）。不要为了省空间禁用日常 Chrome 的安全机制，不批量杀用户浏览器。
+
+APFS 克隆共享数据块；74 份应用不等于 74 倍物理占用。只报告名义体积，删除前后实测磁盘变化，并说明并发任务影响。即使是旧版，其数据块也可能仍被安装目录保留的旧框架引用。
+
+专用命令（沿用本会话既有授权；新授权应针对具体清单）：
+
+```sh
+python3 scripts/chrome_clones.py plan --run <已有运行目录>
+python3 scripts/chrome_clones.py apply --run <同目录> --seal <输出摘要> --reason <授权依据> --pilot
+python3 scripts/chrome_clones.py apply --run <同目录> --seal <同摘要> --reason <同依据>
+```
+
+执行仅允许当前用户、系统发现路径下的单个六位后缀目录。整目录必须只有有效 Google 签名的 Chrome 包、无越界链接/额外资料；创建超过一天、版本严格早于已安装版本，整个目录 `lsof +D` 无打开 inode 且无错误，封存后配置、目录清单、版本与身份一致。保留全部现版本克隆，即使它们看似无人使用。调用已签名安装包内的 Chrome 原生清理助手，不手工递归删除，不使用跳过父进程等待的测试参数。先试点，异常立即停，回执不可覆盖。此专用入口不扩展通用 roots，不改变 T/0 或浏览器资料的保护规则。
+
+源码依据：[Chromium 管理器说明](https://chromium.googlesource.com/chromium/src/+/main/chrome/browser/mac/code_sign_clone_manager.h)、[创建与退出清理实现](https://chromium.googlesource.com/chromium/src/+/main/chrome/browser/mac/code_sign_clone_manager.mm)。源码行为仍须与本机版本、签名、实际执行结果核对。
