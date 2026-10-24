@@ -1,4 +1,4 @@
-"""只验证独立的临时 Git 索引；不修改源索引、对象库或工作区。"""
+"""只读验证有恢复依据的阶段过程件；不修改原始数据。"""
 import hashlib
 import json
 import os
@@ -65,7 +65,15 @@ def index_tree(path, repo):
 def verify(item):
     """每次重新验证，不能缓存放行；返回 (ok, reason)。"""
     try:
+        if not isinstance(item, dict):
+            return False, "证明条目必须为对象"
         proof = item.get("checkpoint")
+        if isinstance(proof, dict) and proof.get("kind") == "retired_build_copy":
+            import retired_worktree
+            return retired_worktree.verify_item(item)
+        if isinstance(proof, dict) and proof.get("kind") == "registered_stage_copy":
+            import registered_stage_checkpoint
+            return registered_stage_checkpoint.verify(item)
         if isinstance(proof, dict) and proof.get("kind") == "git_blob_copy":
             return verify_blob_copy(item)
         if not isinstance(proof, dict) or proof.get("kind") != "git_index":
@@ -192,7 +200,19 @@ def verify_blob_copy(item):
 
 
 def dependencies(item):
+    if not isinstance(item, dict):
+        return []
     proof = item.get("checkpoint") or {}
+    if not isinstance(proof, dict):
+        return []
+    if proof.get("kind") == "retired_build_copy":
+        import retired_worktree
+        return retired_worktree.dependencies(item)
+    if proof.get("kind") == "registered_stage_copy":
+        import registered_stage_checkpoint
+        return registered_stage_checkpoint.dependencies(item)
     task = proof.get("task") or {}
+    if not isinstance(task, dict):
+        task = {}
     paths = [proof.get("repo"), task.get("repo"), task.get("receipt")]
     return [str(Path(p).resolve()) for p in paths if isinstance(p, str) and p]

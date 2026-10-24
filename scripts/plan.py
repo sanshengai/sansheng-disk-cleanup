@@ -935,6 +935,31 @@ def _floor_preset(card, preset, wt_ask):
     return preset
 
 
+def cleanup_targets(cards):
+    """Exact file selections do not include their retained sibling receipts."""
+    files, trees = set(), []
+    for card in cards:
+        if not isinstance(card, dict) or card.get("verdict") not in ("clean", "decide"):
+            continue
+        for item in card.get("items", []) if isinstance(card.get("items", []), list) else []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("method") == "delete" and item.get("scope") == "files":
+                for entry in item.get("files", []) if isinstance(item.get("files"), list) else []:
+                    path = entry.get("path") if isinstance(entry, dict) else entry
+                    if isinstance(path, str):
+                        files.add(os.path.realpath(path))
+            elif isinstance(item.get("path"), str):
+                trees.append(os.path.realpath(item["path"]))
+    return {"files": files, "trees": trees}
+
+
+def dependency_selected(dependency, ctx):
+    dep = os.path.realpath(dependency)
+    return dep in ctx.get("cleanup_files", set()) or any(
+        within(dep, target) for target in ctx.get("cleanup_paths", []))
+
+
 def check_item(item, ctx):
     """返回 (错误列表, 封存记录或 None)。ctx: profile / nodes / reviews（refs_reviewed 解析结果）/ legacy。"""
     errs = []
@@ -970,7 +995,7 @@ def check_item(item, ctx):
     if "checkpoint" in item:
         ok, why = artifact_checkpoint.verify(item)
         dependencies = artifact_checkpoint.dependencies(item)
-        if any(within(dep, os.path.realpath(target)) for dep in dependencies for target in ctx.get("cleanup_paths", [])):
+        if any(dependency_selected(dep, ctx) for dep in dependencies):
             ok, why = False, "清理范围包含复制件的保留仓库或任务回执"
         if not ok:
             errs.append(f"{path}：{why}")
@@ -1490,6 +1515,7 @@ def check_plan(run):
         res["plan_errors"] = plan_errors
         return res, rec
 
+    targets = cleanup_targets(cards)
     profile = load_profile()
     item_refs = load_item_refs(run, scan_id)
     # 扫描时搜过哪些引用检查目录（facts.coverage.refs_search）；现在的有效设置里多出来的就是“扫描后新增的成品目录”。
@@ -1548,7 +1574,7 @@ def check_plan(run):
             ctx = {"profile": profile, "nodes": nodes, "reviews": reviews, "matched": set(), "item_refs": item_refs,
                    "cur_roots": cur_roots, "stale_roots": stale_roots, "run": run,
                    "legacy": any(isinstance(e, str) and e.startswith(EVIDENCE_PREFIXES) for e in evidence),
-                   "soft": [], "cleanup_paths": [i.get("path") for c in cards if c.get("verdict") in ("clean", "decide") for i in c.get("items", []) if isinstance(i, dict) and isinstance(i.get("path"), str)]}
+                   "soft": [], "cleanup_paths": targets["trees"], "cleanup_files": targets["files"]}
             if any(r["verdict"] == "depends" for r in reviews):
                 errs.append("refs_reviewed 结论为 depends：引用对象仍依赖这批东西，整卡降为 keep")
             young = _retention_hit(items, nodes, profile) if isess else None
