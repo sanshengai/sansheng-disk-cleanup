@@ -149,7 +149,7 @@ nohup python3 scripts/act.py go --run <run目录> --choice recommended > <run目
 - 需要 sudo 的对象（本地快照、系统级缓存）自己不用 sudo，只合成一两行命令交给用户执行。
 - 汇报时说明覆盖率和跳过的部分，不要把“扫描完成”说成“全盘清理完成”。
 
-旧媒体副本有原路径依赖、无法直接删除时，可按 [agent-artifacts.md](references/agent-artifacts.md) 评估 APFS 共享块。它会改变 inode；不用于资源库、同步目录或活动素材，先试点再分批实测，不能把名义重复体积当成已释放。
+业务资料还应区分原件、转换版、内嵌附件与历史导出，先测重复量和无损压缩潜力，不按文件夹名称或目标体积猜可删量。旧媒体、HEIC 和 PDF 副本有原路径依赖时，可按 [agent-artifacts.md](references/agent-artifacts.md) 评估 APFS 共享块。它会改变 inode；不用于资源库、同步目录或活动素材，先试点再分批实测，不能把名义重复体积当成已释放。
 
 ## 空间记录与增长调查
 

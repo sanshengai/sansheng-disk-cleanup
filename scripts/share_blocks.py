@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""对未跟踪的旧媒体做 APFS 写时复制：保留路径、内容及受验证属性，文件 inode 会改变。"""
+"""对未跟踪的旧静态资料做 APFS 写时复制：保留路径、内容及受验证属性，文件 inode 会改变。"""
 import argparse
 import ctypes
 import fcntl
@@ -14,7 +14,8 @@ import artifact_checkpoint as ac
 import compact_review as cr
 import protect
 
-MEDIA = {'.mp4', '.mov', '.wav', '.mp3', '.m4a', '.png', '.jpg', '.jpeg', '.webp', '.otf', '.ttf'}
+MEDIA = {'.mp4', '.mov', '.wav', '.mp3', '.m4a', '.png', '.jpg', '.jpeg', '.webp', '.otf', '.ttf',
+         '.heic', '.pdf'}
 
 
 def properties(p):
@@ -37,7 +38,7 @@ def eligible(p, profile):
 def writable_target(p, profile):
     p = eligible(p, profile)
     if p.suffix.lower() not in MEDIA or p.stat().st_flags:
-        raise ValueError('仅支持无特殊标记的普通媒体或字体')
+        raise ValueError('仅支持无特殊标记的普通媒体、PDF 或字体')
     try:
         if act.list_tracked(str(p)):
             raise ValueError('保留 Git 跟踪文件')
@@ -88,6 +89,26 @@ def copy_birthtime(lib, target, clone):
         raise OSError(ctypes.get_errno(), '复制创建时间失败')
 
 
+def restore_xattrs(target, clone):
+    """仅修复本次临时克隆的属性；copyfile 会漏拷或残留来源属性。
+
+    系统 provenance 不尝试清除/改写，最后的严格属性比对仍会拒绝不一致。
+    原目标不变；包括 quarantine 在内的其他属性以原目标为准。
+    """
+    def names(p):
+        raw = subprocess.check_output(['/usr/bin/xattr', str(p)], timeout=10)
+        return set(raw.decode('utf-8').splitlines())
+    wanted, inherited = names(target), names(clone)
+    for name in sorted(inherited - wanted - {'com.apple.provenance'}):
+        subprocess.run(['/usr/bin/xattr', '-d', name, str(clone)],
+                       capture_output=True, check=True, timeout=10)
+    for name in sorted(wanted - {'com.apple.provenance'}):
+        value = subprocess.check_output(['/usr/bin/xattr', '-px', name, str(target)], timeout=10)
+        encoded = ''.join(value.decode('ascii').split())
+        subprocess.run(['/usr/bin/xattr', '-wx', name, encoded, str(clone)],
+                       capture_output=True, check=True, timeout=10)
+
+
 def apply_entry(e, profile):
     source = eligible(e['source'], profile)
     target = writable_target(e['path'], profile)
@@ -111,6 +132,7 @@ def apply_entry(e, profile):
         # 从目标恢复属性，不用来源的属性替代目标；不复制数据。
         if lib.copyfile(os.fsencode(target), os.fsencode(clone), None, 1 | 2 | 4):
             raise OSError(ctypes.get_errno(), '复制目标元信息失败')
+        restore_xattrs(target, clone)
         copy_birthtime(lib, target, clone)
         if ac.sha256_file(clone) != e['sha256'] or properties(clone) != e['properties']:
             raise ValueError('克隆内容或元信息不一致')

@@ -105,3 +105,46 @@ def test_real_different_creation_time_preserved(tmp_path,monkeypatch):
     before=sb.properties(b)
     assert sb.apply_entry(e,{})['status']=='shared'
     assert sb.properties(b)==before
+
+
+@pytest.mark.parametrize('suffix', ['.pdf', '.heic'])
+def test_document_copies_preserve_bytes_and_reject_changed_source(tmp_path, monkeypatch, suffix):
+    a,b,e,data=setup(tmp_path,monkeypatch)
+    a=a.rename(a.with_suffix(suffix));b=b.rename(b.with_suffix(suffix))
+    e=sb.make_entry(a,b,ac.sha256_file(a),{},tmp_path)
+    before=sb.properties(b)
+    assert sb.apply_entry(e,{})['status']=='shared'
+    assert a.read_bytes()==b.read_bytes()==data and sb.properties(b)==before
+    e=sb.make_entry(a,b,ac.sha256_file(a),{},tmp_path)
+    old_inode=b.stat().st_ino
+    a.write_bytes(b'changed source')
+    with pytest.raises(ValueError):sb.apply_entry(e,{})
+    assert b.read_bytes()==data and b.stat().st_ino==old_inode
+
+
+@pytest.mark.parametrize('suffix', ['.db', '.json', '.key'])
+def test_non_static_formats_remain_rejected(tmp_path, monkeypatch, suffix):
+    a,b,e,data=setup(tmp_path,monkeypatch)
+    b=b.rename(b.with_suffix(suffix))
+    with pytest.raises(ValueError):sb.make_entry(a,b,e['sha256'],{},tmp_path)
+    assert b.read_bytes()==data
+
+
+def test_clone_inherited_extra_attrs_are_not_kept(tmp_path, monkeypatch):
+    a,b,e,data=setup(tmp_path,monkeypatch)
+    subprocess.run(['/usr/bin/xattr','-w','com.sansheng.cleanup-source','source-only',str(a)],check=True)
+    subprocess.run(['/usr/bin/xattr','-w','com.sansheng.cleanup-target','target-only',str(b)],check=True)
+    e=sb.make_entry(a,b,ac.sha256_file(a),{},tmp_path)
+    before=sb.properties(b)
+    assert sb.apply_entry(e,{})['status']=='shared'
+    assert sb.properties(b)==before and b.read_bytes()==data
+    assert b'com.sansheng.cleanup-source' not in subprocess.check_output(['/usr/bin/xattr',str(b)])
+    assert subprocess.check_output(['/usr/bin/xattr','-p','com.sansheng.cleanup-target',str(b)]).strip()==b'target-only'
+
+
+def test_attr_restore_failure_never_replaces(tmp_path, monkeypatch):
+    a,b,e,data=setup(tmp_path,monkeypatch);inode=b.stat().st_ino
+    def fail(*args):raise ValueError('cannot preserve attrs')
+    monkeypatch.setattr(sb,'restore_xattrs',fail)
+    with pytest.raises(ValueError):sb.apply_entry(e,{})
+    assert b.stat().st_ino==inode and b.read_bytes()==data
