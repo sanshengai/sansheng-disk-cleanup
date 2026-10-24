@@ -73,6 +73,15 @@ description: 面向 AI 重度用户的 macOS 磁盘清理，会读懂你的电�
 
 进行中项目默认继续保护；对单个临时 Git 索引提供机器可证的例外：`checkpoint={kind:"git_index", repo:"绝对路径", commit:"完整提交号", retain_ref:"refs/remotes/origin/main", sha256:"文件哈希"}`。条目必须 method=delete、scope=all、单个被忽略的普通 `.index` 文件，完整索引树必须匹配保留分支中的提交；校验和执行都重验。仍须确认生产脚本会重新初始化索引、该旧步骤不会继续消费它，并通过引用、24 小时和打开文件检查；不自动改项目状态，不清理 Git 管理目录。
 
+本轮明确允许清理近期文件时，先写好精确 items JSON 数组，再运行：
+
+```sh
+python3 scripts/run_authorization.py --run <run目录> --items <精确条目数组.json> \
+  --user-text '<用户实际原话>' --allow-recent
+```
+
+将输出的 `run_authorization` 引用放入每个对应 item。账本绑定本轮扫描、文件身份及 SHA；check、执行和删除瞬间重验。它只允许越过默认时间保护，不能越过进程占用、保护路径、Git 跟踪或仍需核实的依赖；不要修改 mtime 或把其他会话改成已完成。用户同时明确退休已完成的构建输出时可加 `--retire-completed-outputs`，并提供 `completed_output_stage` checkpoint：网站装配使用保留的 manifest/receipt 和真实消费者代码，旧 APK 使用原始 version 回执及明确保留包；结构与要求见 [阶段退役说明](references/task-retirement.md#已完成的网站装配与旧安装包)。缺证明仍保留，不能仅以“可再生”代替。永久删除继续走原有 `--no-trash --trash-reason '<用户原话>'`，不改变个人设置。
+
 另支持 `git_blob_copy`：已完成子任务中的测试或发布候选复制件，可用合入提交、带哈希的任务回执及完整 Git blob 恢复证明逐文件清理。不得把整个项目改成已完成，不放行受保护项目、正在使用的文件、真实 Git 管理文件或唯一成果。恢复仓库、回执不能同时出现在删除清单中。字段及反例见 [references/agent-artifacts.md](references/agent-artifacts.md)。
 
 **Agent 过程资料占大头时，必须执行 [深挖与存储去向核对](references/agent-artifacts.md)**：分析大目录和小文件聚合、具体任务的完成证据、同内容副本、网页内嵌媒体、发布与备份覆盖。为每组说明留本地、部署到 VPS、公开对象存储、私有备份或删除的理由；不把“已上线”当成“原素材已备份”。用户要求独立模型复核时，先保存自己的结论，再经已授权 API 提交脱敏证据，比较分歧并保留实际模型回执；模型意见不能替代本机验证。
@@ -86,7 +95,7 @@ description: 面向 AI 重度用户的 macOS 磁盘清理，会读懂你的电�
    python3 scripts/scan.py scan            # 默认阈值 500MB、引用检查 900 秒（大仓库可能要 10 分钟以上）
    python3 scripts/scan.py probe projects --run <run目录>   # 每次必跑
    ```
-   读脚本打印的摘要。出现“引用检查有 N 个搜索根没查完”时，先加大预算重扫（`--refs-seconds 1800`）；出现“没有可搜的引用检查目录”时，节点显示“引用未查”，只能保留或待定，先补成品目录再用 `probe item-refs` 补查。`/private/tmp/claude-<uid>`（Claude Code 会话临时目录）存在时默认也会扫，当前会话与 24 小时内有改动的一律保留。每个前沿节点带 git 角色、是否被打开、24 小时改动数、引用命中数、知识卡名、与上次的增长量，认下的目录还带 `identity`。
+   读脚本打印的摘要。出现“引用检查有 N 个搜索根没查完”时，先加大预算重扫（`--refs-seconds 1800`）；出现“没有可搜的引用检查目录”时，节点显示“引用未查”，只能保留或待定，先补成品目录再用 `probe item-refs` 补查。`/private/tmp/claude-<uid>`（Claude Code 会话临时目录）存在时默认也会扫，当前会话继续保护，24 小时内有改动默认保留；用户明确授权本轮近期文件时，按下文的精确清单授权核验，不改时间或全局默认。每个前沿节点带 git 角色、是否被打开、24 小时改动数、引用命中数、知识卡名、与上次的增长量，认下的目录还带 `identity`。
 
    **`probe projects` 每次扫描后都要跑**：台账里有“进行中”或“别碰”的项目而这次没有它的结果时，`check` 会让所有卡片降为保留。
 

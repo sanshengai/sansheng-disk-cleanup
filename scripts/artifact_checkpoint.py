@@ -74,6 +74,9 @@ def verify(item):
         if isinstance(proof, dict) and proof.get("kind") == "registered_stage_copy":
             import registered_stage_checkpoint
             return registered_stage_checkpoint.verify(item)
+        if isinstance(proof, dict) and proof.get("kind") == "completed_output_stage":
+            import completed_output_checkpoint
+            return completed_output_checkpoint.verify(item)
         if isinstance(proof, dict) and proof.get("kind") == "git_blob_copy":
             return verify_blob_copy(item)
         if not isinstance(proof, dict) or proof.get("kind") != "git_index":
@@ -211,6 +214,9 @@ def dependencies(item):
     if proof.get("kind") == "registered_stage_copy":
         import registered_stage_checkpoint
         return registered_stage_checkpoint.dependencies(item)
+    if proof.get("kind") == "completed_output_stage":
+        import completed_output_checkpoint
+        return completed_output_checkpoint.dependencies(item)
     task = proof.get("task") or {}
     if not isinstance(task, dict):
         task = {}

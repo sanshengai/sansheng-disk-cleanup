@@ -11,6 +11,7 @@
 """
 import argparse
 import artifact_checkpoint
+import run_authorization
 import base64
 import contextlib
 import glob
@@ -151,7 +152,7 @@ def related_nodes(rp, nodes):
     return primary, desc
 
 
-def _node_errors(node, label, rescue=None):
+def _node_errors(node, label, rescue=None, allow_recent=False):
     errs = []
     refs = node.get("refs")
     if not isinstance(refs, dict) or refs.get("checked") is not True:
@@ -168,7 +169,7 @@ def _node_errors(node, label, rescue=None):
     r24 = node.get("recent_24h")
     if not isinstance(r24, int) or isinstance(r24, bool):
         errs.append(f"{label}：缺少 recent_24h，无法确认最近是否被修改")
-    elif r24 > 0:
+    elif r24 > 0 and not allow_recent:
         errs.append(f"{label}：24 小时内有 {r24} 个文件被修改")
     open_by = node.get("open_by")
     if open_by == "unknown" or open_by is None:
@@ -275,7 +276,7 @@ def _alloc(path):
         return 0
 
 
-def _live_item_errors(rp, label):
+def _live_item_errors(rp, label, allow_recent=False):
     """节点内部条目的现场核对：24 小时内改动；返回 (错误列表, 实际分配字节数)。只用 lstat，不跟随链接。"""
     cutoff = datetime.now(timezone.utc).timestamp() - RECENT_SECONDS
     total, recent, first = 0, 0, None
@@ -295,7 +296,7 @@ def _live_item_errors(rp, label):
                 stack.extend(os.path.join(p, c) for c in os.listdir(p))
             except OSError as exc:
                 return [f"{label}：现场核对时无法列出 {p}（{exc.strerror or exc}）"], None
-    if recent:
+    if recent and not allow_recent:
         return [f"{label}：24 小时内有 {recent} 个文件被修改（如 {first}）"], total
     return [], total
 
@@ -992,6 +993,18 @@ def check_item(item, ctx):
         keep = []
 
     rec = {"path": path, "realpath": rp, "ino": st.st_ino, "dev": st.st_dev, "method": method}
+    allow_recent = False
+    if "run_authorization" in item:
+        try:
+            if not ctx.get("run"):
+                raise ValueError("authorization: current run required")
+            auth = run_authorization.validate(item, ctx["run"])
+            if any(dependency_selected(dep, ctx) for dep in run_authorization.dependencies(item)):
+                raise ValueError("清理范围包含本轮授权证据")
+            allow_recent = auth.get("allow_recent") is True
+            rec["run_authorization"] = dict(item["run_authorization"])
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            errs.append(f"{path}：{exc}")
     if "checkpoint" in item:
         ok, why = artifact_checkpoint.verify(item)
         dependencies = artifact_checkpoint.dependencies(item)
@@ -1072,7 +1085,7 @@ def check_item(item, ctx):
     if primary is not None and not exact:
         # 条目在节点内部：祖先的占用/改动/受保护标记说的是兄弟项，不套到本条；
         # 改为现场核对本条自身（保护已由 protected_reason 直接判过，占用由 act 逐项 lsof）
-        live_errs, live_bytes = _live_item_errors(rp, path)
+        live_errs, live_bytes = _live_item_errors(rp, path, allow_recent)
         errs.extend(live_errs)
     for n in group:
         label = f"{path}（节点 {n.get('id', '?')} {n.get('path')}）"
@@ -1115,7 +1128,7 @@ def check_item(item, ctx):
                     errs.append(f"{label}：定向引用检查发现 {ir_exact.get('count')} 处引用，但卡片 evidence 中没有样本取自 item_refs.json 的 refs_reviewed（history_only）")
             elif node_stale:
                 errs.append(_stale_msg(label, ctx))
-            errs.extend(_node_errors(nn, label, lambda: refs_rescue(ctx, label)))
+            errs.extend(_node_errors(nn, label, lambda: refs_rescue(ctx, label), allow_recent))
         refs = n.get("refs") if isinstance(n.get("refs"), dict) else {}
         count = refs.get("count")
         if refs.get("checked") is True:

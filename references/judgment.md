@@ -15,7 +15,7 @@
 
 ## 2. 硬规则
 
-- **进行中，保留**：`recent_24h > 0`，或 `open_by` 非空，或对应会话或任务正在跑。
+- **进行中，保留**：`open_by` 非空，或对应会话或任务正在跑。`recent_24h > 0` 默认保留；用户明确允许本轮清理近期文件时，仅通过绑定精确清单的运行授权例外处理已结束的过程件，仍查当前消费者、锁、身份及内容漂移，见 [task-retirement.md](task-retirement.md)。不能伪造时间或扫描事实。
 - **被引用，保留**：`refs.count > 0` 时，先读 `samples`。
   - 引用只是历史记录里顺带提了一句（如"曾在 X 做过实验"），可以继续判断，但要在 `evidence` 里加一条 `{"kind":"refs_reviewed","samples":[从 facts 的 refs.samples 里抄你看过的几条],"verdict":"history_only"}`；样本不在 facts 里就是伪造，不放行；看完发现确有依赖就写 `"verdict":"depends"`，整卡降为 keep。旧写法 `引用已核对:` 前缀不再放行。
   - 引用是脚本输入、清单条目、或写明"保留"，就保留，除非用户点名推翻。

@@ -690,7 +690,7 @@ def collect_candidates(item, rp, profile, res):
     return files, [], False
 
 
-def delete_files(files, res, parent_cache, disp=None):
+def delete_files(files, res, parent_cache, disp=None, authorized_files=None):
     disp = disp or Disposer()
     for p, st0 in files:
         parent = os.path.dirname(p)
@@ -709,6 +709,13 @@ def delete_files(files, res, parent_cache, disp=None):
         if (st.st_ino, st.st_dev) != (st0.st_ino, st0.st_dev):
             res.add_skip(p, "删除前被替换（ino 变化）")
             continue
+        if authorized_files is not None:
+            try:
+                if plan.run_authorization.snapshot(p) != authorized_files.get(p):
+                    raise ValueError("授权后文件身份或内容变化")
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                res.add_skip(p, str(exc))
+                continue
         kind, why = disp.dispose(p)
         if kind == "skip":
             res.add_skip(p, why)
@@ -780,6 +787,18 @@ def _execute_item(index, item, profile, dry_run, now, run=None, disp=None):
         res.d["disposal"] = {"mode": "native", "dir": None}      # 原生命令按各工具自己的方式清，不走废纸篓和归档
         return run_native(item, rp, res, dry_run, now, run)
 
+    allow_recent, authorized_files = False, None
+    if "run_authorization" in item:
+        try:
+            if not run:
+                raise ValueError("authorization: current run required")
+            auth = plan.run_authorization.validate(item, run)
+            _, auth_row = plan.run_authorization.read_document(item, run)
+            authorized_files = {r["path"]: r for r in auth_row["files"]}
+            allow_recent = auth.get("allow_recent") is True
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            return res.skip_item("本轮授权复核失败：" + str(exc))
+
     if "checkpoint" in item:
         ok, why = plan.artifact_checkpoint.verify(item)
         if not ok:
@@ -791,7 +810,7 @@ def _execute_item(index, item, profile, dry_run, now, run=None, disp=None):
     files, dirs, root_removable = cand
 
     recent = [p for p, st in files if st.st_mtime > now - RECENT_SECONDS]
-    if recent:
+    if recent and not allow_recent:
         return res.skip_item(f"含 {len(recent)} 个 24 小时内修改过的文件（如 {recent[0]}），可能仍在使用")
 
     opened = open_files(rp)
@@ -809,7 +828,7 @@ def _execute_item(index, item, profile, dry_run, now, run=None, disp=None):
         return res.finish()
 
     parent_cache = {}
-    delete_files(files, res, parent_cache, disp)
+    delete_files(files, res, parent_cache, disp, authorized_files)
     if item["scope"] == "ignored-only":
         # 只清理因删除而变空的目录（根目录自身保留）
         touched = set()
