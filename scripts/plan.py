@@ -732,7 +732,7 @@ def evidence_review(card, items, nodes, profile, validated_checkpoints=None):
         verified = [(i["path"] in validated_checkpoints, "sealed checkpoint") for i in items] if validated_checkpoints is not None else [artifact_checkpoint.verify(i) for i in items]
         checks.append({"kind": "artifact_checkpoint", "ok": all(v[0] for v in verified),
                        "end": all(v[0] for v in verified),
-                       "msg": "仅这些临时索引已持久保存；不代表整个项目结束"})
+                       "msg": "仅这些过程件的阶段与保留副本通过证明；不代表整个项目结束"})
     has_end = any(c["end"] for c in checks)
     needs = any(_item_needs_end_evidence(i, nodes) for i in (items if isinstance(items, list) else []))
     return checks, has_end, needs
