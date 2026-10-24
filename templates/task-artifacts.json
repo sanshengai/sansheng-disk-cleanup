@@ -1,0 +1,25 @@
+{
+  "schema": "task-artifacts/1",
+  "task_id": "REPLACE_WITH_TASK_ID",
+  "phase": "unknown",
+  "recorded_at": null,
+  "workspace": null,
+  "items": [
+    {
+      "path": null,
+      "role": "unknown",
+      "ownership": "unknown",
+      "creation_evidence": null,
+      "before_exists": null,
+      "created_at": null,
+      "sha256": null,
+      "consumers": [],
+      "consumers_checked_at": null,
+      "delivery": null,
+      "backup_restore_evidence": null,
+      "retention_reason": null,
+      "next_review_trigger": null,
+      "cleanup_receipt": null
+    }
+  ]
+}
