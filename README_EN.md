@@ -47,6 +47,8 @@ No terminal output to read: one board shows where the space went, and you tick a
 
 ## Also included
 
+- **A tiered check-up in minutes**: `scripts/triage.py` measures in parallel, read-only, and sorts findings into four tiers -- caches you can clear now, worktrees you can remove, items that need your call, and items in use or protected. Each item comes with a check command and a delete command. Production folders and paths registered in your ledgers are protected by default; only off-disk backups count as recoverable.
+- **Duplicate copies take the space of one**: when the same file sits in a library, a delivery folder and a staging folder, it is verified with a full sha256 and turned into APFS clones. Every path keeps working, so delivery folders stay intact.
 - **You decide what it can read**: four levels: basic (project notes, scripts, logs), extended (files received in chat apps, mail attachments, photos and screenshots; names and sizes only), deep (chat text, image content), and never read (passwords, keychains, browser login data, keys; enforced by the scripts). Whatever it reads is sent to the AI service you use, so every results page lists the files read in that run.
 - **A third path besides delete and keep**: move to the Trash so you can change your mind; archive finished projects to an external drive, where every file is verified before the original is touched; for iCloud and other cloud folders, only the official "keep it in the cloud" guidance, without touching your files.
 - **Safety does not change**: settings and memory only change what it asks and what is pre-selected, **never whether something may be deleted**. No sudo, no background daemons, everything runs locally.
@@ -118,6 +120,9 @@ With the Skill loaded, say "clean up my disk" or "my disk is almost full". The f
 You can also run each step by hand:
 
 ```sh
+python3 scripts/triage.py --out /tmp/<dir>            # tiered check-up (read-only, a few minutes)
+python3 scripts/clone_dedupe.py plan --root <dir> --out plan.json   # duplicates: full hash, then a plan
+python3 scripts/clone_dedupe.py run --plan plan.json --receipt r.jsonl --dry-run  # rehearse; drop --dry-run to clone for real
 python3 scripts/scan.py scan --no-refs                # first time: quick scan, about 1 minute
 python3 scripts/scan.py probe projects --run <run-dir> # recognise projects, installed tools and finished-work candidates
 python3 scripts/plan.py setup --run <run-dir>          # generate the setup page (add --mode edit to change settings)
@@ -137,7 +142,7 @@ python3 scripts/memory.py forget --from-text <file>    # entries struck out unde
 python3 scripts/feedback.py gaps --run <run-dir>      # unidentified large folders: generate feedback text only, never sent
 ```
 
-Local settings, project status, habit rules and memory (finished-work folders, extra reference-check folders, protected paths, read scope, deletion mode and so on) are stored in `~/.sansheng/disk-cleanup/profile.json`, outside the Skill itself. See [references/contract.md](references/contract.md) for the format.
+Local settings, project status, habit rules and memory (finished-work folders, extra reference-check folders, protected paths, read scope, deletion mode and so on) are stored in `~/.sansheng/disk-cleanup/profile.json`, outside the Skill itself. See [references/contract.md](references/contract.md) for the format. The check-up's workspace, production folders, ledgers and off-disk backup ledger go in `~/.sansheng/disk-cleanup/triage-local.json` (example: [references/triage-local.example.json](references/triage-local.example.json)); without it, those checks are skipped.
 
 ## Documentation
 

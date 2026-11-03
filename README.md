@@ -47,6 +47,8 @@ Codex、Claude Code 用了几个月，磁盘满了却不知道满在哪？通用
 
 ## 还有这些
 
+- **几分钟出结果的分档体检**：`scripts/triage.py` 只读并行测量，分成“可直接清的缓存 / 可移除的工作树 / 要你判断的 / 在用或受保护的”四档，每项附先检查、再删除两条命令；正在生产的成品目录、被台账登记的路径默认保护，只认盘外备份为可恢复。
+- **重复副本只占一份空间**：同一文件在成品库、交付、分发暂存里各存一份时，全量核对后改成 APFS 克隆，每个路径照常可用，删副本才会破坏的交付目录也不用动。
 - **大目录拆到任务阶段**：追查 Agent 的外部工作区、副本和批量小文件，区分原始输入、当前工程、正式成果与已结束的过程件；网站装配、旧安装包、登记暂存和渲染现场分别核验。
 - **任务结束主动收尾**：让产生文件的 Agent 按归属记录输入、过程件和保留成果，在阶段完成时清理已有授权覆盖的无用过程件，避免一直累积。
 - **近期文件可以精确授权**：默认保护最近 24 小时有改动的文件；你明确允许本轮清理时，授权绑定精确清单并在删除时复核，当前活动现场和唯一输入仍保留。
@@ -117,6 +119,9 @@ git clone https://github.com/sanshengai/sansheng-disk-cleanup ~/.claude/skills/s
 也可以手动运行各步骤：
 
 ```sh
+python3 scripts/triage.py --out /tmp/<目录>           # 分档体检（只读，几分钟出结果）
+python3 scripts/clone_dedupe.py plan --root <目录> --out plan.json   # 重复副本：全量核对后出计划
+python3 scripts/clone_dedupe.py run --plan plan.json --receipt r.jsonl --dry-run  # 先预演，去掉 --dry-run 正式改成克隆
 python3 scripts/scan.py scan --no-refs                # 第一次：快扫，约 1 分钟
 python3 scripts/scan.py probe projects --run <run目录> # 认出项目、已装工具和成品候选目录
 python3 scripts/plan.py setup --run <run目录>          # 生成设置页（想改设置时加 --mode edit）
@@ -138,7 +143,7 @@ python3 scripts/memory.py forget --from-text <文件>    # 成果页里划掉的
 python3 scripts/feedback.py gaps --run <run目录>      # 认不出来源的大目录：只生成反馈文字，不发送
 ```
 
-本机的设置、项目状态、习惯规则和记忆（成品目录、额外的引用检查目录、保护路径、读取范围、删除方式等）写在 `~/.sansheng/disk-cleanup/profile.json`，不放进 Skill 本体。格式见 [references/contract.md](references/contract.md)。
+本机的设置、项目状态、习惯规则和记忆（成品目录、额外的引用检查目录、保护路径、读取范围、删除方式等）写在 `~/.sansheng/disk-cleanup/profile.json`，不放进 Skill 本体。格式见 [references/contract.md](references/contract.md)。分档体检要知道的工作区、生产目录、台账和盘外备份台账写在 `~/.sansheng/disk-cleanup/triage-local.json`（示例 [references/triage-local.example.json](references/triage-local.example.json)），不配置时这些检查自动跳过。
 
 ## 文档
 

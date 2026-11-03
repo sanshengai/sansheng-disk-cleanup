@@ -50,6 +50,36 @@ def version(bundle, run):
     return v
 
 
+def _etime_seconds(s):
+    """ps etime：[[dd-]hh:]mm:ss → 秒（与语言环境无关；lstart 在中文环境下是本地化日期，不能解析）。"""
+    days, _, rest = s.strip().rpartition('-')
+    parts = [int(x) for x in rest.split(':')]
+    while len(parts) < 3:
+        parts.insert(0, 0)
+    return (int(days) if days else 0) * 86400 + parts[0] * 3600 + parts[1] * 60 + parts[2]
+
+
+def chrome_main_starts(ps_output=None, now=None):
+    """运行中的 Chrome 主进程（非 Helper）启动时刻列表。每个主进程启动时会建一份 code_sign_clone。"""
+    if ps_output is None:
+        ps_output = subprocess.run(['ps', '-axo', 'etime=,command='], capture_output=True, text=True, timeout=20).stdout
+    now = time.time() if now is None else now
+    out = []
+    for ln in ps_output.splitlines():
+        et, _, cmd = ln.strip().partition(' ')
+        if '/Contents/MacOS/Google Chrome' in cmd and 'Helper' not in cmd.split(' --')[0]:
+            try:
+                out.append(now - _etime_seconds(et))
+            except ValueError:
+                continue
+    return out
+
+
+def matches_running(birthtime, starts, slack=180):
+    """克隆创建时刻与某个运行中 Chrome 主进程的启动时刻相差不到 slack 秒 → 视为该进程的在用克隆。"""
+    return any(abs(birthtime - s) <= slack for s in starts)
+
+
 def unopened(p):
     # +D 按整个目录内的文件 inode 查找，包含主程序的硬链接；不以 ps 路径代替。
     a = subprocess.run(['/usr/sbin/lsof', '-nP', '+D', str(p)], capture_output=True, text=True, timeout=120)
@@ -79,12 +109,21 @@ def entry(p, run, profile):
     p = protect.chrome_clone_path(p, profile)
     if sorted(x.name for x in p.iterdir()) != [BUNDLE] or (p / BUNDLE).is_symlink():
         raise ValueError('克隆目录包含额外内容或链接')
-    if time.time() - p.stat().st_birthtime < 86400:
-        raise ValueError('创建不足一天')
+    birth = p.stat().st_birthtime
+    if matches_running(birth, chrome_main_starts()):
+        raise ValueError('对应一个运行中的 Chrome 进程')
     current = version(APP, run)
     old = version(p / BUNDLE, run)
-    if tuple(map(int, old.split('.'))) >= tuple(map(int, current.split('.'))):
-        raise ValueError('保留当前或更新版本')
+    ov, cv = tuple(map(int, old.split('.'))), tuple(map(int, current.split('.')))
+    if ov > cv:
+        raise ValueError('保留更新版本')
+    if ov == cv:
+        # 同版本残留：Chrome 正常退出会自己清掉克隆，异常退出/被杀才留下。2026-11-03 第三轮对比实验：
+        # 原规则只清旧版本，同版本残留永远清不掉（当日 3 份 × 1.5G）。没被打开、对不上运行中进程、超过 1 小时即可。
+        if time.time() - birth < 3600:
+            raise ValueError('同版本克隆创建不足一小时')
+    elif time.time() - birth < 86400:
+        raise ValueError('创建不足一天')
     before, count = inventory(p, profile)
     verify_signature(p / BUNDLE)
     unopened(p)

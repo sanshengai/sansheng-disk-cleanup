@@ -106,9 +106,12 @@ def test_parent_child_not_added_twice_and_missing_is_not_zero():
                          {"path": HOME + "/uncertain", "bytes": 80},
                          {"path": HOME + "/discovered", "bytes": 500}]
     result = history.compare(history.compact(current), history.compact(old))
-    assert result["known_delta"] == 60  # 不把子目录 +50 再加一次。
-    assert result["disk_used_delta"] == 80 and result["unattributed_delta"] == 20
-    assert {r["path"] for r in result["unmeasured"]} == {HOME + "/uncertain", HOME + "/discovered"}
+    # 不把子目录 +50 再加一次；上次未单列的新目录按 0→现值计入合计并单列（2026-10 改）。
+    assert result["new_delta"] == 500 and [d["path"] for d in result["new_dirs"]] == [HOME + "/discovered"]
+    assert result["known_delta"] == 560 and result["listed_delta_existing"] == 60
+    assert result["disk_used_delta"] == 80 and result["unattributed_delta"] == -480
+    assert result["df_used_delta"] is None and "无可比基线" in result["df_note"]
+    assert {r["path"] for r in result["unmeasured"]} == {HOME + "/uncertain"}
     history.attach_growth(current, result)
     assert current["nodes"][-1]["growth"]["delta_bytes"] is None
 

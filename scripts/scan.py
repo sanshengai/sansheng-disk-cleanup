@@ -41,6 +41,10 @@ import space_history  # noqa: E402  扫描记录点与范围可比的增长调�
 SCHEMA = "facts/1"
 HOME = protect.HOME
 DEFAULT_RUNS = os.path.join(protect.STATE_DIR, "runs")
+# 只读模式（--read-only）：运行目录落在 /tmp，不写用户家目录；增长基准只“读”家目录里的历史记录。
+READONLY_RUNS = "/tmp/sansheng-disk-cleanup-ro/runs"
+# 大目录（整仓工作树、成品目录）跳过全量引用扫描：引用数动辄几千、几乎无判断力，改用 lsof / 最近写入 / git 状态。
+REFS_SKIP_TRACKED_FILES = 2000
 PRODUCERS_PATH = os.path.join(HERE, "producers.json")
 ATOMIC_NAMES = {".git", "node_modules", "DerivedData", ".venv"}
 ATOMIC_SUFFIXES = (".app", ".photoslibrary", ".avd")
@@ -1319,6 +1323,8 @@ def do_scan(opts):
     reset_read_state()
     profile = protect.load_profile(opts.profile) if opts.profile else protect.load_profile()
     roots = pick_roots(profile)
+    if getattr(opts, "read_only", False) and opts.runs_dir == DEFAULT_RUNS:
+        opts.runs_dir = READONLY_RUNS
     runs_dir = os.path.abspath(os.path.expanduser(opts.runs_dir))
     scan_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + secrets.token_hex(3)
     run_dir = os.path.join(runs_dir, scan_id)
@@ -1385,7 +1391,16 @@ def do_scan(opts):
         for n in frontier:
             n["refs"] = default_refs("--no-refs")
     else:
-        todo = [n for n in frontier if not n["protected"]]
+        todo = []
+        for n in frontier:
+            if n["protected"]:
+                continue
+            g = n.get("git") or {}
+            if g.get("role") == "worktree" or (g.get("tracked_files") or 0) >= REFS_SKIP_TRACKED_FILES:
+                n["refs"] = default_refs("skipped-large-git-tree：改用 lsof / 最近写入 / git 状态 / merge-base（triage.py worktrees）")
+                n["refs"]["skipped"] = True
+                continue
+            todo.append(n)
         items = []
         for n in todo:
             wt = n["git"]["worktree"]
@@ -1469,7 +1484,10 @@ def do_scan(opts):
         facts["coverage"]["skipped_overflow"] = walker.skipped_overflow
     try:
         facts["disk"]["device"] = os.stat(HOME).st_dev
-        space_history.make(run_dir, facts)
+        facts["disk"].update(space_history.df_volume(HOME) or {})
+        space_history.make(run_dir, facts,
+                           extra_history=[os.path.join(os.path.dirname(DEFAULT_RUNS), "history")]
+                           if os.path.abspath(runs_dir) != os.path.abspath(DEFAULT_RUNS) else None)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         # 记录失败不丢扫描；明确报告，不能静默宣称已有增长基准。
         facts["coverage"].setdefault("warnings", []).append("空间记录点未生成：" + str(exc))
@@ -1501,7 +1519,8 @@ def print_summary(run_dir, facts, top=30):
         len(nodes), len(frontier), len(facts["skipped"]) + cov.get("skipped_overflow", 0),
         "" if not facts["skipped"] else "（" + "、".join(sorted({s["reason"] for s in facts["skipped"]})) + "）",
         human(facts["disk"]["used"]), human(facts["disk"]["total"]), human(facts["disk"]["free"])))
-    print("磁盘口径：上行「磁盘已用/可用」是 HOME 所在卷 shutil.disk_usage（POSIX 口径，不含可清除空间）")
+    print("磁盘口径：上行「磁盘已用/可用」是 HOME 所在卷 shutil.disk_usage（POSIX 口径，不含可清除空间）；"
+          "本摘要单位是十进制 GB（1e9，与访达一致），triage.py 报告用 GiB（1024³）且以 /bin/df 为准，两者数字不可直接相减")
     cap = facts.get("capacity") or {}
     fmt = lambda v: human(v) if v is not None else "测不到"  # noqa: E731
     print("容量三口径：statvfs 可用 %s；APFS 容器 可用 %s / 总 %s；Finder 可用 %s；可清除空间估算 %s"
@@ -1519,8 +1538,13 @@ def print_summary(run_dir, facts, top=30):
     if bad_scopes:
         unchecked = sum(1 for n in frontier if not (n.get("refs") or {}).get("checked"))
         print("警告：引用检查有 %d 个搜索根没查完（用时 %.0fs），%d 个前沿节点记为“引用未查”，"
-              "写计划时它们只能保留或待定。请加大预算重扫（默认 900 秒）：scan.py scan --refs-seconds 1800" % (
+              "写计划时它们只能保留或待定。大工作树已默认跳过；仍不够时：scan.py scan --refs-seconds 1800，或只对疑难项 probe item-refs" % (
                   len(bad_scopes), cov.get("refs_seconds") or 0, unchecked))
+    unchecked_nodes = [n for n in frontier if not n.get("protected") and not (n.get("refs") or {}).get("checked")]
+    if unchecked_nodes:
+        print("引用未查的目录（%d 个，不是 0 引用；判断改用便宜信号或补查 probe item-refs）：" % len(unchecked_nodes))
+        for n in sorted(unchecked_nodes, key=lambda x: -x["bytes"])[:25]:
+            print("  %8s  %s  [%s]" % (human(n["bytes"]), n["path"], (n.get("refs") or {}).get("reason", "?")[:40]))
     no_scope = sum(1 for n in frontier if (n.get("refs") or {}).get("reason") == "no-search-scope")
     if no_scope:
         print("警告：没有可搜的引用检查目录（设置里的引用检查目录为空，这些节点也不在 git 工作树里），"
@@ -3746,6 +3770,8 @@ def build_parser():
     sp = sub.add_parser("scan", help="自顶向下计量，产出 facts.json")
     sp.add_argument("--profile", help="profile.json 路径，默认 ~/.sansheng/disk-cleanup/profile.json")
     sp.add_argument("--runs-dir", default=DEFAULT_RUNS)
+    sp.add_argument("--read-only", action="store_true",
+                    help="只读体检：运行目录默认 %s，不写 ~/.sansheng；增长基准只读家目录历史" % READONLY_RUNS)
     sp.add_argument("--threshold", type=parse_size, default=parse_size("500MB"))
     sp.add_argument("--max-depth", type=int, default=10)
     sp.add_argument("--max-seconds", type=float, default=900)

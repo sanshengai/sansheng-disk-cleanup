@@ -27,7 +27,7 @@
 - 删了东西空间不涨：先看是不是选了“先放废纸篓”（成果页会写“已移入废纸篓，清空后腾出”），再依次查 `tmutil listlocalsnapshots /`、废纸篓是否已清空、APFS 克隆（复制出来的文件共享块，删一份不释放）。
 - 看真实可用量：`df -h /System/Volumes/Data` 或 `diskutil info /` 的可用空间；Finder 的"可用"含 purgeable，口径更乐观。
 - 快照列表为空但"可清除"仍大：这部分多半是可重新下载的 iCloud 文件，不要靠删文件去换。
-- `~/Library/Caches`：只按子目录判断。看该子目录对应的应用是否在运行（`pgrep`），是否 24 小时内有改动。
+- `~/Library/Caches`：只按子目录判断。看该子目录对应的应用是否在运行（`pgrep`），是否 24 小时内有改动（此 24 小时即 SKILL.md「第 1 档统一规则」采用的较严阈值）。
 - iOS 备份：每个子目录是一台设备，`Info.plist` 里有设备名与最后备份日期；用户是否还有这台设备、是否有 iCloud 备份，必须问。
 - 最近使用时间只是软信号：APFS 的 atime 不可靠（见 Eclectic Light 对 APFS 时间戳的说明：https://eclecticlight.co/2025/10/24/be-careful-when-interpreting-apfs-timestamps ）；`kMDItemLastUsedDate`（`mdls -name kMDItemLastUsedDate <文件>`）对很多文件为空。两者都不能单独作为"没用过"的依据。
 

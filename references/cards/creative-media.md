@@ -111,7 +111,7 @@ ls "<资源库>.fcpbundle"                                    # 只列事件目�
 
 ```
 ls -la "$HOME/Library/Application Support/Spotify/PersistentCache/Storage" 2>/dev/null | head
-stat -f %z "$HOME/Library/Application Support/Spotify/PersistentCache/Storage/offline.bnk" 2>/dev/null
+/usr/bin/stat -f %z "$HOME/Library/Application Support/Spotify/PersistentCache/Storage/offline.bnk" 2>/dev/null
 ls "$HOME/Library/Application Support/Spotify/PersistentCache/Storage" 2>/dev/null | grep -c '\.file$'
 ```
 

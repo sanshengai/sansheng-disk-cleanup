@@ -54,7 +54,47 @@ def test_current_version_rejected_before_native(tmp_path, monkeypatch):
         return original(self, **kw)
     monkeypatch.setattr(Path, 'stat', st)
     monkeypatch.setattr(c, 'version', lambda *a: '155.0.1.1')
-    with pytest.raises(ValueError, match='当前'): c.entry(p, tmp_path, {})
+    # 同版本且对应一个运行中的 Chrome 主进程（启动时刻≈克隆创建时刻）→ 在用，拒绝
+    monkeypatch.setattr(c, 'chrome_main_starts', lambda *a, **k: [time.time() - 200000 + 30])
+    with pytest.raises(ValueError, match='运行中'): c.entry(p, tmp_path, {})
+    # 同版本、对不上任何运行中进程、但创建不足一小时 → 拒绝
+    monkeypatch.setattr(c, 'chrome_main_starts', lambda *a, **k: [])
+    def st_new(self, **kw):
+        if self == p: return SimpleNamespace(st_birthtime=time.time() - 600)
+        return original(self, **kw)
+    monkeypatch.setattr(Path, 'stat', st_new)
+    with pytest.raises(ValueError, match='不足一小时'): c.entry(p, tmp_path, {})
+    # 更新版本的克隆永远保留
+    monkeypatch.setattr(Path, 'stat', st)
+    monkeypatch.setattr(c, 'version', lambda b, r: '156.0.0.0' if b == p / c.BUNDLE else '155.0.1.1')
+    with pytest.raises(ValueError, match='更新版本'): c.entry(p, tmp_path, {})
+
+
+def test_same_version_leftover_passes_version_gate(tmp_path, monkeypatch):
+    """2026-11-03 第三轮：异常退出留下的同版本克隆，原规则永远清不掉。通过版本关后仍要过签名/打开/目录不变检查。"""
+    p = tmp_path/'clone'; p.mkdir(); (p/c.BUNDLE).mkdir()
+    monkeypatch.setattr(protect, 'chrome_clone_path', lambda *a: p)
+    original = Path.stat
+    def st(self, **kw):
+        if self == p: return SimpleNamespace(st_birthtime=time.time() - 50000)
+        return original(self, **kw)
+    monkeypatch.setattr(Path, 'stat', st)
+    monkeypatch.setattr(c, 'version', lambda *a: '155.0.1.1')
+    monkeypatch.setattr(c, 'chrome_main_starts', lambda *a, **k: [time.time() - 3000])
+    reached = []
+    def sig(b): reached.append(b); raise ValueError('签名 stub')
+    monkeypatch.setattr(c, 'verify_signature', sig)
+    with pytest.raises(ValueError, match='签名 stub'): c.entry(p, tmp_path, {})
+    assert reached   # 走到了签名校验 = 版本关已放行
+
+
+def test_chrome_main_starts_parses_etime_not_locale():
+    out = "  02:00:05 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/x\n" \
+          "1-00:00:00 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=gpu\n" \
+          "     10:00 /usr/bin/python3 x.py\n"
+    s = c.chrome_main_starts(out, now=100000)
+    assert s == [100000 - 7205]
+    assert c.matches_running(100000 - 7205 + 60, s) and not c.matches_running(100000 - 7205 + 600, s)
 
 
 def test_extra_data_rejected(tmp_path, monkeypatch):

@@ -9,7 +9,76 @@ description: 面向 AI 重度用户的 macOS 磁盘清理，会读懂你的电�
 
 **少打扰用户**：扫描前不问问题；第一次使用发一页设置选择题（只发一次），之后大多数时候在对话里用一句话确认，要用户看的东西多时才发清理看板；确认后预演、试点、正式执行由脚本连着做完，只有出异常才停下来问。
 
-**核心原则**：判断由你（Agent）根据证据来做，脚本只负责采集事实和安全执行。"多久没动""可以重新生成""没有会话文件"都不能单独作为删除理由；每条建议写出来之前，都要先做引用检查。**用户的设置和你的记忆只改变“问不问、预填什么、进哪一档”，不改变“能不能放行”。** 完整准则见 [references/judgment.md](references/judgment.md)，必须先读。
+**核心原则**：判断由你（Agent）根据证据来做，脚本只负责采集事实和安全执行。"多久没动""可以重新生成""没有会话文件"都不能单独作为删除理由（例外：triage 1 档白名单类别，可再生 + 无进程 + 静默期无写入三者同时成立即可）；每条建议写出来之前，都要先做引用检查。**用户的设置和你的记忆只改变“问不问、预填什么、进哪一档”，不改变“能不能放行”。** 完整准则见 [references/judgment.md](references/judgment.md)，必须先读。
+
+## 防误删红线（硬规则，优先于下文一切；2026-11-02 事故后加，见 [复盘](references/incident-20261102-production-dirs.md)）
+
+1. **生产目录默认保护**：本机配置 `triage-local.json` 的 `production_globs`（成品、正在生产的产品线目录），以及登记在 `ledger_globs`（如制作台账 sqlite）或被 `AGENTS.md`/交接文档引用的路径，只进“受保护·生产目录”展示档，**任何年龄、大小、命名（试做/重制/v1–v3/旧版）都不进可删档**。triage.py `is_production()`/`apply_red_lines()` 已实现。
+2. **引用检查是删前必做**：工作区（`work_root`）内任何候选，用 `rg -l -F` 搜目录名、绝对路径、`~` 路径、工作区相对路径，范围 `AGENTS.md`、`README*.md`、`ref_doc_extra`、`*.json` 台账、脚本（`*.py/*.sh/*.ps1/*.mjs/*.js/*.ts`）与 `SKILL.md`，外加 `rg -a` 搜 `ledger_globs` 登记文件。命中分两类：**消费者**（脚本、Agent/Skill 指令、README、非快照配置）命中或超时 → “被引用·需逐项问用户”档，不给删除命令；**只是历史记录提到**（本 Skill 往期报告、快照比对清单、前后对照 json、回执、日志、records/）不算依赖，只在说明里写“仅历史记录提到 N 处”（`triage.split_ref_hits()`）。triage.py `reference_hits()` 已实现；手工处理 scan.py/plan.py 候选时也必须照跑一遍。
+3. **只有可再生的才能“清”**：缓存、构建产物、重复下载、node_modules、venv、derived/中间件，可按常规批准删除。人做的成品、素材、配音、音乐、拍摄/渲染成片一律算“搬走”不算“清理”，需要用户**逐项**批准，批准话术里写出目录全名。
+4. **备份检查**：只有盘外备份才算“可恢复”——盘外备份台账（`offdisk_backup.state`，键为工作区相对路径）列有它，或外接盘归档经核对存在。**同盘存档不是备份。** triage.py `backup_status()` 只读给出结果（外接盘需人工核对）。
+5. **清理日志**：每次真实删除**之前和之后**都追加到清理日志（`cleanup_log`，默认 `~/.sansheng/disk-cleanup/cleanup-log.md`）：时间、路径、大小、存档路径、恢复命令、谁要求的。其他 Agent 找不到文件时被指向这份日志（建议写进共享 AGENTS.md）。（手工步骤，act.py 尚未自动写。）
+6. **隔离期**：非纯缓存的删除，先改名为 `<名>.待删-YYYYMMDD`（同卷、瞬时、可撤销），等 7 天（巡检确认无人反馈再收尾）才 tar+删除。纯缓存除外。（手工步骤。）
+7. **收尾报告**：删除后在最终回复里给出每项的确切恢复命令（如 `tar -xzf <存档> -C <原上级目录>` 或 `mv <名>.待删-YYYYMMDD <名>`）。
+
+## 目标与默认流程（2026-10 改造，先读）
+
+**目标指标**：同一台机器、同一时刻，Skill 扫描耗时 ≤ 手工（≈9 分钟）；找出的可回收总量 ≥ 手工清单；误报（把不该删的列进 1/2 档）= 0。为什么要改见 [why-manual-beat-skill.md](references/why-manual-beat-skill.md)。
+
+**本机配置**：工作区根、生产目录、制作台账、成品目录、盘外备份台账因人而异，写在 `~/.sansheng/disk-cleanup/triage-local.json`（示例见 [references/triage-local.example.json](references/triage-local.example.json)，字段含义见 `triage.py` 的 `LOCAL_DEFAULTS`）。没配置时，依赖它们的红线检查、成品拆分、存档核对自动跳过并在报告里写明，其余照常；第一次使用时按用户的回答帮他写好这份文件。
+
+**第一步永远是快速分档体检（只读、默认写 /tmp、不写家目录）**：
+```sh
+python3 scripts/triage.py --out /tmp/<目录> [--prev <上次 triage.json>]
+```
+并行 du 先宽后深 → [agent-junk-locations](references/cards/agent-junk-locations.md) 白名单直查 → 便宜信号（一次 lsof 快照、`find -mmin` 最近写入、git status、merge-base）。输出：
+
+| 档 | 内容 | 条件 | 交付 |
+|---|---|---|---|
+| 1 | 可再生缓存/临时文件（node 编译缓存、pytest-of-*、渲染缓存、Chrome 代码签名克隆、Homebrew/npm/uv/pip/gradle/bun、Library/Caches〔含 Google、baoyu-skills〕、codex 运行时安装残留） | 见下方「第 1 档统一规则」 | 检查命令 + 删除命令，**用户批准后**执行；App 运行中的放“待 App 退出后” |
+| 2 | 链接 worktree | 非 locked、0 未提交改动、无打开文件、静默期无写入、HEAD 在 origin/main 或任一远端分支 | `git worktree remove <path>` 命令卡（不加 --force，不删分支）；路径已不存在的给 `git worktree prune` |
+| 3 | 会话、生图、模型、镜像、构建暂存、同盘存档、未归类大目录 | — | 大小 + 最小定位 + 问谁 |
+| 保留 | 在用或受保护（含原因） | 任一信号失败即落此档 | 说明原因 |
+
+### 第 1 档统一规则（唯一出处，卡片只引用这里）
+
+1. **条件**：白名单类别 + 无进程打开（lsof 快照）+ 对应 App 未运行（`ps`/`pgrep`：CodexBar、cmux、Codex、Google Chrome、Cursor、Claude、brew 等）+ 静默期内无真实写入 + 不在保护名单。
+2. **静默期**：默认 6 小时（`--quiet-hours`）；知识卡写了更严（更长）的阈值时取较严者：视频渲染缓存 `hyperframes-extract-cache*` 24 小时、`~/Library/Caches/*` 24 小时（macos-system 卡）、node 编译缓存 24 小时（专用入口自带）。阈值登记在 `triage.py` 的 `TIER1` 表第 4 列，报告“静默期”列显示实际采用值。
+3. **命令**：每项两条独立命令——先“检查”（`find -x DIR -type f -mmin -N … -print -quit`，无输出才继续），再“删除”。删除原生优先：Homebrew `brew cleanup`、npm `npm cache clean --force`、uv `uv cache clean`、pip `pip cache purge`（本机写 `python3 -m pip cache purge`）；有专用入口的走入口（node 编译缓存 `node_compile_cache.py`、Chrome 克隆 `chrome_clones.py`）；其余“删除目录内容”统一写 `find -x DIR -mindepth 1 -delete`（保留目录本身、不跟随符号链接、不跨卷）。**不写 `rm -rf`**（见硬约束）。
+4. **App 运行中**：命中第 1–3 条但对应 App 在跑时，标“App 运行中，删前需退出”，移出一键清单，列入“待 App 退出后”小节。
+5. scan.py / plan.py 流程里的“24 小时内有改动就保留”是第 3 档和卡片判断的默认，不是第 1 档的阈值；两者冲突时按本节。
+
+Skill 自己不执行任何删除或 `worktree remove`。之后需要逐项深挖（会话归组、成品引用、done-evidence）时再走下面的 `scan.py` 流程；**只读体检用 `scan.py scan --read-only`**（运行目录落 `/tmp/sansheng-disk-cleanup-ro/runs`，只读家目录历史当基准），不往 `~/.sansheng` 写。引用检查只给少数疑难项补查（`probe item-refs`），大 git 树默认跳过，汇总会列出“引用未查”的目录。
+
+**本机坑**：PATH 里的 `stat`/`sed` 可能是 GNU 版，一律写 `/usr/bin/stat`、`/usr/bin/sed`。
+
+**反复出现的增长源**：Agent 每次修复新建整仓 worktree（每个 ~20G，10/9、10/25 各 +80G 级）——建议 Agent 用稀疏检出、合并后立刻 remove；清理存档放同一块盘会抵消回收——**禁止往本盘归档**：要留就搬外接盘或上云并核对上传，再删本地；已在本盘的存档，盘外有同路径同大小副本（盘外备份台账）的，triage 给“本地可删”命令卡。
+
+**增长对比**：`growth.json` 里“本次新出现的大目录”计入合计并单列；同时给 df 口径（本卷已用）变化和“已列出合计 vs df 变化”差额（= df 变化 − 已列增长）：**差额为负 = 已列增长之外有删除/清理抵消；差额为正 = 低于阈值的小增长与未扫区域**；基准没有 df 口径时写“无可比基线”，不用容器口径数字下结论。
+
+**口径（triage 报告）**：统一用 `/bin/df` 读数据卷（本机 `disk3s5`）的已用/可用，全程 GiB（1024³）。PATH 里的 GNU df（Homebrew coreutils）Used ≈ Size − Avail，与 BSD df 相差约 30 GiB，根因未证实（“~ 映射到系统快照卷”的解释已被实测反驳），只作参考，不下因果结论。scan.py 摘要是十进制 GB（shutil.disk_usage），不和 triage 数字直接相减。仓库体积要写明“只算 pack”（`.git/objects/pack`）还是“整个 .git”。
+
+**成品目录等硬保护大目录**：`video_root` 整体仍硬保护（不进 1/2 档），triage 把第二层逐项列进“需用户判断的成品清单”：大小、最近写入、在工作区里被引用次数（一次 rg，超时标“部分”），先看写入再看命名：明确“作废”标记最优先，其次 24 小时内有写入的标“进行中”（不因名字含“试播/验证”被归进旧版），再按命名分“试做·重制·v1–v3·旧版 / 已交付·交付 / 当日产出 / 其他”；另在任意深度找 `*作废*` 目录单列（深层作废目录体积已含在上级，不重复计）。只列不给删除命令；作废且 0 引用也只写“建议用户确认”。
+
+**最大 worktree 拆解**：triage 对最大链接 worktree（优先名字含 `prefer_worktree` 的）只读给出已跟踪变更数、未跟踪数、被忽略体积（`git ls-files --others --ignored --directory` + 批量 du；失败写明原因，不再静默报 0）、`git count-objects -vH`、各一级目录体积与主仓同名目录对比；单步超时标“部分”。**活跃工作树里停写的旧子任务**：工作树整体仍保留，但 ≥1 GiB、`--stale-days`（默认 7）天无写入、不在渲染的最外层子目录单列，统计其中未跟踪+忽略体积，给 `git clean -n -d -x -- <目录>`（预览）/`git clean -f -d -x -- <目录>`（删除）命令卡——只清 Git 不管的文件，已跟踪的在仓库里不动；问创建它的 Agent 或用户。
+
+**2026-11-03 审计改进（triage）**：
+- **开头/结尾各读一次 df**，报告给出扫描期间变化；**在渲染/波动**：生产目录下最近 10 分钟有写入的目录标“在渲染”，其大小与增长不计入增长合计（单列波动量），worktree 拆解每行带量取时间并标波动，主仓数字不再当作稳定值。
+- **同盘存档 tgz 核对**：对 `same_disk_archive_globs` 下的 `**/*.tgz` 读首个成员定位原路径，判“唯一副本（原路径不在）/原路径在未比对”；`--archive-deep` 用 `tar -tvzf` 逐文件对比（文件数、大小、缺失文件是否在盘外备份台账），判“重复件/部分重复”，结果缓存在 `$TMPDIR`。**原路径在 ≠ 重复件**：2026-11-03 实测两个“已恢复”的 tgz 仍各有 24/68 个成片文件（2.5/1.9 GiB）原路径已没有。删存档前必须跑 deep 对比。
+- **备份状态全覆盖**：worktree、受保护生产目录、第 3 档（含只读参考）、存档行都给 `backup_status`；只读解析 `offdisk_backup.logs` 的最终失败项（重试 N/N）并入“盘外备份失败清单”，落在失败前缀下的目录在备份状态里标出。
+- 报告检查清理日志是否存在，缺失时报警（红线 5）。
+- `/opt/homebrew` 列为程序本体只读参考；HF 共享 `hub/blobs` 不再进“未归类”，只在模型行旁注明；Grok 会话 URL 编码路径解码后合并 `//`。
+- `--update-latest <链接>`：显式给出时把 latest-triage.json 指向本次 `--out/triage.json`（唯一写操作，默认不写），避免指错日期目录。
+- 性能（仍只读）：盘外备份台账只加载一次并二分查前缀；引用检查合成一次批量 rg（`-o -F -f`），超时则逐项回退。
+
+**2026-11-03 第三轮对比改进（triage）**，依据见 [why-manual-beat-skill.md](references/why-manual-beat-skill.md) 第三轮：
+- **第 1 档拆到子项**：整目录因“有打开文件/近期写入”不过时，逐个子项复核，闲置子项进第 1 档、在用子项留在保留档（保留档只计在用部分）。程序本体目录不拆。Chrome 代码签名克隆逐份判：对应运行中 Chrome 主进程（`ps etime` 推算启动时刻，与克隆创建时刻差 ≤3 分钟）的保留，其余（含与安装版同版本、异常退出留下的残留）走 `chrome_clones.py`。
+- **重复副本**：`--no-dups` 可关。对工作区与 profile 的成品目录里 ≥20MB 文件按大小 + 抽样哈希找重复，报名义可共享量与分布；处置用 `scripts/clone_dedupe.py plan/run`：全量 sha256、保留端按“成品库 > 一般目录 > 交付 > 分发暂存 > 临时 > 工作树”选定，其余副本 `cp -c -p` 原地换成 APFS 克隆（路径、内容、mtime 不变，不删任何路径）；执行时复核身份、打开、6 小时写入与保护名单。已是克隆的再克隆不腾空间，以磁盘实测为准。
+- **存档定位一次建索引**（原来每个 tgz 各跑一次 find，占总耗时六成）；盘外已备份的同盘存档单列命令卡。
+- **扫描中出现又消失的目录**（临时快照等）标“临时产物”，不计入增长合计与未归类。
+- 本 Skill 自己 7 天未写的旧运行目录（`runs/`、`investigations/`、`/tmp` 只读运行目录）进第 1 档。
+
+**报告可读性**：第 1 档带“最近写入”与“静默期”列；`$TMPDIR` 显示为 `$TMPDIR/...`；URL 编码路径（如 `~/.grok/sessions`）解码显示；无权限位置按目录归类给 Top 10 并提示给终端完全磁盘访问后重扫；第 3 档里受保护的只读参考单列，不和“需决定”混写。triage 末尾提示运行 `probe projects`（它依赖 scan.py 的 facts.json 并写 projects.json，triage 不代跑）。
 
 ## 本任务收尾与习惯养成
 
@@ -63,6 +132,16 @@ description: 面向 AI 重度用户的 macOS 磁盘清理，会读懂你的电�
 
 当前用户系统临时区中的 Node 编译缓存，使用 [包管理与构建缓存卡](references/cards/package-managers.md#当前用户的-node-编译缓存) 的 `scripts/node_compile_cache.py` 专用入口；它从系统发现根目录、封存精确文件，按 plan → check → dry-run → pilot → run 执行，不开放任意临时路径清理。
 
+**Agent 过程资料的固定扫描位置**：每轮都按 [agent-junk-locations 卡](references/cards/agent-junk-locations.md) 逐项量 Codex / Gemini / Grok 会话与生图、`~/Documents/Codex/<date>/task-N`、`$TMPDIR` 的同步工作树与渲染缓存、`build-tmp` 暂存槽、`locked initializing` 的登记残留和模型权重；工作树内按“跟踪 / 未跟踪+忽略”分开计量，并与主仓同名目录比体积和活跃度。
+
+**新鲜度检查要说清改了什么**：“24 小时内有改动”只看真实内容写入，忽略 `.DS_Store`、`*.lock`、`index`、`*.pyc`、目录 mtime/ctime 和只改元信息的文件（如 `.agent_harnesses.json`）；报告时列出最近改动的文件名和时间，而不是只给一个计数。仅元信息变化不再当作“正在使用”，但仍走进程与引用检查。
+
+**估算释放量要扣掉共享块**：先用 `/usr/bin/stat -f %l`（必须写全路径） 找硬链接，同 inode 只计一次；APFS 克隆无法用 du 区分，标“可能为克隆、实际释放待实测”。同一轮里把旧目录打包成 tgz 放在同一磁盘会抵消释放量；并发的构建、同步工作树和渲染也会吃掉余量。报告按“条目核算 / 打包新增 / 并发增长 / 磁盘实测”四项分开写。
+
+**看不见的地方要说出来**：终端没有“完全磁盘访问”时，`~/Library/Containers`、`Group Containers`、Mail、Messages 等只能量到极小值；报告里写明“未覆盖，需在系统设置给终端完全磁盘访问后重扫”，不要把它们算成 0。
+
+**问谁**：会话与生图问用户；正在跑的项目子任务问创建它的 Agent（看 README、交接说明、进程命令行里的工作目录）；部署槽位和同步工作树问持有部署锁的 Agent；晨报相关目录问晨报 Agent；需要 sudo 或系统设置的事给用户命令。卡片的 `question` 写明对象。
+
 **审计要收敛为处理结论**：按占用从大到小核查本轮范围，每个已查组给出“推荐删除 / 保持路径去重 / 明确保留 / 具体缺口”之一，附实际文件范围、依据与影响。明确保留写出仍需它的消费者；缺口写出尚未取得的证据和下一步，不用笼统的“在用”“其他资料”结束。已获授权且通过现有校验的项继续执行，不等无关组全部查完。父项目活跃时，仍可核验并退休其中已完成的登记、测试、渲染或构建子阶段，保持父项目状态不变。
 
 汇总前把跨目录候选按实际文件去重，并固定全批次的保留副本；同一文件不能同时计入删除和共享块，两个候选也不能互为唯一保留端。分别报告候选量、执行成功的条目核算量和磁盘实测余量变化；名义重复量、已扫描体积不算已释放。具体方法见 [agent-artifacts.md](references/agent-artifacts.md)。
@@ -92,7 +171,7 @@ python3 scripts/run_authorization.py --run <run目录> --items <精确条目数�
 
 1. **扫描**（只读）：
    ```sh
-   python3 scripts/scan.py scan            # 默认阈值 500MB、引用检查 900 秒（大仓库可能要 10 分钟以上）
+   python3 scripts/scan.py scan [--read-only]   # 默认阈值 500MB、引用检查 900 秒；大 git 树跳过引用扫描
    python3 scripts/scan.py probe projects --run <run目录>   # 每次必跑
    ```
    读脚本打印的摘要。出现“引用检查有 N 个搜索根没查完”时，先加大预算重扫（`--refs-seconds 1800`）；出现“没有可搜的引用检查目录”时，节点显示“引用未查”，只能保留或待定，先补成品目录再用 `probe item-refs` 补查。`/private/tmp/claude-<uid>`（Claude Code 会话临时目录）存在时默认也会扫，当前会话继续保护，24 小时内有改动默认保留；用户明确授权本轮近期文件时，按下文的精确清单授权核验，不改时间或全局默认。每个前沿节点带 git 角色、是否被打开、24 小时改动数、引用命中数、知识卡名、与上次的增长量，认下的目录还带 `identity`。
@@ -160,8 +239,8 @@ nohup python3 scripts/act.py go --run <run目录> --choice recommended > <run目
 - 只有用户在本轮明确选择的才能执行：对话里回复了提案中的某一档，或发来看板清单。历史授权不覆盖新的对象，“打开看板”“看了提案”都不等于授权。
 - 项目台账、设置页答案、待确认规则和记忆都**不能单独作为删除依据**，也不能替代副本核对、交付证据、引用检查、进程与 24 小时改动检查；最激进的一整套设置取下来，也不该有任何卡从 `decide` 变 `clean`。唯一更严的方向是“别碰”和“永不读”。
 - 读取：用户的文件只经 `peek.py` 读；`never` 类（钥匙串、浏览器登录数据、密钥、`.env`、密码库等）任何设置都读不了；读了就留痕。
-- 保护名单由 `scripts/protect.py` 强制执行，不得绕过，也不得用 shell 的 `rm -rf`。不在封存计划里的路径一律不动。
-- 原生清理命令优先（`sdkmanager --uninstall`、`codex delete`、`hf cache rm`、`brew cleanup`、`uv cache prune`），它们不进废纸篓、不归档。**不要推荐 `claude purge`**：它会连记忆与配置一起删，`protect.py` 有意不登记它。工具自带的保留设置写进 `governance`，经用户同意后再改。
+- 保护名单由 `scripts/protect.py` 强制执行，不得绕过，也不得用 shell 的 `rm -rf`。第 1 档白名单缓存目录唯一允许的通用写法是 `find -x DIR -mindepth 1 -delete`，且必须在独立的检查命令之后、用户批准之后执行。不在封存计划里的路径一律不动。
+- 原生清理命令优先（`sdkmanager --uninstall`、`codex delete`、`hf cache rm`、`brew cleanup`、`npm cache clean --force`、`uv cache clean`/`uv cache prune`、`pip cache purge`），它们不进废纸篓、不归档。**不要推荐 `claude purge`**：它会连记忆与配置一起删，`protect.py` 有意不登记它。工具自带的保留设置写进 `governance`，经用户同意后再改。
 - 聊天软件（微信、企业微信等）的记录，只引导用户使用软件内的清理入口；云盘文件夹只给“只留云端”的官方做法。
 - 需要 sudo 的对象（本地快照、系统级缓存）自己不用 sudo，只合成一两行命令交给用户执行。
 - 汇报时说明覆盖率和跳过的部分，不要把“扫描完成”说成“全盘清理完成”。
@@ -204,5 +283,6 @@ python3 scripts/space_history.py compare --run <本次运行目录> --baseline <
 | macos-system、chat-netdisk | 系统快照与缓存、聊天软件与网盘 |
 | browsers、app-updaters-installers、creative-media | 浏览器、更新暂存与安装包、剪辑设计音乐游戏 |
 | large-old-files | 下载、桌面、文稿、影片里长期不用的大文件 |
+| agent-junk-locations | 各家 Agent 与自建流水线固定落盘位置、工作树 ignored 目录比对、完成标记 |
 
 本机私有信息写在 `~/.sansheng/disk-cleanup/profile.json`，不放进本 Skill：引用检查目录、保护路径、设置页答案、项目台账、认下的目录、记忆等。格式见 contract.md 第 1 节。

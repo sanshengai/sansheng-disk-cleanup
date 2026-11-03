@@ -37,8 +37,21 @@ def atomic_write(path, data):
             os.unlink(tmp)
 
 
+READONLY_RUNS = "/tmp/sansheng-disk-cleanup-ro/runs"   # 与 scan.py 同值
+
 def json_bytes(data):
     return json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
+def df_volume(path):
+    """df 口径：本卷自己的已用/可用（/usr/bin/df -k），与 shutil 的“容器总量−可用”不同。失败返回 None。"""
+    import subprocess
+    try:
+        out = subprocess.run(["/bin/df", "-k", path], capture_output=True, text=True, timeout=10).stdout.splitlines()
+        f = out[-1].split()
+        return {"df_used": int(f[2]) * 1024, "df_avail": int(f[3]) * 1024, "df_device": f[0]}
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return None
 
 
 def compact(facts):
@@ -88,10 +101,11 @@ def save_point(runs_dir, point):
     return path
 
 
-def load_points(runs_dir):
-    """兼容已有 facts；永久记录优先于可能被改写/移走的运行目录。"""
+def load_points(runs_dir, extra_history=None):
+    """兼容已有 facts；永久记录优先于可能被改写/移走的运行目录。extra_history：只读的额外历史目录。"""
     points = {}
-    for path in sorted(history_dir(runs_dir).glob("*.json.gz")):
+    dirs = [history_dir(runs_dir)] + [Path(d) for d in (extra_history or []) if d]
+    for path in sorted(p for d in dirs for p in d.glob("*.json.gz")):
         try:
             with gzip.open(path, "rt", encoding="utf-8") as f:
                 p = json.load(f)
@@ -177,8 +191,17 @@ def compare(current, old, rejected=(), notes=None):
     result["status"] = "compared"
     prev = {n["path"]: n for n in old["nodes"]}
     rows = []
+    new_dirs = []
+    old_paths = list(prev)
     for n in current["nodes"]:
         p = prev.get(n["path"])
+        if not p and not n.get("lower_bound"):
+            # 上次未单列：上次低于记录门槛（或不存在）。按 0 → 现值计入“新出现”，单列，不再藏进 unmeasured。
+            covered_before = any(under(n["path"], q) for q in old_paths)
+            new_dirs.append({"path": n["path"], "bytes": n["bytes"], "producer": n.get("producer"),
+                             "newest_mtime": n.get("newest_mtime"),
+                             "note": "上次低于门槛或不存在（按 0 计，实际增长 ≤ 此值）" if covered_before else "上次扫描范围内无记录"})
+            continue
         if not p or p.get("lower_bound") or n.get("lower_bound"):
             result["unmeasured"].append({"path": n["path"], "bytes": n["bytes"],
                                         "reason": "上次未单列，不能按零计算" if not p else "扫描存在缺口，只读到占用下限"})
@@ -197,8 +220,28 @@ def compare(current, old, rejected=(), notes=None):
             selected.append(r["path"])
     result["rows"] = sorted(rows, key=lambda r: (-abs(r["delta"]), r["path"]))
     result["areas"] = [r for r in result["rows"] if r["path"] in selected]
-    result["known_delta"] = sum(r["delta"] for r in result["areas"])
+    # 新出现目录：只取互不包含、且不在已有归因桶之下的最外层，避免重复相加
+    top_new = []
+    for d in sorted(new_dirs, key=lambda x: (x["path"].count("/"), x["path"])):
+        if d["path"] in roots(current) or any(under(d["path"], a) for a in selected):
+            continue
+        if not any(under(d["path"], q["path"]) for q in top_new):
+            top_new.append(d)
+    result["new_dirs"] = sorted(top_new, key=lambda d: -d["bytes"])
+    result["new_dirs_all"] = sorted(new_dirs, key=lambda d: -d["bytes"])
+    result["new_delta"] = sum(d["bytes"] for d in top_new)
+    result["known_delta"] = sum(r["delta"] for r in result["areas"]) + result["new_delta"]
+    result["listed_delta_existing"] = result["known_delta"] - result["new_delta"]
     result["disk_used_delta"] = current["disk"]["used"] - old["disk"]["used"]
+    a, b = current["disk"].get("df_used"), old["disk"].get("df_used")
+    if isinstance(a, int) and isinstance(b, int):
+        result["df_used_delta"] = a - b
+        result["df_gap"] = result["df_used_delta"] - result["known_delta"]
+        result["df_note"] = "df 口径（本卷已用）变化；已列出目录合计与它的差额 = df_gap"
+    else:
+        result["df_used_delta"] = None
+        result["df_note"] = ("无可比基线：基准记录没有 df 口径（旧版只记了 容器总量−可用，含快照/其他卷/可清除空间，"
+                             "不能代表本卷已用变化）。本次已记下 df 口径，下次起可比。")
     result["unattributed_delta"] = result["disk_used_delta"] - result["known_delta"]
     result["scope_changed"] = roots(current) != roots(old)
     result["partial"] = any(p.get("coverage", {}).get("scan_status") != "complete" for p in (current, old))
@@ -239,9 +282,16 @@ def render(comparison, points):
         heading = local_time(b["created_at"]) + " → " + local_time(c["created_at"])
         sections.append('<div class="metrics">' + ''.join(
             '<div><span>' + esc(label) + '</span><strong>' + esc(signed(value)) + '</strong></div>'
-            for label, value in (("磁盘已用变化", comparison["disk_used_delta"]),
-                                 ("已定位目录的净变化", comparison["known_delta"]),
-                                 ("尚未归因的差额", comparison["unattributed_delta"]))) + '</div>')
+            for label, value in (("容器口径已用变化（总量−可用）", comparison["disk_used_delta"]),
+                                 ("已列出目录合计（含新出现）", comparison["known_delta"]),
+                                 ("其中：本次新出现的大目录", comparison.get("new_delta", 0)),
+                                 ("容器口径未归因差额", comparison["unattributed_delta"]))) + '</div>')
+        if comparison.get("df_used_delta") is not None:
+            sections.append('<p><b>df 口径（本卷已用）变化 ' + esc(signed(comparison["df_used_delta"])) + '</b>；已列出目录合计与磁盘总变化的差额 ' + esc(signed(comparison["df_gap"])) + '</p>')
+        else:
+            sections.append('<p><b>' + esc(comparison["df_note"]) + '</b></p>')
+        if comparison.get("new_dirs"):
+            sections.append('<details open><summary>本次新出现的大目录 · ' + str(len(comparison["new_dirs"])) + '</summary><b>' + esc(signed(comparison["new_delta"])) + '</b>' + ''.join('<p class="child"><code>' + esc(d["path"]) + '</code><b>' + esc(signed(d["bytes"])) + '</b><small>' + esc(d["note"]) + '</small></p>' for d in comparison["new_dirs"]) + '</details>')
         for area in comparison["areas"]:
             children = [r for r in comparison["rows"] if r["path"] != area["path"] and under(r["path"], area["path"])]
             children = sorted(children, key=lambda r: -r["delta"])[:8]
@@ -273,13 +323,21 @@ def render(comparison, points):
     """ + '</style><main><header><div class="eyebrow">叁笙清理 · 空间增长调查</div><h1>' + esc(heading) + '</h1><p>' + esc(comparison["notice"]) + '</p></header>' + ''.join(sections) + '</main></html>'
 
 
-def make(run, facts=None, baseline=None):
+def make(run, facts=None, baseline=None, extra_history=None):
     run = Path(run)
     facts = facts or read_json(run / "facts.json")
     current = compact(facts)
+    dfv = df_volume((facts.get("host") or {}).get("home") or os.path.expanduser("~"))
+    if dfv and "df_used" not in current["disk"]:
+        current["disk"].update(dfv)
     if not valid_scan(current) or current["scan_id"] != run.name:
         raise ValueError("扫描记录的身份不正确")
-    points = load_points(run.parent)
+    default_hist = Path(protect.STATE_DIR) / "history"
+    # 只读模式（scan.py --read-only 的固定运行目录）才额外读家目录历史作基准。原来是“不在家目录 runs 下就读”，
+    # 任意临时目录（含测试）都会读到本机真实历史，测试因此依赖机器状态而失败（2026-11-03 发现）。
+    if extra_history is None and run.parent.resolve() == Path(READONLY_RUNS).resolve():
+        extra_history = [default_hist]  # 只读取，不往里写
+    points = load_points(run.parent, extra_history)
     old, rejected = select_baseline(current, points, baseline)
     notes_path = run / "growth-notes.json"
     notes = read_json(notes_path) if notes_path.exists() else {}
@@ -339,7 +397,11 @@ def main(argv=None):
             c = make(args.run, baseline=args.baseline)
             print(str(Path(args.run) / "growth.html"))
             if c.get("baseline"):
-                print("基准：" + c["baseline"]["scan_id"] + "；磁盘已用变化 " + signed(c["disk_used_delta"]))
+                print("基准：" + c["baseline"]["scan_id"] + "；容器口径已用变化 " + signed(c["disk_used_delta"])
+                      + "；已列出目录合计 " + signed(c["known_delta"]) + "（其中新出现 " + signed(c.get("new_delta", 0)) + "）")
+                print("df 口径：" + (signed(c["df_used_delta"]) + "，与已列出合计差额 " + signed(c["df_gap"]) if c.get("df_used_delta") is not None else c["df_note"]))
+                for d in (c.get("new_dirs") or [])[:10]:
+                    print("  新出现 " + signed(d["bytes"]) + "  " + d["path"])
         else:
             points = load_points(args.runs_dir)
             if args.command == "import":

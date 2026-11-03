@@ -1,0 +1,17 @@
+{
+  "_说明": "复制到 ~/.sansheng/disk-cleanup/triage-local.json 后按你的电脑改；不配置时，依赖这些字段的检查自动跳过。",
+  "work_root": "~/Projects",
+  "production_globs": ["成品", "*/final"],
+  "ledger_globs": ["*台账*.sqlite3*"],
+  "ref_doc_extra": ["HANDOFF.md"],
+  "hard_keep_extra": ["成品"],
+  "video_root": "成品",
+  "prefer_worktree": null,
+  "same_disk_archive_globs": ["_archive/cleanup-*"],
+  "cleanup_log": "~/.sansheng/disk-cleanup/cleanup-log.md",
+  "offdisk_backup": {
+    "label": "网盘备份",
+    "state": "~/backup/state.json",
+    "logs": ["~/backup/*.log"]
+  }
+}
