@@ -75,7 +75,10 @@ LOCAL_DEFAULTS = {
     "prefer_worktree": None,      # 最大工作树拆解优先选名字含它的
     "same_disk_archive_globs": [],  # 同盘存档目录（相对 work_root 的 glob）
     "cleanup_log": "~/.sansheng/disk-cleanup/cleanup-log.md",
-    "offdisk_backup": None,       # {"label": "网盘", "state": "<state.json，键为 work_root 相对路径>", "logs": ["<日志 glob>"]}
+    "offdisk_backup": None,       # {"label": "网盘", "state": "<state.json>", "logs": ["<日志 glob>"], "adapter": ["<命令>", ...]}
+    "extra_tier1": [],            # 本机新认出的可再生缓存：[{"category", "globs": [...], "note", "quiet_hours"}]（清理后把经验写回这里）
+    "extra_tier3": [],            # 本机新认出、需要问人的大目录：[{"category", "glob", "note"}]
+    "watch": None,                # disk_watch.py 阈值：{"min_free_gib", "min_free_pct", "max_drop_gib_7d"}
 }
 
 
@@ -331,6 +334,11 @@ TIER1 = [
                          "/tmp/sansheng-disk-cleanup-ro/runs/*", "/tmp/sansheng-triage/*"],
      "本 Skill 历次扫描/调查的运行目录；空间历史另存 history/，设置在 profile.json，都不在这里", 168),
 ]
+# 本机经验回流：清理中新认出的位置写进本机配置，下次体检直接认识（不进公开仓）
+for _e in LOCAL.get("extra_tier1") or []:
+    if _e.get("category") and _e.get("globs"):
+        TIER1.append((_e["category"], [os.path.expanduser(g) for g in _e["globs"]],
+                      _e.get("note") or "本机配置登记的可再生缓存", _e.get("quiet_hours")))
 CHROME_CLONE_ROOT = XDIR + "/com.google.Chrome.code_sign_clone"
 
 
@@ -1100,6 +1108,8 @@ TIER3_GLOBS = [
     ("Codex 桌面任务目录", HOME + "/Documents/Codex/*", "产物是否已搬进项目"),
     ("下载目录", HOME + "/Downloads", "旧安装包/大文件"),
     ("清理 Skill 自身工作区", HOME + "/.sansheng/disk-cleanup", "本 Skill 的设置/运行目录/隔离区(quarantine)/开发证据与候选包；profile.json、history/ 必留，runs 旧目录、候选 zip、quarantine 需用户判断"),
+    *[(_e["category"], os.path.expanduser(_e["glob"]), _e.get("note") or "本机配置登记") for _e in LOCAL.get("extra_tier3") or []
+      if _e.get("category") and _e.get("glob")],
     ("仓库对象库（只算 pack）", HOME + "/*/.git/objects/pack", "只算 .git/objects/pack，不是整个 .git；看 `git count-objects -vH`；新 pack 可能是 repack 残留，由用户决定 `git gc`，Skill 不执行"),
 ]
 

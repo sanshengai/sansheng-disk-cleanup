@@ -48,6 +48,8 @@ Codex、Claude Code 用了几个月，磁盘满了却不知道满在哪？通用
 ## 还有这些
 
 - **几分钟出结果的分档体检**：`scripts/triage.py` 只读并行测量，分成“可直接清的缓存 / 可移除的工作树 / 要你判断的 / 在用或受保护的”四档，每项附先检查、再删除两条命令；正在生产的成品目录、被台账登记的路径默认保护，只认盘外备份为可恢复。
+- **你说“都删”时，也逐项复核**：你在对话里整批授权后，Agent 把清单交给 `scripts/quick_act.py` 执行，不再临时写脚本。删前逐项检查：别的 Agent 是不是还在用（近期提交、其他会话的对话记录、目录里的脚本、代码引用），有没有盘外备份（可接你自己的网盘备份，先补传、再回读核对）；没有备份的过程件只改名隔离 7 天。每一项都写进清理日志，附恢复办法。
+- **空间异常才提醒**：`scripts/disk_watch.py` 一秒读完余量，和一周前比，余量过低或涨得太快才弹通知；不装定时任务，想每天看就挂进你已有的定时任务。
 - **重复副本只占一份空间**：同一文件在成品库、交付、分发暂存里各存一份时，全量核对后改成 APFS 克隆，每个路径照常可用，删副本才会破坏的交付目录也不用动。
 - **大目录拆到任务阶段**：追查 Agent 的外部工作区、副本和批量小文件，区分原始输入、当前工程、正式成果与已结束的过程件；网站装配、旧安装包、登记暂存和渲染现场分别核验。
 - **任务结束主动收尾**：让产生文件的 Agent 按归属记录输入、过程件和保留成果，在阶段完成时清理已有授权覆盖的无用过程件，避免一直累积。
@@ -120,6 +122,9 @@ git clone https://github.com/sanshengai/sansheng-disk-cleanup ~/.claude/skills/s
 
 ```sh
 python3 scripts/triage.py --out /tmp/<目录>           # 分档体检（只读，几分钟出结果）
+python3 scripts/quick_act.py plan --items 清单.json --user-text '<你的原话>' --run <目录>   # 整批授权：逐项复核出计划
+python3 scripts/quick_act.py run --run <目录> --seal <封存码> --pilot   # 先试点一项，再去掉 --pilot
+python3 scripts/disk_watch.py --notify                # 空间巡检：余量过低或一周涨太多才提醒
 python3 scripts/clone_dedupe.py plan --root <目录> --out plan.json   # 重复副本：全量核对后出计划
 python3 scripts/clone_dedupe.py run --plan plan.json --receipt r.jsonl --dry-run  # 先预演，去掉 --dry-run 正式改成克隆
 python3 scripts/scan.py scan --no-refs                # 第一次：快扫，约 1 分钟

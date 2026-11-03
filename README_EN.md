@@ -48,6 +48,8 @@ No terminal output to read: one board shows where the space went, and you tick a
 ## Also included
 
 - **A tiered check-up in minutes**: `scripts/triage.py` measures in parallel, read-only, and sorts findings into four tiers -- caches you can clear now, worktrees you can remove, items that need your call, and items in use or protected. Each item comes with a check command and a delete command. Production folders and paths registered in your ledgers are protected by default; only off-disk backups count as recoverable.
+- **"Delete them all" still gets checked item by item**: when you approve a whole batch in chat, the agent hands the list to `scripts/quick_act.py` instead of writing a throwaway script. Before each deletion it checks whether another agent is still using the path (recent commits, other agents' recent transcripts, scripts in the same folder, code references) and whether an off-disk backup exists (it can call your own backup tool to upload missing files and read samples back). Work files without a backup are only renamed into a 7-day quarantine. Every item goes into the cleanup log with a way to restore it.
+- **Alerts only when space looks wrong**: `scripts/disk_watch.py` reads free space in a second and compares it with a week ago; it notifies you only when free space is too low or dropped too fast. It installs no schedule -- hook it into one you already have.
 - **Duplicate copies take the space of one**: when the same file sits in a library, a delivery folder and a staging folder, it is verified with a full sha256 and turned into APFS clones. Every path keeps working, so delivery folders stay intact.
 - **You decide what it can read**: four levels: basic (project notes, scripts, logs), extended (files received in chat apps, mail attachments, photos and screenshots; names and sizes only), deep (chat text, image content), and never read (passwords, keychains, browser login data, keys; enforced by the scripts). Whatever it reads is sent to the AI service you use, so every results page lists the files read in that run.
 - **A third path besides delete and keep**: move to the Trash so you can change your mind; archive finished projects to an external drive, where every file is verified before the original is touched; for iCloud and other cloud folders, only the official "keep it in the cloud" guidance, without touching your files.
@@ -121,6 +123,9 @@ You can also run each step by hand:
 
 ```sh
 python3 scripts/triage.py --out /tmp/<dir>            # tiered check-up (read-only, a few minutes)
+python3 scripts/quick_act.py plan --items list.json --user-text '<your words>' --run <dir>   # batch approval: re-check every item
+python3 scripts/quick_act.py run --run <dir> --seal <seal> --pilot   # pilot one item, then drop --pilot
+python3 scripts/disk_watch.py --notify                # space watch: alerts only when low or dropping fast
 python3 scripts/clone_dedupe.py plan --root <dir> --out plan.json   # duplicates: full hash, then a plan
 python3 scripts/clone_dedupe.py run --plan plan.json --receipt r.jsonl --dry-run  # rehearse; drop --dry-run to clone for real
 python3 scripts/scan.py scan --no-refs                # first time: quick scan, about 1 minute

@@ -17,8 +17,9 @@ description: 面向 AI 重度用户的 macOS 磁盘清理，会读懂你的电�
 2. **引用检查是删前必做**：工作区（`work_root`）内任何候选，用 `rg -l -F` 搜目录名、绝对路径、`~` 路径、工作区相对路径，范围 `AGENTS.md`、`README*.md`、`ref_doc_extra`、`*.json` 台账、脚本（`*.py/*.sh/*.ps1/*.mjs/*.js/*.ts`）与 `SKILL.md`，外加 `rg -a` 搜 `ledger_globs` 登记文件。命中分两类：**消费者**（脚本、Agent/Skill 指令、README、非快照配置）命中或超时 → “被引用·需逐项问用户”档，不给删除命令；**只是历史记录提到**（本 Skill 往期报告、快照比对清单、前后对照 json、回执、日志、records/）不算依赖，只在说明里写“仅历史记录提到 N 处”（`triage.split_ref_hits()`）。triage.py `reference_hits()` 已实现；手工处理 scan.py/plan.py 候选时也必须照跑一遍。
 3. **只有可再生的才能“清”**：缓存、构建产物、重复下载、node_modules、venv、derived/中间件，可按常规批准删除。人做的成品、素材、配音、音乐、拍摄/渲染成片一律算“搬走”不算“清理”，需要用户**逐项**批准，批准话术里写出目录全名。
 4. **备份检查**：只有盘外备份才算“可恢复”——盘外备份台账（`offdisk_backup.state`，键为工作区相对路径）列有它，或外接盘归档经核对存在。**同盘存档不是备份。** triage.py `backup_status()` 只读给出结果（外接盘需人工核对）。
-5. **清理日志**：每次真实删除**之前和之后**都追加到清理日志（`cleanup_log`，默认 `~/.sansheng/disk-cleanup/cleanup-log.md`）：时间、路径、大小、存档路径、恢复命令、谁要求的。其他 Agent 找不到文件时被指向这份日志（建议写进共享 AGENTS.md）。（手工步骤，act.py 尚未自动写。）
-6. **隔离期**：非纯缓存的删除，先改名为 `<名>.待删-YYYYMMDD`（同卷、瞬时、可撤销），等 7 天（巡检确认无人反馈再收尾）才 tar+删除。纯缓存除外。（手工步骤。）
+5. **清理日志**：每次真实删除**之前和之后**都追加到清理日志（`cleanup_log`，默认 `~/.sansheng/disk-cleanup/cleanup-log.md`）：时间、路径、大小、存档路径、恢复命令、谁要求的。其他 Agent 找不到文件时被指向这份日志（**把“文件不见了先查清理日志”写进共享 AGENTS.md**，否则别的 Agent 只会报“删除者未查明”）。`quick_act.py` 自动写前后两行。
+6. **隔离期**：没有盘外备份的非缓存内容，先改名为 `<名>.待删-YYYYMMDD`（同卷、瞬时、可撤销），等 7 天无人反馈再删。纯缓存与已核对盘外备份的除外。`quick_act.py` 对 `kind=process` 强制走隔离，`purge` 满期才删。
+8. **别的 Agent 还在用的不删**（2026-11-03 事故后加，见 [复盘](references/incident-20261103-active-agent-evidence.md)）：删前查该路径近 7 天有没有提交、其他 Agent 近 72 小时的对话记录有没有提到它、所在目录有没有已跟踪脚本（未跟踪文件可能是它们的输入或证据）、代码与门禁登记有没有按仓库相对路径引用它。任一命中都要用户在原话里写出目录名才放行；“全部删”“证据充分的都删”这类整批授权不覆盖它们。`quick_act.py` 已实现。
 7. **收尾报告**：删除后在最终回复里给出每项的确切恢复命令（如 `tar -xzf <存档> -C <原上级目录>` 或 `mv <名>.待删-YYYYMMDD <名>`）。
 
 ## 目标与默认流程（2026-10 改造，先读）
@@ -211,6 +212,27 @@ python3 scripts/plan.py propose --run <run目录>     # 写 proposal.json，打�
 
 ## 执行
 
+### 用户已整批授权：已授权清单执行器（首选）
+
+用户在对话里整批授权（“低风险的直接删”“证据充分的全部删”）、不需要看板时，**不要临时写脚本自己删**：把判断好的清单写成 items JSON，交给 `scripts/quick_act.py`，复核、执行、清理日志、回执、恢复命令都由它做。
+
+```sh
+python3 scripts/quick_act.py plan --items <清单.json> --user-text '<用户原话>' --run <运行目录> [--upload-missing]
+python3 scripts/quick_act.py run  --run <运行目录> --seal <封存码> --pilot   # 先试点第一项
+python3 scripts/quick_act.py run  --run <运行目录> --seal <封存码>           # 再全部（已完成的自动跳过）
+python3 scripts/quick_act.py purge --run <运行目录>                           # 7 天后清隔离区
+```
+
+- 每项写明 `kind`：`regenerable`（**已登记**的可再生缓存：第 1 档白名单、本机配置 `extra_tier1`、node_modules/__pycache__ 等，直接删；Agent 自己声明“可重建”但不在登记里的，一律按 `process` 只隔离）、`backed_up`（有盘外备份：调用本机配置的备份适配器逐文件核对台账、抽样从盘外回读，`--upload-missing` 先补传缺的，全部一致才删）、`process`（没有盘外备份的过程件：只改名隔离，不释放空间）。
+- `scope`：`all` / `children` / `files` / `untracked`（Git 工作树里只删未跟踪和忽略的文件）。
+- plan 与 run 各做一遍红线检查（保护名单、生产目录、Git 跟踪、文档与代码引用、他人活动、打开文件、静默期写入、App 运行、盘外备份），run 以执行瞬间的事实为准，目标被替换（inode 变了）就跳过。
+- plan 打印的拒绝原因要如实转告用户；被“需用户点名”拦下的，向用户说明是谁在用、证据是什么，用户在原话里写出路径（或不少于 8 个字的完整目录名）后重新 plan。
+- 任何一项检查自身失败（超时、git/rg 出错、本机配置读不了、认不出本会话记录）都按拒绝处理；封存码按计划内容重算，改过计划文件就失效；删每个目标前再测一次身份、写入、占用和文件清单。
+- 本会话自己的对话记录不算“他人活动”：脚本按用户原话识别；识别不到时用 `--self-transcript <路径>` 指明。
+- 盘外备份适配器协议见 [triage-local.example.json](references/triage-local.example.json) 的 `offdisk_backup.adapter`。
+
+### 看板与对话确认
+
 只在用户本轮明确回复或发来看板清单之后：
 
 **确认时先讲清最终结果**：直接删除写“预计腾出 X，删除后不可撤销”；先放废纸篓写“处理 X，暂不释放空间，彻底删除后才腾出”。用户以腾空间为目标时，不要把暂存完成当作任务完成。当前设置为先放废纸篓、用户明确要求本轮直接永久删除时，沿用这次授权并用下面的 `--no-trash --trash-reason`，不再重复询问，也不擅自改变长期偏好。
@@ -246,6 +268,12 @@ nohup python3 scripts/act.py go --run <run目录> --choice recommended > <run目
 - 汇报时说明覆盖率和跳过的部分，不要把“扫描完成”说成“全盘清理完成”。
 
 业务资料还应区分原件、转换版、内嵌附件与历史导出，先测重复量和无损压缩潜力，不按文件夹名称或目标体积猜可删量。旧媒体、HEIC 和 PDF 副本有原路径依赖时，可按 [agent-artifacts.md](references/agent-artifacts.md) 评估 APFS 共享块。它会改变 inode；不用于资源库、同步目录或活动素材，先试点再分批实测，不能把名义重复体积当成已释放。
+
+## 空间巡检（不装定时任务）
+
+`python3 scripts/disk_watch.py [--notify] [--triage]`：一秒读完磁盘余量，和约一周前比；余量低于阈值或一周少得太多才算异常（退出码 10），`--notify` 弹通知，`--triage` 顺带跑一次分档体检。阈值写在本机配置 `watch`。Skill 不安装定时任务；用户想每天看一次，挂进他已有的定时任务。
+
+清理中新认出的缓存或大目录，写回本机配置 `extra_tier1`（可再生缓存）/ `extra_tier3`（要问人的大目录），下次体检直接认识；只写本机配置，不改公开仓。
 
 ## 空间记录与增长调查
 

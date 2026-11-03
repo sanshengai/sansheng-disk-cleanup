@@ -1,17 +1,57 @@
 {
   "_说明": "复制到 ~/.sansheng/disk-cleanup/triage-local.json 后按你的电脑改；不配置时，依赖这些字段的检查自动跳过。",
   "work_root": "~/Projects",
-  "production_globs": ["成品", "*/final"],
-  "ledger_globs": ["*台账*.sqlite3*"],
-  "ref_doc_extra": ["HANDOFF.md"],
-  "hard_keep_extra": ["成品"],
+  "production_globs": [
+    "成品",
+    "*/final"
+  ],
+  "ledger_globs": [
+    "*台账*.sqlite3*"
+  ],
+  "ref_doc_extra": [
+    "HANDOFF.md"
+  ],
+  "hard_keep_extra": [
+    "成品"
+  ],
   "video_root": "成品",
   "prefer_worktree": null,
-  "same_disk_archive_globs": ["_archive/cleanup-*"],
+  "same_disk_archive_globs": [
+    "_archive/cleanup-*"
+  ],
   "cleanup_log": "~/.sansheng/disk-cleanup/cleanup-log.md",
   "offdisk_backup": {
     "label": "网盘备份",
     "state": "~/backup/state.json",
-    "logs": ["~/backup/*.log"]
+    "logs": [
+      "~/backup/*.log"
+    ],
+    "adapter": [
+      "python3",
+      "~/backup/disk-cleanup-adapter.py"
+    ]
+  },
+  "_适配器协议": "quick_act.py 对 kind=backed_up 的条目调用：<adapter> check --paths-file F --sample N，F 为本机绝对路径的 JSON 数组；输出 {\"ok\":[],\"missing\":[],\"changed\":[],\"sample\":[{\"path\",\"ok\"}],\"restore_hint\":\"\"}，只有 ok 里的文件算已备份，sample 是从盘外回读逐字节比对的结果。<adapter> upload --paths-file F 补传缺的文件，输出 {\"uploaded\":[],\"failed\":[]}。退出码非 0 视为失败。",
+  "extra_tier1": [
+    {
+      "category": "某工具缓存",
+      "globs": [
+        "~/.sometool/cache"
+      ],
+      "note": "重新运行时自动重建",
+      "quiet_hours": 24
+    }
+  ],
+  "extra_tier3": [
+    {
+      "category": "某 Agent 会话",
+      "glob": "~/.someagent/sessions",
+      "note": "按会话问用户"
+    }
+  ],
+  "watch": {
+    "min_free_gib": 50,
+    "min_free_pct": 10,
+    "max_drop_gib_7d": 60
   }
 }
