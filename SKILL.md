@@ -1,6 +1,8 @@
 ---
 name: sansheng-disk-cleanup
 description: 面向 AI 重度用户的 macOS 磁盘清理，会读懂你的电脑：第一次用一页选择题认识用户，按"谁产生、为哪个任务、是否结束、谁还在用"判断 Agent 会话、批量生成图、工作树中间稿、构建暂存、模拟器与模型缓存等能否清理，认不出的大目录会先调查；生成叁笙品牌选择看板，用户确认后复核执行（可先放废纸篓或归档到外接硬盘）并实测释放空间。腾空间、清理电脑、磁盘快满、调查异常占用、清理本对话或任务阶段收尾、培养 Agent 清理习惯时使用；Windows 尚未支持。
+metadata:
+  version: "0.13.0"
 ---
 
 # 叁笙清理
@@ -10,6 +12,8 @@ description: 面向 AI 重度用户的 macOS 磁盘清理，会读懂你的电�
 **少打扰用户**：扫描前不问问题；第一次使用发一页设置选择题（只发一次），之后大多数时候在对话里用一句话确认，要用户看的东西多时才发清理看板；确认后预演、试点、正式执行由脚本连着做完，只有出异常才停下来问。
 
 **核心原则**：判断由你（Agent）根据证据来做，脚本只负责采集事实和安全执行。"多久没动""可以重新生成""没有会话文件"都不能单独作为删除理由（例外：triage 1 档白名单类别，可再生 + 无进程 + 静默期无写入三者同时成立即可）；每条建议写出来之前，都要先做引用检查。**用户的设置和你的记忆只改变“问不问、预填什么、进哪一档”，不改变“能不能放行”。** 完整准则见 [references/judgment.md](references/judgment.md)，必须先读。
+
+生产任务可提交 [生产交付清单](references/production-handoff.md)，体检和执行复核会读取成品、仍需保留的原料、消费者与验收证据。分批汇报读取 `quick-space.jsonl`，并列说明条目估算、目标卷及 APFS 容器实际余量变化、保留原因。并发写入时，能单独归因给本任务的字节数可为未知。
 
 ## 防误删红线（硬规则，优先于下文一切；2026-11-02 事故后加，见 [复盘](references/incident-20261102-production-dirs.md)）
 
@@ -24,7 +28,7 @@ description: 面向 AI 重度用户的 macOS 磁盘清理，会读懂你的电�
 
 ## 目标与默认流程（2026-10 改造，先读）
 
-**目标指标**：同一台机器、同一时刻，Skill 扫描耗时 ≤ 手工（≈9 分钟）；找出的可回收总量 ≥ 手工清单；误报（把不该删的列进 1/2 档）= 0。为什么要改见 [why-manual-beat-skill.md](references/why-manual-beat-skill.md)。
+**目标指标**：同一台机器、同一时刻，Skill 扫描耗时 ≤ 手工（≈9 分钟）；对手工独立核实的可回收条目核对漏项；按同一保留条件比较净减量；误报（把不该删的列进 1/2 档）= 0。改扫描器时按[固定样本对照方法](references/why-manual-beat-skill.md#固定样本对照方法)分别验收判断和耗时。
 
 **本机配置**：工作区根、生产目录、制作台账、成品目录、盘外备份台账因人而异，写在 `~/.sansheng/disk-cleanup/triage-local.json`（示例见 [references/triage-local.example.json](references/triage-local.example.json)，字段含义见 `triage.py` 的 `LOCAL_DEFAULTS`）。没配置时，依赖它们的红线检查、成品拆分、存档核对自动跳过并在报告里写明，其余照常；第一次使用时按用户的回答帮他写好这份文件。
 
@@ -45,7 +49,7 @@ python3 scripts/triage.py --out /tmp/<目录> [--prev <上次 triage.json>]
 
 1. **条件**：白名单类别 + 无进程打开（lsof 快照）+ 对应 App 未运行（`ps`/`pgrep`：CodexBar、cmux、Codex、Google Chrome、Cursor、Claude、brew 等）+ 静默期内无真实写入 + 不在保护名单。
 2. **静默期**：默认 6 小时（`--quiet-hours`）；知识卡写了更严（更长）的阈值时取较严者：视频渲染缓存 `hyperframes-extract-cache*` 24 小时、`~/Library/Caches/*` 24 小时（macos-system 卡）、node 编译缓存 24 小时（专用入口自带）。阈值登记在 `triage.py` 的 `TIER1` 表第 4 列，报告“静默期”列显示实际采用值。
-3. **命令**：每项两条独立命令——先“检查”（`find -x DIR -type f -mmin -N … -print -quit`，无输出才继续），再“删除”。删除原生优先：Homebrew `brew cleanup`、npm `npm cache clean --force`、uv `uv cache clean`、pip `pip cache purge`（本机写 `python3 -m pip cache purge`）；有专用入口的走入口（node 编译缓存 `node_compile_cache.py`、Chrome 克隆 `chrome_clones.py`）；其余“删除目录内容”统一写 `find -x DIR -mindepth 1 -delete`（保留目录本身、不跟随符号链接、不跨卷）。**不写 `rm -rf`**（见硬约束）。
+3. **命令**：每项两条独立命令——先“检查”（`/usr/bin/find -x DIR -type f -mmin -N … -print -quit`，无输出才继续），再“删除”。删除原生优先：Homebrew `brew cleanup`、npm `npm cache clean --force`、uv `uv cache clean`、pip `pip cache purge`（本机写 `python3 -m pip cache purge`）；有专用入口的走入口（node 编译缓存 `node_compile_cache.py`、Chrome 克隆 `chrome_clones.py`）；其余“删除目录内容”统一写 `/usr/bin/find -x DIR -mindepth 1 -delete`（保留目录本身、不跟随符号链接、不跨卷）。**不写 `rm -rf`**（见硬约束）。
 4. **App 运行中**：命中第 1–3 条但对应 App 在跑时，标“App 运行中，删前需退出”，移出一键清单，列入“待 App 退出后”小节。
 5. scan.py / plan.py 流程里的“24 小时内有改动就保留”是第 3 档和卡片判断的默认，不是第 1 档的阈值；两者冲突时按本节。
 
@@ -74,7 +78,7 @@ Skill 自己不执行任何删除或 `worktree remove`。之后需要逐项深�
 
 **2026-11-03 第三轮对比改进（triage）**，依据见 [why-manual-beat-skill.md](references/why-manual-beat-skill.md) 第三轮：
 - **第 1 档拆到子项**：整目录因“有打开文件/近期写入”不过时，逐个子项复核，闲置子项进第 1 档、在用子项留在保留档（保留档只计在用部分）。程序本体目录不拆。Chrome 代码签名克隆逐份判：对应运行中 Chrome 主进程（`ps etime` 推算启动时刻，与克隆创建时刻差 ≤3 分钟）的保留，其余（含与安装版同版本、异常退出留下的残留）走 `chrome_clones.py`。
-- **重复副本**：`--no-dups` 可关。对工作区与 profile 的成品目录里 ≥20MB 文件按大小 + 抽样哈希找重复，报名义可共享量与分布；处置用 `scripts/clone_dedupe.py plan/run`：全量 sha256、保留端按“成品库 > 一般目录 > 交付 > 分发暂存 > 临时 > 工作树”选定，其余副本 `cp -c -p` 原地换成 APFS 克隆（路径、内容、mtime 不变，不删任何路径）；执行时复核身份、打开、6 小时写入与保护名单。已是克隆的再克隆不腾空间，以磁盘实测为准。
+- **重复副本**：`--no-dups` 可关。对工作区与 profile 的成品目录里 ≥20MB 文件按大小 + 抽样哈希找重复，报名义可共享量与分布；处置用 `scripts/clone_dedupe.py plan/run`：全量 sha256、保留端按“成品库 > 一般目录 > 交付 > 分发暂存 > 临时 > 工作树”选定，其余副本 `cp -c -p` 原地换成 APFS 克隆（路径、内容、mtime 不变，不删任何路径）；执行时复核身份、打开、6 小时写入与保护名单。已是克隆的再克隆不腾空间；“已共享”是抽样判定（开头/中间/结尾，>256MiB 取 8 处），不是全量，以磁盘实测为准。
 - **存档定位一次建索引**（原来每个 tgz 各跑一次 find，占总耗时六成）；盘外已备份的同盘存档单列命令卡。
 - **扫描中出现又消失的目录**（临时快照等）标“临时产物”，不计入增长合计与未归类。
 - 本 Skill 自己 7 天未写的旧运行目录（`runs/`、`investigations/`、`/tmp` 只读运行目录）进第 1 档。
@@ -123,7 +127,7 @@ Skill 自己不执行任何删除或 `worktree remove`。之后需要逐项深�
 
 **没有可直接删除的项目，也必须交付判断入口**：不得把“没有通过校验的可执行项”说成“没有东西可清理”，也不得用磁盘余量充足作为结束理由。此时仍生成并交付看板：说明哪些确实在用、哪些只是尚缺证据。对于只因任务状态、用途或副本不明而暂时保留的对象，按具体任务拆卡，`verdict: keep` 并写 `question`；看板会给“想清理，继续查 / 保留 / 暂不确定”的选择。不要把所有未判断的大目录合成一张“其他资料”后结束。
 
-看板的“复制核查答复”与清理清单分开：抬头为“叁笙清理 · 待核查答复”，**不是删除授权**。用户选“想清理，继续查”后按具体对象补查，重新写计划、校验并交付清理清单；仍在运行、绝对保护和确有依赖的对象继续保留，不因答复而放宽条件。大项目“进行中”不证明其中每个旧子任务都还要用；可以询问具体旧任务是否需要清理，但不能自动改整个项目状态或直接删除。没有待核查项时也展示占用与保留依据，不发送空的“回复好就删”邀请。
+看板只有一个导出按钮“复制清单，发给 Agent”：一段文本里先是“叁笙清理选择”，有待决定答复时后面接抬头“叁笙清理 · 待核查答复”的部分，这一部分**不是删除授权**，`act.py go --from-board` 只把前一部分当清理授权、答复另存为 `review-answers-<时间戳>.txt`。用户选“想清理，继续查”后按具体对象补查，重新写计划、校验并交付清理清单；仍在运行、绝对保护和确有依赖的对象继续保留，不因答复而放宽条件。大项目“进行中”不证明其中每个旧子任务都还要用；可以询问具体旧任务是否需要清理，但不能自动改整个项目状态或直接删除。没有待核查项时也展示占用与保留依据，不发送空的“回复好就删”邀请。
 
 ## 深度调查与授权
 
@@ -141,13 +145,17 @@ Skill 自己不执行任何删除或 `worktree remove`。之后需要逐项深�
 
 **看不见的地方要说出来**：终端没有“完全磁盘访问”时，`~/Library/Containers`、`Group Containers`、Mail、Messages 等只能量到极小值；报告里写明“未覆盖，需在系统设置给终端完全磁盘访问后重扫”，不要把它们算成 0。
 
-**问谁**：会话与生图问用户；正在跑的项目子任务问创建它的 Agent（看 README、交接说明、进程命令行里的工作目录）；部署槽位和同步工作树问持有部署锁的 Agent；晨报相关目录问晨报 Agent；需要 sudo 或系统设置的事给用户命令。卡片的 `question` 写明对象。
+**问谁**：会话与生图问用户；正在跑的项目子任务问创建它的 Agent（看 README、交接说明、进程命令行里的工作目录）；部署槽位和同步工作树问持有部署锁的 Agent；定时任务相关目录问维护它的 Agent；需要 sudo 或系统设置的事给用户命令。卡片的 `question` 写明对象。
 
 **审计要收敛为处理结论**：按占用从大到小核查本轮范围，每个已查组给出“推荐删除 / 保持路径去重 / 明确保留 / 具体缺口”之一，附实际文件范围、依据与影响。明确保留写出仍需它的消费者；缺口写出尚未取得的证据和下一步，不用笼统的“在用”“其他资料”结束。已获授权且通过现有校验的项继续执行，不等无关组全部查完。父项目活跃时，仍可核验并退休其中已完成的登记、测试、渲染或构建子阶段，保持父项目状态不变。
 
 汇总前把跨目录候选按实际文件去重，并固定全批次的保留副本；同一文件不能同时计入删除和共享块，两个候选也不能互为唯一保留端。分别报告候选量、执行成功的条目核算量和磁盘实测余量变化；名义重复量、已扫描体积不算已释放。具体方法见 [agent-artifacts.md](references/agent-artifacts.md)。
 
 会话分别记录文件是否存在、父子关系、最后一轮状态、归档标记、运行进程与项目交付状态。最后一轮 completed、归档为 false、没有进程或很久没动，都不单独证明任务结束。Codex 的 `.jsonl.zst` 也计入；压缩文件的元信息优先从只读数据库读取，读不到必须标 unknown，不直接解压巨型文件。
+
+会话退休前按[会话内嵌素材核验](references/session-materials.md)检查可能只有一份的附件。执行入口须能复核原件和保留副本，无法读取的部分标明范围。
+
+用户追问“对话怎么只有这么大”时，同时盘点普通和压缩会话、分页历史库及其 WAL、生图与工具输出、任务工作目录、构建与渲染暂存。逐组写出本机现存量、活跃或唯一副本、可处置范围；父目录与子项只计一次。查前次回执解释已经移走的部分，历史回收量另列。
 
 用户已经明确授权清理本轮证据充分的冗余内容时，不重复索要同一授权，不伪造看板导出。保存用户原话和实际清单，照常经过 check、seal、dry-run、pilot、run；仍有唯一副本、依赖或用途疑问的对象保留并单独说明。用户要求腾空间时，清理授权覆盖清单内的永久删除；不得顺便清空整个废纸篓。
 
@@ -202,10 +210,12 @@ python3 scripts/plan.py propose --run <run目录>     # 写 proposal.json，打�
 
 `check` 把不满足条件的卡降级并写明原因（缺结束证据、含交互会话、被引用未核对、受保护、正在使用等，条件见 contract.md 第 4 节），降级原因要如实告诉用户；`item-refs` 查到引用的条目，打开 `item_refs.json` 看样本，只是历史记录的在卡片 evidence 里写 `refs_reviewed(history_only)` 再 check，还在用的写 `depends`。
 
+**先预查，再承诺**（2026-11-04 两次再犯后加）：给用户可复制的授权句、或说“回一句话能腾 X”之前，先用同一份清单跑执行器的计划阶段：看板链跑 `plan.py check`，对话授权链跑 `quick_act.py plan`（不带 `--upload-missing`）；两者都不删东西。授权句只写通过的和“需点名”的条目，并写出要点名的目录名；硬保护的（如成品目录）只说明原因，不写进删除授权句。调查结论里有“已被取代”“没人用了”“旧脚本”这类话，先打开消费者脚本，看它属于哪条流程，再复述。
+
 **按 `propose` 打印的“方式”走，不自己改判**：
 - **在对话里确认**（`mode=chat`）：把它打印的那段话原样发给用户；回“好 / 稳妥 / 都删”就运行对应那一行 `act.py go --choice`；要看细节再发看板。发看板的提案 `go --choice` 一律拒绝。
 - **发清理看板**：要用户看的项超过 3 项、含交互会话、或用户设了“每次都发看板”。运行 `python3 scripts/plan.py board --run <run目录>`，把路径交给用户，用几句话说能腾出多少、要用户决定什么。看板顶部写着“按你的设置……”，新项目和久没动的项目是单题卡，待确认规则每条两个按钮，卡片选项是删 / 留 / 归档（选归档要填外接硬盘路径）。用户点“复制清单，发给 Agent”后，把整段文字存成文件交给 `act.py go --from-board`。
-- **新项目与久未活动**：`proposal.project_questions` 在对话里用一句话问，用户回答后 `plan.py project --key <项目键> --status done|active|archived|protected`。
+- **新项目与久未活动**：`proposal.project_questions` 在对话里用一句话问，用户回答后 `plan.py project --key <项目键> --status done|active|archived|protected`。用户要“项目还在做，但里面的 AI 对话逐个问我”时用 `--conversations ask`（只放开按会话归属的单个 AI 对话记录；带生成图的对话、整目录、项目目录里的文件照旧保护；放开的卡只在看板上由用户一张张确认，不预填、不进对话档位，档位按钮也不勾它们），不要改成“做完了”。含交互对话或因“逐个问”放开的卡，只按用户发来的看板导出用 `act.py go --from-board` 执行，不自己算 `sel` 去跑 `act.py run`。
 - **飞轮提问**：提案末尾“以后都这样吗”，用户回“以后都删 / 以后别列”就运行它打印的 `plan.py rule --key … --reply delete|keep`；回“不用”用 `--reply never`；撤销用 `--reply forget`。
 - **云盘建议**（`proposal.cloud_suggestions` 非空）：只给建议和官方入口，不动云盘文件；用户自己动手前提醒别直接删除。
 - **治本**（`proposal.governance_mode`）：`tell` 只说现象，`guide` 给改法，`fix` 写“同意后我来改，可撤销”；改完用 `memory.py govern record --path P --change … --undo … --bytes N` 记一笔，下次扫描 `memory.py govern check --run <run目录>` 核对有没有停涨。
@@ -220,16 +230,45 @@ python3 scripts/plan.py propose --run <run目录>     # 写 proposal.json，打�
 python3 scripts/quick_act.py plan --items <清单.json> --user-text '<用户原话>' --run <运行目录> [--upload-missing]
 python3 scripts/quick_act.py run  --run <运行目录> --seal <封存码> --pilot   # 先试点第一项
 python3 scripts/quick_act.py run  --run <运行目录> --seal <封存码>           # 再全部（已完成的自动跳过）
-python3 scripts/quick_act.py purge --run <运行目录>                           # 7 天后清隔离区
+python3 scripts/quick_act.py purge --run <运行目录>                           # 7 天后清单个隔离区
+python3 scripts/quick_act.py purge --all [--orphan-scan <目录>]               # 扫描全盘回执或孤儿隔离项
 ```
 
-- 每项写明 `kind`：`regenerable`（**已登记**的可再生缓存：第 1 档白名单、本机配置 `extra_tier1`、node_modules/__pycache__ 等，直接删；Agent 自己声明“可重建”但不在登记里的，一律按 `process` 只隔离）、`backed_up`（有盘外备份：调用本机配置的备份适配器逐文件核对台账、抽样从盘外回读，`--upload-missing` 先补传缺的，全部一致才删）、`process`（没有盘外备份的过程件：只改名隔离，不释放空间）。
-- `scope`：`all` / `children` / `files` / `untracked`（Git 工作树里只删未跟踪和忽略的文件）。
+- **持久化 `--run` 目录**：生产运行（如 `--run` 传 `~/.sansheng/disk-cleanup/runs/<任务名>` 或工作区 `_workspace/disk-watch/...`）严禁放在 `/tmp` / `$TMPDIR`，避免重启丢失回执。
+- 每项写明 `kind`：`regenerable`（**已登记**的可再生缓存：第 1 档白名单、本机配置 `extra_tier1`、node_modules/__pycache__ 等，直接删；Agent 自己声明“可重建”但不在登记里的，一律按 `process` 只隔离）、`backed_up`（有盘外备份：调用本机配置的备份适配器逐文件核对台账、抽样从盘外回读，`--upload-missing` 先补传缺的，全部一致才删）、`verified_obsolete`（已核实冗余或已交付过程件：仅当用户原话同时给出明确直删意图与点名路径时直接删，保护名单/占用/静默期红线照旧拦截）、`process`（没有盘外备份的过程件：只改名隔离，不释放空间）。
+- `scope`：`all` / `children`（支持可选 `keep_names` 保留指定直属子项）/ `files` / `untracked`（Git 工作树里只删未跟踪和忽略的文件）。
 - plan 与 run 各做一遍红线检查（保护名单、生产目录、Git 跟踪、文档与代码引用、他人活动、打开文件、静默期写入、App 运行、盘外备份），run 以执行瞬间的事实为准，目标被替换（inode 变了）就跳过。
 - plan 打印的拒绝原因要如实转告用户；被“需用户点名”拦下的，向用户说明是谁在用、证据是什么，用户在原话里写出路径（或不少于 8 个字的完整目录名）后重新 plan。
 - 任何一项检查自身失败（超时、git/rg 出错、本机配置读不了、认不出本会话记录）都按拒绝处理；封存码按计划内容重算，改过计划文件就失效；删每个目标前再测一次身份、写入、占用和文件清单。
 - 本会话自己的对话记录不算“他人活动”：脚本按用户原话识别；识别不到时用 `--self-transcript <路径>` 指明。
 - 盘外备份适配器协议见 [triage-local.example.json](references/triage-local.example.json) 的 `offdisk_backup.adapter`。
+
+### 冷存：暂时不用、但要留着的大目录
+
+第 3 档里“很久没人改、不可再生、但还想留着”的目录（旧成片、已交付批次、研究素材），删又舍不得、留着又占地方时，本机配置了冷存工具（`triage-local.json` 的 `cold_storage`）就给用户第三个选项：**搬到盘外，用时按原路径取回**。没配置时只列候选，不提这个选项。
+
+**一次扫描，三种去向**（用户要“深度清理”“腾空间”时的默认做法，不要先清理扫一遍、冷存再扫一遍）：
+1. `triage.py` 全盘体检一次（上文第一步）。
+2. `cold_store.py candidates --from-triage <triage.json>`：只在体检列出的大目录里下钻（受保护的生产目录、要问人的、认不出的、第 3 档），找出其中整棵子树都很久没改的部分，不再扫全盘。受保护目录是大头藏身处：体检只给总数，不下钻就只能整块保留。
+3. 对每处逐个判断去向，汇成**一张清单**让用户一次点名：
+   - **删**：可再生（缓存、构建产物、依赖）、已交付成品的中间稿与候选、已合回的工作树、过程临时目录（下钻结果标“像过程件”的先往这边判，看过内容再定）→ 走 `quick_act.py`；
+   - **冷存**：不可再生或重建代价高（成片、原始素材、资料库、已交付批次、旧会话），且闲置 → 走 `cold_store.py offload`；**垃圾不冷存**，冷存目录里的中间稿先删再搬；
+   - **留**：近期在写、构建/门禁输入、进行中的项目。
+4. 清单里每行写清大小、闲置天数、去向和理由；带保护原因的行需要用户原话写出路径。
+
+```sh
+python3 scripts/cold_store.py candidates --from-triage <triage.json> [--max-depth 6] [--json 结果.json]   # 一次扫描后的下钻（推荐）
+python3 scripts/cold_store.py candidates [--min-idle-days 14] [--min-gib 1] [--max-depth 6]             # 只扫工作区根：整棵子树都冷的目录；Git 已跟踪的文件留原处、不计体积
+python3 scripts/cold_store.py offload <目录> --user-text '<用户原话>' [--keep <保留项>] [--quiet-hours N] [--self-transcript <路径>]   # 交给冷存工具：上传、逐个核对，再经 quick_act 复核后删本地
+python3 scripts/cold_store.py where <路径>  /  restore <路径>                  # 找不到的文件先查是不是冷存了，在就取回
+```
+
+- 候选只是建议：删本地仍由 `quick_act.py` 复核红线（生产目录、引用、他人活动、占用、静默期），需要点名的照常要用户原话写出路径；冷存工具上传核对未通过就不删。
+- 近期会复用且允许等待的资料可放协作盘；对端休眠时排队，本机继续保留。已交付、罕用且能按原路径恢复的资料可进冷存。混合目录按文件拆分，已部分归档的批次先核对旧回执和目标端内容，再处理差额。报告写明实际核验的副本数。
+- 空间分开报三项：成功处置的文件规模、按本批目标核算的净减量、执行窗口内目标卷和 APFS 容器的余量变化。净减量按目标实际分配空间的前后差计算，扣除测量范围外本轮新增的素材与回执；共享块无法归因时标未知。`free_delta` 只说明执行窗口的余量变化。
+- 配置 `cold_storage.consumer_scopes` 可登记“源目录”和“通过软链接使用它的目录”（每组为 `{"source": "/data/originals", "roots": ["/data/by-year"]}`）。候选调查一次每个登记范围；发现引用或该范围扫描不完整时，保留原件并说明原因。独立经校验的分层存储可先只上传，待使用方迁移后再释放本地。未登记的范围仍须核查实际使用方。
+- 冷存工具删本地时条目带 `cold_batch`：只有这种条目、且用户原话写出该路径，才能越过用户自己在 `hard_keep_extra` 里加的保护词（如成片目录）；内置硬保护（`.git`、部署槽、`/Movies/` 等）不例外。
+- 原目录会留一张说明文件（`cold_storage.placeholder`），任何人或 Agent 看到它就知道去冷存工具取回，而不是重新生成。
 
 ### 看板与对话确认
 
@@ -261,7 +300,7 @@ nohup python3 scripts/act.py go --run <run目录> --choice recommended > <run目
 - 只有用户在本轮明确选择的才能执行：对话里回复了提案中的某一档，或发来看板清单。历史授权不覆盖新的对象，“打开看板”“看了提案”都不等于授权。
 - 项目台账、设置页答案、待确认规则和记忆都**不能单独作为删除依据**，也不能替代副本核对、交付证据、引用检查、进程与 24 小时改动检查；最激进的一整套设置取下来，也不该有任何卡从 `decide` 变 `clean`。唯一更严的方向是“别碰”和“永不读”。
 - 读取：用户的文件只经 `peek.py` 读；`never` 类（钥匙串、浏览器登录数据、密钥、`.env`、密码库等）任何设置都读不了；读了就留痕。
-- 保护名单由 `scripts/protect.py` 强制执行，不得绕过，也不得用 shell 的 `rm -rf`。第 1 档白名单缓存目录唯一允许的通用写法是 `find -x DIR -mindepth 1 -delete`，且必须在独立的检查命令之后、用户批准之后执行。不在封存计划里的路径一律不动。
+- 保护名单由 `scripts/protect.py` 强制执行，不得绕过，也不得用 shell 的 `rm -rf`。第 1 档白名单缓存目录唯一允许的通用写法是 `/usr/bin/find -x DIR -mindepth 1 -delete`，且必须在独立的检查命令之后、用户批准之后执行。不在封存计划里的路径一律不动。
 - 原生清理命令优先（`sdkmanager --uninstall`、`codex delete`、`hf cache rm`、`brew cleanup`、`npm cache clean --force`、`uv cache clean`/`uv cache prune`、`pip cache purge`），它们不进废纸篓、不归档。**不要推荐 `claude purge`**：它会连记忆与配置一起删，`protect.py` 有意不登记它。工具自带的保留设置写进 `governance`，经用户同意后再改。
 - 聊天软件（微信、企业微信等）的记录，只引导用户使用软件内的清理入口；云盘文件夹只给“只留云端”的官方做法。
 - 需要 sudo 的对象（本地快照、系统级缓存）自己不用 sudo，只合成一两行命令交给用户执行。

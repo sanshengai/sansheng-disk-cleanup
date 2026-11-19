@@ -6,6 +6,7 @@
                [--max-seconds 900] [--no-refs] [--refs-seconds 900] [--no-lsof]
   scan.py probe codex [--min-bytes 100MB] [--top 20]
   scan.py probe codex-groups [--trace N --emit <run>/items]
+  scan.py probe codex-history [--emit <run>/items]
   scan.py probe claude | android | grok
   scan.py probe worktrees --repo <路径>
 
@@ -2351,6 +2352,205 @@ def probe_codex_groups(opts):
     return result
 
 
+HISTORY_TITLE_CHARS = 60
+
+
+def _thread_title(row):
+    t = (row.get("title") or "").strip() or (row.get("first_user_message") or "").strip()
+    t = " ".join(t.split())
+    return t[:HISTORY_TITLE_CHARS] + ("…" if len(t) > HISTORY_TITLE_CHARS else "")
+
+
+def history_identity(row, hist):
+    """条目的 identity：状态库里这个线程当前的记录 + 它在历史库 thread_items 里的行数与字节。"""
+    n, b = hist.get(row["id"], (0, 0))
+    return {"kind": codex_state.IDENTITY_KIND, "thread_id": row["id"], "rollout_path": row["rollout_path"],
+            "state_updated_at": row.get("updated_at"), "history_items": n, "history_bytes": b}
+
+
+def history_item(row, hist, cls):
+    idn = history_identity(row, hist)
+    return {"path": codex_state.expected_item_path(HOME, row["id"], row["rollout_path"]), "method": "native",
+            "argv": ["codex", "delete", "--force", row["id"]], "class": cls, "session": row["id"], "identity": idn}
+
+
+def history_images(root):
+    """根线程整棵树（根和全部后代）的原图目录：[(路径, 字节, 文件数, 所属线程)]。"""
+    out = []
+    for t in [root["id"]] + root.get("tree_all", root["tree"]):
+        d = codex_state.images_dir_of(HOME, t)
+        if d:
+            b, n = tree_size(d)
+            out.append((d, b, n, t))
+    return out
+
+
+def history_emit_items(roots, hist, cls):
+    """一组根线程的条目：先是各线程条目，最后是整棵树的原图目录（method=delete、scope=all），
+    与 emit_items 对有文件会话的做法一致（class / session 同根线程）。真实 codex delete 会不会连带删原图目录
+    没有验证过，所以目录单独列条目，由用户一起确认、plan check 与执行时照带文件条目的全部检查走。"""
+    items = [history_item(r, hist, cls) for r in roots]
+    for r in roots:
+        for d, _, _, _ in history_images(r):
+            items.append({"path": d, "method": "delete", "scope": "all", "class": cls, "session": r["id"]})
+    return items
+
+
+def codex_history_roots(home=None):
+    """会话文件已不在、但状态库 / 历史库里还有记录的线程，按根分组。只读。
+    返回 dict：threads（状态库全部线程）、missing（文件已不在的线程号集合）、roots（可列出的根线程行，
+    tree 是树内有状态库记录的后代、tree_all 是全部后代）、held（不列出的根线程及原因）、not_listed（文件已不在、但父线程还在的子任务数）、
+    hist（只含可列出根线程的整棵树：{线程号: (条目数, 字节数)}，按线程号走索引短查询，不整库扫描）、errors。"""
+    home = home or HOME
+    errors = []
+    rows, e1 = codex_state.read_threads(home)
+    _, e2 = codex_state.read_edges(home)
+    errors += e1 + e2
+    if errors:
+        return {"errors": errors, "threads": {}, "missing": set(), "roots": [], "held": [], "not_listed": 0, "hist": {}}
+    threads, ambiguous = {}, []
+    for tid, rs in rows.items():
+        if len(rs) == 1:
+            threads[tid] = rs[0]
+        else:
+            ambiguous.append(tid)
+    rel = codex_state.relations(home, refresh=True)
+    files = codex_state.scan_rollouts(os.path.join(home, ".codex"))
+    children, parent_of = rel["children"], rel["parent"]
+
+    def has_file(t):
+        return any(p and os.path.lexists(p) for p in (files.get(t), threads[t]["rollout_path"]))
+
+    missing = {t for t in threads if not has_file(t)}
+    roots, held, covered = [], [], set()
+    now = time.time()
+    for t in sorted(missing):
+        p = parent_of.get(t)
+        if p and p in threads:
+            continue                         # 有父线程：由父线程带走，不单独成根
+        tree = codex_state.descendants(t, children)
+        covered.update(tree)
+        reasons = []
+        src = threads[t].get("source")
+        if codex_state.is_json_source(src):
+            reasons.append("来源是子任务的 JSON（子 Agent 线程），但它的父线程不在状态库里；"
+                           "既不是 exec 脚本会话也不是普通对话，不合进批量、也不单独列出")
+        alive = [d for d in tree if d in threads and d not in missing]
+        if alive:
+            reasons.append(f"有 {len(alive)} 个后代的会话文件还在（如 {alive[0]}），删根会连带删掉它们")
+        for x in [t] + [d for d in tree if d in threads]:
+            ts = codex_state.to_epoch(threads[x].get("updated_at"))
+            if ts is None:
+                reasons.append(f"线程 {x} 的 updated_at 判断不出来")
+                break
+            if ts > now - 24 * 3600:
+                reasons.append(f"线程 {x} 在 24 小时内还有更新")
+                break
+        if t in ambiguous:
+            reasons.append("同时出现在多个状态库里")
+        if reasons:
+            held.append({"id": t, "reasons": reasons})
+        else:
+            roots.append(dict(threads[t], tree=[d for d in tree if d in threads], tree_all=list(tree)))
+    not_listed = len([t for t in missing if t not in covered and t not in {r["id"] for r in roots}
+                      and t not in {h["id"] for h in held}])
+    # 历史库只查可列出的根线程及其整棵树，按线程号分批走索引（真实库 18GB，整库 SUM 要跑几分钟并撑大 WAL）
+    need = [x for r in roots for x in [r["id"]] + r["tree_all"]]
+    hist, he = codex_state.history_counts(home, need, with_bytes=True)
+    errors += he
+    return {"errors": errors, "threads": threads, "missing": missing, "roots": roots, "held": held,
+            "not_listed": not_listed, "hist": hist, "ambiguous": ambiguous}
+
+
+def probe_codex_history(opts):
+    """probe codex-history：列出“会话文件已不在、状态库与历史库里还有记录”的 Codex 线程，按根分组。
+    exec 脚本会话（source 精确等于 exec）合成一组；每个交互根线程（cli / vscode 等）单独一组，逐个出卡。
+    --emit 目录：批量组写 codex-history-batch.json，交互组每个写 codex-history-thread-<UUID>.json，
+    另写 codex-history-manifest.json；条目先是根线程、再是整棵树的原图目录（后代随根被 codex delete 一并带走），
+    可被 plan.json 的 items_file 引用。任一库读取失败（状态库或历史库）：不列出任何线程、不写任何条目文件。"""
+    data = codex_history_roots()
+    hist = data["hist"]
+    result = {"kind": "codex-history", "generated_at": iso(time.time()), "errors": data["errors"], "groups": [],
+              "held": data["held"], "summary": {}}
+    if data["errors"]:
+        result["summary"] = {"note": "状态库或历史库读取失败，没有列出任何线程，也没有写条目文件（算不出库内条目数，不能当 0 条）"}
+        return result
+    batch = [r for r in data["roots"] if codex_state.is_exec_source(r.get("source"))]
+    inter = [r for r in data["roots"] if not codex_state.is_exec_source(r.get("source"))]
+    imgs = {r["id"]: history_images(r) for r in data["roots"]}
+
+    def tree_bytes(r):
+        return sum(hist.get(x, (0, 0))[1] for x in [r["id"]] + r["tree_all"])
+
+    def image_bytes(r):
+        return sum(b for _, b, _, _ in imgs[r["id"]])
+
+    def one(r):
+        n, b = hist.get(r["id"], (0, 0))
+        return {"thread_id": r["id"], "title": _thread_title(r), "source": str(r.get("source"))[:40],
+                "created_at": codex_state.beijing_of(r.get("created_at")),
+                "updated_at": codex_state.beijing_of(r.get("updated_at")),
+                "created_at_utc": codex_state.iso_of(r.get("created_at")),
+                "updated_at_utc": codex_state.iso_of(r.get("updated_at")),
+                "cwd": r.get("cwd"), "subtasks": len(r["tree"]), "history_items": n, "history_bytes": b,
+                "tree_history_bytes": tree_bytes(r), "image_dirs": len(imgs[r["id"]]),
+                "image_bytes": image_bytes(r), "card_bytes": tree_bytes(r) + image_bytes(r)}
+
+    if batch:
+        ups = [codex_state.to_epoch(r.get("updated_at")) for r in batch]
+        crs = [codex_state.to_epoch(r.get("created_at")) for r in batch]
+        cwds = {}
+        for r in batch:
+            cwds[r.get("cwd") or "-"] = cwds.get(r.get("cwd") or "-", 0) + 1
+        lo = min([c for c in crs if c is not None] or [0]) or None
+        hi = max([u for u in ups if u is not None] or [0]) or None
+        result["groups"].append({
+            "kind": "batch", "key": "exec", "tag": _group_tag("codex-history|exec"), "roots": len(batch),
+            "subtasks": sum(len(r["tree"]) for r in batch),
+            "created_at": codex_state.beijing_of(lo), "updated_at": codex_state.beijing_of(hi),
+            "created_at_utc": iso(lo), "updated_at_utc": iso(hi),
+            "cwd_breakdown": sorted(cwds.items(), key=lambda kv: -kv[1])[:8],
+            "history_items": sum(hist.get(r["id"], (0, 0))[0] for r in batch),
+            "history_bytes": sum(hist.get(r["id"], (0, 0))[1] for r in batch),
+            "tree_history_bytes": sum(tree_bytes(r) for r in batch),
+            "image_dirs": sum(len(imgs[r["id"]]) for r in batch), "image_bytes": sum(image_bytes(r) for r in batch),
+            "card_bytes": sum(tree_bytes(r) + image_bytes(r) for r in batch),
+            "samples": [one(r) for r in sorted(batch, key=lambda x: -(hist.get(x["id"], (0, 0))[1]))[:3]]})
+    for r in sorted(inter, key=lambda x: -(hist.get(x["id"], (0, 0))[1])):
+        result["groups"].append(dict(one(r), kind="interactive", key=r["id"], tag=_group_tag("codex-history|" + r["id"])))
+    result["summary"] = {
+        "state_threads": len(data["threads"]), "files_missing": len(data["missing"]),
+        "batch_roots": len(batch), "interactive_roots": len(inter), "held_roots": len(data["held"]),
+        "children_not_listed": data["not_listed"],
+        "history_bytes_listed": sum(hist.get(r["id"], (0, 0))[1] for r in data["roots"]),
+        "tree_history_bytes_listed": sum(tree_bytes(r) for r in data["roots"]),
+        "image_dirs_listed": sum(len(v) for v in imgs.values()),
+        "image_bytes_listed": sum(image_bytes(r) for r in data["roots"])}
+    if opts.emit:
+        os.makedirs(opts.emit, exist_ok=True)
+        prefix = "codex-history-"
+        for old in os.listdir(opts.emit):          # 上次的结果先清掉，免得被当成本次结论引用
+            if old.startswith(prefix) and old.endswith(".json"):
+                os.unlink(os.path.join(opts.emit, old))
+        files = {}
+
+        def write(name, its):
+            fp = os.path.join(opts.emit, prefix + name + ".json")
+            with open(fp, "w", encoding="utf-8") as f:
+                json.dump(its, f, ensure_ascii=False, indent=1)
+            return {"file": fp, "items": len(its)}
+
+        if batch:
+            files["batch"] = write("batch", history_emit_items(batch, hist, "batch"))
+        for r in inter:                           # 交互对话不批量：每个根线程一个文件，逐个出卡、逐个问
+            files[r["id"]] = write("thread-" + r["id"], history_emit_items([r], hist, "interactive"))
+        manifest = {"generated_at": iso(time.time()), "files": files, "held": data["held"]}
+        with open(os.path.join(opts.emit, prefix + "manifest.json"), "w", encoding="utf-8") as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=1)
+        result["emitted"] = files
+    return result
+
+
 def probe_claude(opts):
     base = os.path.join(HOME, ".claude")
     projects = []
@@ -3793,6 +3993,8 @@ def build_parser():
     pg.add_argument("--trace-seconds", type=float, default=600)
     pg.add_argument("--emit", help="把各分类写成 plan.json 可引用的 items 文件，放到此目录（通常是 <run>/items）")
     pg.add_argument("--profile")
+    ph = psub.add_parser("codex-history", help="会话文件已不在、状态库与历史库里还有记录的线程：exec 合成一组，交互根线程各一组")
+    ph.add_argument("--emit", help="把各组写成 plan.json 可引用的 items 文件，放到此目录（通常是 <run>/items）")
     psub.add_parser("claude")
     ppj = psub.add_parser("projects", help="识别项目（git 仓库、AI 会话工作目录、开发环境、成品目录），写 <run>/projects.json（项目台账用）")
     ppj.add_argument("--run", help="运行目录（含 facts.json）；缺省取 --runs-dir 下最近一次扫描")
@@ -3839,7 +4041,8 @@ def main(argv=None):
                       "leftovers": ("leftovers", "probe_leftovers")}[opts.kind]
         print(dump_json(getattr(importlib.import_module(mod), fname)(opts)))
         return 0
-    fn = {"codex": probe_codex, "codex-groups": probe_codex_groups, "claude": probe_claude, "android": probe_android,
+    fn = {"codex": probe_codex, "codex-groups": probe_codex_groups, "codex-history": probe_codex_history,
+          "claude": probe_claude, "android": probe_android,
           "worktrees": probe_worktrees, "grok": probe_grok, "item-refs": probe_item_refs,
           "bigfiles": probe_bigfiles, "projects": probe_projects, "done-evidence": probe_done_evidence}[opts.kind]
     print(dump_json(fn(opts)))

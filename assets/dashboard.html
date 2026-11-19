@@ -307,10 +307,16 @@ const PRESET=[['safe','稳妥','删了不丢东西：软件会自己重新下载
   ['recommended','推荐','稳妥的全部，再加有副本的、任务已经做完的过程记录和中间稿。以后要改得重新生成。'],
   ['all','全部可删','再加删了就找不回来的，比如没有副本的图、模拟器里的数据。确认都不要了再选。']];
 const RANK={safe:0,recommended:1,all:2};
-const inPreset=(c,p)=>act(c)&&c.preset&&RANK[c.preset]<=RANK[p]&&!hiddenKeys.has(c.rule_key);
+// AI 对话卡（含交互对话，或你设了“对话逐个问”的项目里的对话）只能一张张选：不跟着档位按钮和“全选本类”走
+const bulkOk=c=>!c.interactive&&!(c.conversation_ask&&c.conversation_ask.length);
+const inPreset=(c,p)=>act(c)&&bulkOk(c)&&c.preset&&RANK[c.preset]<=RANK[p]&&!hiddenKeys.has(c.rule_key);
 const presetCards=p=>cards.filter(c=>inPreset(c,p));
-function choosePreset(p){picked.clear();for(const [k,v] of [...modeOf])if(v!=='留')modeOf.delete(k);presetCards(p).forEach(c=>setPick(c,true));render()}
-function activePreset(){const ids=[...picked].sort().join();for(const [p] of PRESET){if(presetCards(p).map(c=>c.id).sort().join()===ids&&ids)return p}return ''}
+function choosePreset(p){
+  if(!p){picked.clear();for(const [k,v] of [...modeOf])if(v!=='留')modeOf.delete(k)}   // “清空”：全部取消
+  else{for(const id of [...picked]){const c=cards.find(x=>x.id===id);if(!c||bulkOk(c))picked.delete(id)}   // 换档位：一张张选的对话卡保留
+    for(const [k,v] of [...modeOf]){const c=cards.find(x=>x.id===k);if(v!=='留'&&(!c||bulkOk(c)))modeOf.delete(k)}}
+  presetCards(p).forEach(c=>setPick(c,true));render()}
+function activePreset(){const ids=[...picked].filter(id=>{const c=cards.find(x=>x.id===id);return c&&bulkOk(c)}).sort().join();for(const [p] of PRESET){if(presetCards(p).map(c=>c.id).sort().join()===ids&&ids)return p}return ''}
 const LVL={safe:'稳妥',recommended:'推荐',all:'慎重'};
 const openAsks=()=>QCARDS.filter(q=>{const r=PROJ.get(q.key);return r.status===r.orig}).length+RULES.filter(r=>!ruleAns.has(r.id)).length;
 
@@ -469,7 +475,7 @@ function renderFrontier(v,id){
   box.append(ol);v.append(box);
 }
 
-let reviewsOpen=false;
+let reviewsOpen=true; // 默认展开：待决定的内容打开页面就能看到
 function renderReviews(v){
   if(!REVIEW.length)return;
   if(REVIEWED.size){
@@ -491,13 +497,8 @@ function renderReviews(v){
     }
     el.append(row);box.append(el);
   }
-  const copy=E('button','复制核查答复，发给 Agent','primary');copy.type='button';copy.disabled=!reviewAns.size;
-  copy.onclick=async()=>{
-    const msg=reviewMessage(facts.scan_id||plan.scan_id||'',REVIEW,reviewAns);
-    try{await navigator.clipboard.writeText(msg);$('feedback').textContent='已复制核查答复。发给 Agent 后继续调查，尚未授权删除。'}
-    catch(e){$('fallback').hidden=false;$('fallback').value=msg;$('fallback').select();$('feedback').textContent='请选择并复制下方核查答复，发给 Agent。'}
-  };
-  box.append(copy);v.append(box);
+  box.append(E('p','选好后，答复会随页面底部的“复制清单，发给 Agent”一起复制，不用单独复制。','hint'));
+  v.append(box);
 }
 function renderGrowth(v){
   const g=D.growth;if(!g)return;
@@ -648,6 +649,7 @@ function itemEl(c){
     const row=E('div',null,'pq');row.append('属于「'+r.p.name+'」');
     for(const [st,label] of [['done','这个项目做完了'],['active','还在做']]){const b=E('button',label);b.type='button';b.setAttribute('aria-pressed',String(r.status===st));b.onclick=()=>setStatus(r,st);row.append(b)}
     el.append(row)}
+  if(c.conversation_ask&&c.conversation_ask.length)el.append(E('div','你设了「'+c.conversation_ask.join('」「')+'」里的 AI 对话逐个问你，所以这张卡放上看板等你定；不选就不删。','sub'));
   if(isDecide(c)&&prefillOf(c))el.append(E('div',prefillMode(c)==='归档'?'项目已标“做完了”，这一项先替你选了“归档”（先搬到外接硬盘，再从电脑上清掉）；不想动就改成“留”。':'先替你选了“删”；不想清就改成“留”。','sub'));
   if(isDecide(c)&&(c.ask||c.question))el.append(E('div','决定前想一想：'+(c.ask||c.question),'q'));
   if(isDecide(c))el.append(choiceRow(c,el));
@@ -677,9 +679,11 @@ function renderCategory(v,id){
   const a=s.cards.filter(act), k=s.cards.filter(x=>!act(x));
   if(a.length){
     const h=E('div',null,'subh');h.append(E('h2',a.length+' 项可以清理，选中的才会处理'));
-    const lab=E('label');const all=document.createElement('input');all.type='checkbox';all.id='pick-all';
-    all.checked=a.every(x=>picked.has(x.id));all.onchange=()=>{a.forEach(x=>setPick(x,all.checked));render()};
-    lab.append(all,'全选本类');h.append(lab);v.append(h);
+    const bulk=a.filter(bulkOk);   // AI 对话卡不跟着“全选本类”走
+    if(bulk.length){const lab=E('label');const all=document.createElement('input');all.type='checkbox';all.id='pick-all';
+      all.checked=bulk.every(x=>picked.has(x.id));all.onchange=()=>{bulk.forEach(x=>setPick(x,all.checked));render()};
+      lab.append(all,'全选本类'+(bulk.length<a.length?'（AI 对话不在内，要一张张选）':''));h.append(lab)}
+    v.append(h);
     a.forEach(x=>v.append(itemEl(x)));
   }else v.append(E('div','这一类没有可以清理的，下面是留着的原因。','none'));
   if(k.length){const h=E('div',null,'subh');h.append(E('h2','留着的 '+k.length+' 项'));v.append(h);k.forEach(x=>v.append(itemEl(x)))}
@@ -712,18 +716,22 @@ function update(){
   $('archrow').classList.toggle('on',na>0);
   $('archhint').textContent=na?(archBad?'要写成外接硬盘的路径，形如 /Volumes/盘名/文件夹；内置硬盘不行。填好前不能复制。':'共 '+na+' 项选了归档：先搬到这里，核对无误才从电脑上清掉。'):'';
   $('archhint').className='hint'+(archBad?' bad':'');
-  $('copy').disabled=!ok||(!s.length&&!extra)||archBad;
+  const hasClean=s.length>0||extra; // 有清理选择（或设置/台账等随清单的内容）才带“叁笙清理选择”部分
+  $('copy').disabled=hasClean?(!ok||archBad):!reviewAns.size;
   $('selection-help').textContent=!ok?'计划待复核，暂不能执行。':trashMode?'先放废纸篓，清空后释放空间。':'永久删除，不可撤销。';
   $('selection-help').className='hint'+(ok?'':' bad');
-  $('ledger-hint').textContent=le.length?'改了项目状态，Agent 会先重新核对再执行':'';
+  const incl=[];if(hasClean)incl.push('清理选择'+(s.length?' '+s.length+' 项':''));if(reviewAns.size)incl.push('核查答复 '+reviewAns.size+' 项（不是删除授权）');
+  $('ledger-hint').textContent=(incl.length?'这一段包含：'+incl.join('；')+'。':'')+(le.length?'改了项目状态，Agent 会先重新核对再执行':'');
+  saveState();
   const q=$('quick');q.replaceChildren();const ap=activePreset(), seenPresets=new Set();
   for(const [p,name] of PRESET){const cs=presetCards(p);if(!cs.length)continue;
     const key=cs.map(c=>c.id).sort().join(',');if(seenPresets.has(key))continue;seenPresets.add(key);
     const b=E('button',name+' '+gb(sum(cs)));b.type='button';b.title=cs.length+' 项。'+PRESET.find(x=>x[0]===p)[2];b.setAttribute('aria-pressed',String(ap===p));b.onclick=()=>choosePreset(p);q.append(b)}
   if(picked.size){const c=E('button','清空');c.type='button';c.title='取消全部选择';c.onclick=()=>choosePreset('');q.append(c)}
+  if(cards.some(c=>act(c)&&!bulkOk(c)))q.append(E('small','AI 对话不跟着这几个按钮走，要在卡片上一张张选'));
   renderNav();
   if($('tally'))fillTally($('tally'));
-  const all=$('pick-all');if(all&&catIndex.has(view)){const a=catStats(view).cards.filter(act);all.checked=a.length>0&&a.every(x=>picked.has(x.id))}
+  const all=$('pick-all');if(all&&catIndex.has(view)){const a=catStats(view).cards.filter(act).filter(bulkOk);all.checked=a.length>0&&a.every(x=>picked.has(x.id))}
   if(view==='overview')renderView();
   const cur=document.querySelector('.nav button[aria-current=true]');if(cur&&matchMedia('(max-width:780px)').matches)cur.scrollIntoView({block:'nearest',inline:'center'});
 }
@@ -742,7 +750,7 @@ async function selSig(sealDigest,ids,ans,arch){
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,12);
 }
 /*SEL-END*/
-async function agentMessage(){
+async function cleanMessage(){
   const ids=selected().map(c=>c.id).sort();
   const ans=cards.filter(c=>isDecide(c)&&picked.has(c.id)).map(c=>c.id+'='+(modeOf.get(c.id)||'删')).sort(); // 选了 删 / 归档 的待定项进清单；选“留”的与没动的一样不进清单，也不会被处理
   const note=cleanNote($('note').value);
@@ -755,12 +763,52 @@ async function agentMessage(){
     ...(hiddenKeys.size?['别再列: '+[...hiddenKeys].sort().join(', ')]:[]),
     '备注: '+(note||'无')].join('\n');
 }
+// 一次复制全部：先“叁笙清理选择”，有核查答复时空一行接“叁笙清理 · 待核查答复”；只有答复时只出答复部分
+async function agentMessage(){
+  const hasClean=selected().length>0||ledgerEntries().length>0||hiddenKeys.size>0||ruleAns.size>0;
+  const parts=[];
+  if(hasClean)parts.push(await cleanMessage());
+  if(reviewAns.size)parts.push(reviewMessage(facts.scan_id||plan.scan_id||'',REVIEW,reviewAns));
+  return parts.join('\n\n');
+}
 $('copy').onclick=async()=>{
   if($('copy').disabled)return;let v;
   try{v=await agentMessage()}catch(e){$('feedback').textContent='当前浏览器不支持生成选择校验码（需要 crypto.subtle，请用 Safari/Chrome 打开）。';return}
   try{await navigator.clipboard.writeText(v);$('fallback').hidden=true;$('feedback').textContent='已复制。回到和 Agent 的对话里粘贴发送，它会接着清理。'}
   catch(e){$('fallback').hidden=false;$('fallback').value=v;$('fallback').select();$('feedback').textContent='浏览器没让自动复制：请按 ⌘C 复制下面已选中的内容，再粘贴给 Agent。'}
 };
-$('arch').oninput=update;
+$('arch').oninput=update;$('note').oninput=update;
+// 页面选择存进 localStorage（键含 scan_id 与 seal，换一次扫描或重新封存就是新键，旧键不读）；每次读写都包 try/catch，存储不可用页面照常工作
+const STORE_KEY='sansheng-disk-cleanup:'+(facts.scan_id||plan.scan_id||'')+':'+(seal&&seal.digest?seal.digest:'');
+let storeReady=false;
+function saveState(){
+  if(!storeReady)return;
+  try{
+    const st={picked:[...picked],modeOf:[...modeOf],proj:[...PROJ].filter(([k,r])=>r.status!==r.orig).map(([k,r])=>[k,r.status]),
+      rules:[...ruleAns],hidden:[...hiddenKeys],review:[...reviewAns],note:$('note').value,arch:$('arch').value};
+    localStorage.setItem(STORE_KEY,JSON.stringify(st));
+  }catch(e){}
+}
+function loadState(){
+  let st=null;
+  try{const raw=localStorage.getItem(STORE_KEY);if(raw)st=JSON.parse(raw)}catch(e){st=null}
+  if(st&&typeof st==='object'){try{
+    const byId=new Map(cards.map(c=>[c.id,c]));
+    if(Array.isArray(st.picked)){picked.clear();modeOf.clear();
+      for(const id of st.picked){const c=byId.get(id);if(c&&act(c))picked.add(id)}
+      for(const [id,m] of (st.modeOf||[])){const c=byId.get(id);
+        if(c&&isDecide(c)&&(m==='删'||m==='留'||(m==='归档'&&canArch(c))))modeOf.set(id,m)}
+      for(const id of [...picked]){const c=byId.get(id);if(isDecide(c)&&!modeOf.has(id))modeOf.set(id,'删')}}
+    for(const [k,v] of (st.proj||[])){const r=PROJ.get(k);if(r&&STATUS_ZH[v])r.status=v}
+    for(const [id,v] of (st.rules||[])){if(RULES.some(r=>r.id===id)&&(v==='confirm'||v==='reject'))ruleAns.set(id,v)}
+    const rk=new Set(cards.map(c=>c.rule_key).filter(Boolean));
+    for(const k of (st.hidden||[])){if(rk.has(k))hiddenKeys.add(k)}
+    for(const [id,v] of (st.review||[])){if(REVIEW.some(q=>q.id===id)&&['想清理，继续查','保留','暂不确定'].includes(v))reviewAns.set(id,v)}
+    if(typeof st.note==='string')$('note').value=st.note;
+    if(typeof st.arch==='string')$('arch').value=st.arch;
+  }catch(e){}}
+  storeReady=true;
+}
+loadState();
 fillFoot();fillSetline();render();
 </script>

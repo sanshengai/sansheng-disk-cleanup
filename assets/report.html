@@ -81,12 +81,12 @@ footer a{text-decoration:none}footer a:hover{color:var(--green)}footer .r{margin
 <header><div class="brand"><a href="https://sanshengai.top/" target="_blank" rel="noopener" title="叁笙早安 AI 官网"><img class="logo" id="logo" src="__LOGO_DATA__" alt="叁笙早安 AI"></a><strong>叁笙清理</strong></div><div class="when" id="when"></div></header>
 <main class="wrap">
 <section class="hero">
-  <div class="k" id="headline">这次清理腾出了</div>
+  <div class="k" id="headline">按条目核算的清理量</div>
   <div class="big" id="freed"></div>
   <div class="sub" id="sub"></div>
   <div class="bars" id="bars"></div>
 </section>
-<section id="from"><h2>腾出的空间从哪里来</h2><div id="callout"></div><div class="rows" id="rows"></div></section>
+<section id="from"><h2>清理了哪些条目</h2><div id="callout"></div><div class="rows" id="rows"></div></section>
 <section id="disp-sec" hidden><h2>这些空间是怎么处理的</h2><div class="disp" id="disp"></div></section>
 <section id="gov-sec"><h2>从源头管住</h2><div class="gov" id="gov"></div></section>
 <section id="fixed-sec" hidden><h2>从源头改好的</h2><div class="gov" id="fixed"></div></section>
@@ -99,7 +99,7 @@ footer a{text-decoration:none}footer a:hover{color:var(--green)}footer .r{margin
     <div><canvas class="poster" id="poster" width="1080" height="1440" aria-label="分享图预览"></canvas>
       <div class="acts"><button class="primary" id="save" type="button">保存分享图</button></div>
       <div class="hint" id="save-hint">保存后可以直接发朋友圈或微信群。</div></div>
-    <div class="qrbox"><div id="qr"></div><p><b>手机微信扫一扫</b>打开这次的成果页，可以直接转发给朋友</p></div>
+    <div class="qrbox"><div id="qr"></div><p><b>手机微信扫一扫</b>查看清理工具介绍；本次结果可用分享图转发</p></div>
   </div>
   <div class="star" id="star" hidden></div>
 </section>
@@ -124,16 +124,18 @@ const [headlineNumber,headlineUnit]=gb(headlineBytes).split(' ');
 if(pendingTrash)$('headline').textContent='已移入废纸篓，等待彻底删除';
 {const v=$('freed');v.textContent=headlineNumber;v.append(E('small',headlineUnit));}
 $('sub').innerHTML='';
-$('sub').append('已用 ',E('b',g1(R.used_before)+' GB'),' → ',E('b',g1(R.used_after)+' GB'),'，可用空间从 '+g1(R.free_before)+' GB 增加到 '+g1(R.free_after)+' GB');
-if(R.disposal&&R.disposal.trash>0){$('sub').append(E('div',(pendingTrash?'文件已整理完成，实际释放仍为 0 B。':'另有 '+gb(R.disposal.trash)+' 已移入废纸篓。')+'如需立即腾出空间，请告诉 Agent“彻底删除本轮文件”，它会只处理本轮已确认的文件。','hint'))}
-{const b=$('bars'),T=Math.max(1,R.disk_total);
+const measured=Number.isFinite(R.freed_measured);
+const volumeText=measured?'HOME 所在卷可用空间 '+gb(R.free_before)+' → '+gb(R.free_after)+'（变化 '+(R.freed_measured>0?'+':'')+gb(R.freed_measured)+'）':'HOME 所在卷可用空间变化未知，缺少同一卷的首尾读数';
+$('sub').append(volumeText);
+if(R.disposal&&R.disposal.trash>0){$('sub').append(E('div',(pendingTrash?'这些条目已移入废纸篓，按条目核算释放 0 B。':'另有 '+gb(R.disposal.trash)+' 已移入废纸篓。')+'如需立即腾出空间，请告诉 Agent“彻底删除本轮文件”，它会只处理本轮已确认的文件。','hint'))}
+if(measured&&R.disk_total>0){const b=$('bars'),T=R.disk_total;
  const row=(label,parts)=>{b.append(E('div',label,'lb'));const bar=E('div',null,'bar');bar.setAttribute('role','img');
    bar.setAttribute('aria-label',label+'：'+parts.map(p=>p[2]+' '+gb(p[0])).join('，'));
    for(const [n,cls] of parts){const s=E('span',null,cls);s.style.width=(100*n/T)+'%';bar.append(s)}b.append(bar)};
  row('清理前',[[R.used_before,'u','已用']]);
- row('清理后',[[R.used_after,'u','已用'],[R.freed,'f','腾出']]);
+ row('清理后',[[R.used_after,'u','已用']]);
  const lg=E('div',null,'legend');
- for(const [c,t] of [['var(--green)','已用'],['var(--gold2)','这次腾出'],['var(--track)','原本空着']]){const s=E('span');const i=E('i');i.style.background=c;s.append(i,t);lg.append(s)}
+ for(const [c,t] of [['var(--green)','已用'],['var(--track)','其余容量']]){const s=E('span');const i=E('i');i.style.background=c;s.append(i,t);lg.append(s)}
  lg.append(E('span','硬盘 '+g1(R.disk_total)+' GB'));b.append(lg);}
 // 来源
 if(R.ai_freed>0){const c=E('div',null,'callout');c.append('其中 ',E('b',gb(R.ai_freed)),' 是 AI 工作留下的：对话记录、生成的图、项目中间稿和模型。常规清理工具一般不处理这些。');$('callout').append(c)}
@@ -150,7 +152,7 @@ if(R.ai_freed>0){const c=E('div',null,'callout');c.append('其中 ',E('b',gb(R.a
 {const D=R.disposal||{};const arch=D.archived||[];
  if(D.trash>0||arch.length){$('disp-sec').hidden=false;const box=$('disp');
    const row=(label,v,desc)=>{const d=E('div');const l=E('div');l.append(E('b',label));if(desc)l.append(E('div',desc,'d'));d.append(l,E('div',v,'v'));box.append(d)};
-   row('已腾出',gb(D.freed),'已经真正删掉，空间已经回来了（首屏的数字就是它）');
+   row('按条目核算释放',gb(D.freed),'统计已删除的文件、原生清理和历史库回收的字节。');
    if(D.trash>0)row('已移入废纸篓',gb(D.trash),'彻底删除后才会腾出；可让 Agent 仅永久删除本轮文件'+((D.trash_dirs||[]).length?'；目录：'+D.trash_dirs.join('、'):''));
    for(const a of arch)row('已搬到 '+a.volume,gb(a.bytes),'一份校验过的副本在外接硬盘上'+(a.source==='trash'?'，原文件在废纸篓里':'，原文件已删除'))}}
 // 从源头改好的
@@ -176,7 +178,7 @@ if(R.reads){const r=R.reads;$('reads-sec').hidden=false;const b=$('reads');
 // 二维码（Python 端用 MIT 的 qrcodegen 编好矩阵，这里只画）
 const Q=R.share.qr,N=Q.length,QZ=4;
 function qrSvg(){const ns='http://www.w3.org/2000/svg',s=document.createElementNS(ns,'svg');s.setAttribute('viewBox',`0 0 ${N+2*QZ} ${N+2*QZ}`);
-  s.setAttribute('role','img');s.setAttribute('aria-label','扫码打开成果页');s.setAttribute('shape-rendering','crispEdges');
+  s.setAttribute('role','img');s.setAttribute('aria-label','扫码查看工具介绍');s.setAttribute('shape-rendering','crispEdges');
   let d='';Q.forEach((row,y)=>{for(let x=0;x<N;x++)if(row[x]==='1')d+=`M${x+QZ} ${y+QZ}h1v1h-1z`});
   const bg=document.createElementNS(ns,'rect');bg.setAttribute('width','100%');bg.setAttribute('height','100%');bg.setAttribute('fill','#fff');
   const p=document.createElementNS(ns,'path');p.setAttribute('d',d);p.setAttribute('fill','#243c2d');s.append(bg,p);return s}
@@ -187,20 +189,23 @@ function drawPoster(){
   x.fillStyle='#faf7f0';x.fillRect(0,0,W,H);
   const logo=$('logo');
   const finish=()=>{
-    x.fillStyle='#243c2d';x.font=`500 44px ${F}`;x.fillText(pendingTrash?'已移入废纸篓，等待彻底删除':'叁笙清理帮我腾出了',P,300);
+    x.fillStyle='#243c2d';x.font=`500 44px ${F}`;x.fillText(pendingTrash?'已移入废纸篓，等待彻底删除':'按条目核算的清理量',P,300);
     x.fillStyle='#2f5d3a';x.font=`700 190px ${F}`;const num=headlineNumber;x.fillText(num,P-6,500);
     const w=x.measureText(num).width;x.font=`600 72px ${F}`;x.fillText(headlineUnit,P+w+18,500);
     // 前后对比条
     const bw=W-2*P,T=Math.max(1,R.disk_total);
     const bar=(y,label,parts)=>{x.fillStyle='#68756a';x.font=`400 30px ${F}`;x.fillText(label,P,y-16);
       x.fillStyle='#e8ebe0';x.fillRect(P,y,bw,40);let cx=P;for(const [n,c] of parts){const ww=bw*n/T;x.fillStyle=c;x.fillRect(cx,y,ww,40);cx+=ww}};
-    bar(620,'清理前 已用 '+g1(R.used_before)+' GB',[[R.used_before,'#2f5d3a']]);
-    bar(740,'清理后 已用 '+g1(R.used_after)+' GB',[[R.used_after,'#2f5d3a'],[R.freed,'#e2c483']]);
+    if(measured&&R.disk_total>0){
+      bar(620,'清理前 已用 '+gb(R.used_before),[[R.used_before,'#2f5d3a']]);
+      bar(740,'清理后 已用 '+gb(R.used_after),[[R.used_after,'#2f5d3a']]);
+    }
+    x.fillStyle='#68756a';x.font=`400 25px ${F}`;x.fillText(volumeText,P,812,bw);
     // AI 部分与前三类（前三类是全部类别里最大的，不只是 AI，所以单独加小标题）
     let y=870;
-    if(pendingTrash){x.fillStyle='#68756a';x.font=`400 30px ${F}`;x.fillText('实际释放 0 B；彻底删除后才腾出空间',P,y);y+=64}
+    if(pendingTrash){x.fillStyle='#68756a';x.font=`400 30px ${F}`;x.fillText('入篓条目按释放 0 B 计',P,y);y+=64}
     if(R.ai_freed>0){x.fillStyle='#243c2d';x.font=`600 40px ${F}`;x.fillText('其中 '+gb(R.ai_freed)+' 是 AI 工作留下的',P,y);y+=64}
-    x.fillStyle='#6b7a6e';x.font=`400 28px ${F}`;x.fillText('腾出最多的三类',P,y);y+=52;
+    x.fillStyle='#6b7a6e';x.font=`400 28px ${F}`;x.fillText('清理量最大的三类',P,y);y+=52;
     x.font=`400 32px ${F}`;
     for(const c of R.categories.slice(0,3)){x.fillStyle=colorOf(c.id);x.fillRect(P,y-24,20,20);x.fillStyle='#243c2d';x.fillText(c.name,P+36,y);
       x.textAlign='right';x.fillText(gb(c.bytes),W-P,y);x.textAlign='left';y+=54}
@@ -221,7 +226,7 @@ drawPoster();
 if(R.star&&R.star.show&&/^https:\/\/github\.com\//.test(R.star.url||'')){const a=E('a','去 GitHub 点个 Star');a.href=R.star.url;a.target='_blank';a.rel='noopener';
   $('star').append('好用的话，',a);$('star').hidden=false}
 $('save').onclick=()=>{
-  try{const a=document.createElement('a');a.download='叁笙清理-'+(pendingTrash?'已暂存':'腾出')+headlineNumber+headlineUnit+'.png';a.href=$('poster').toDataURL('image/png');a.click();
+  try{const a=document.createElement('a');a.download='叁笙清理-'+(pendingTrash?'已暂存':'按条目核算')+headlineNumber+headlineUnit+'.png';a.href=$('poster').toDataURL('image/png');a.click();
     $('save-hint').textContent='已保存到下载文件夹。'}
   catch(e){$('save-hint').textContent='浏览器没让保存：在上面的图上点右键，选“存储图像为…”。'}
 };

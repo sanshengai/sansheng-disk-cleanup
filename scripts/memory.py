@@ -119,7 +119,8 @@ def _log(profile, kind, text, ref=None, scan_id=None):
 
 def log_change(kind, text, ref=None, scan_id=None, profile=None):
     """给别的模块用的公开入口：把一次“记住了什么”写进 memory_log（成果页“这次我记住了”读它，forget 能撤销）。
-    kind：rule（以后都删 / 别再列）/ setting（设置项，ref {field, old}）/ project（项目状态，ref {key, old_status}）等。
+    kind：rule（以后都删 / 别再列）/ setting（设置项，ref {field, old}）/ project（项目状态，ref {key, old_status}）/
+    project_conversations（项目里 AI 对话的处理方式，ref {key, old_conversations, conversations}）等。
     传 profile 时只在这个内存字典里追加（调用方自己存盘，免得和同一次保存互相覆盖）；不传就自己读写 profile。
     scan_id 拿不到就不带，remembered 还能靠时间（--since）认出来。返回这条记录。"""
     if profile is not None:
@@ -188,12 +189,27 @@ def _undo(profile, entry):
     elif kind == "project":
         store = profile.get("projects")
         cur = store.get(ref.get("key")) if isinstance(store, dict) else None
+        if not ("status" in ref or "old_status" in ref):
+            # 不是项目状态的记录（例如旧格式的对话处理方式）：不认识就不动，免得把整个项目从台账里删掉
+            notes.append("这条记录没有项目状态，没动台账")
         # 后来又被改成别的状态就不动它（同规则的撤销口径）
-        if isinstance(cur, dict) and (ref.get("status") is None or cur.get("status") == ref["status"]):
+        elif isinstance(cur, dict) and (ref.get("status") is None or cur.get("status") == ref["status"]):
             if ref.get("old_status") in protect.PROJECT_STATUSES:
                 cur["status"] = ref["old_status"]
             else:                                         # 原来台账里没有这个项目
                 store.pop(ref["key"], None)
+    elif kind == "project_conversations":
+        # 只恢复这个项目里 AI 对话的处理方式；项目状态、成品目录都不动。之后又被改过就不动
+        store = profile.get("projects")
+        cur = store.get(ref.get("key")) if isinstance(store, dict) else None
+        if isinstance(cur, dict):
+            now = cur.get("conversations") or "protect"
+            if now != ref.get("conversations"):
+                notes.append("项目里 AI 对话的处理方式之后改过，没动")
+            elif ref.get("old_conversations") == protect.CONVERSATIONS_ASK:
+                cur["conversations"] = protect.CONVERSATIONS_ASK
+            else:
+                cur.pop("conversations", None)
     elif kind == "governance":
         gov = profile.get("governance")
         if isinstance(gov, dict):

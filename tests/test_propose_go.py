@@ -179,7 +179,7 @@ def test_report_counts_pilot_and_full_and_shares_only_totals(env):
                              if it["status"] in ("removed", "partial"))
     assert (env.run / "report.html").exists()
     q = parse_qs(urlparse(rp["share"]["url"]).query)
-    assert set(q) == {"v", "f", "b", "a", "ai"}                     # 分享只带汇总数字
+    assert q == {} and rp["share"]["url"] == report.SHARE_BASE   # 旧官网契约降级为工具介绍
     assert str(env.home) not in rp["share"]["url"]
     n = len(rp["share"]["qr"])
     assert n >= 21 and all(len(r) == n and set(r) <= {"0", "1"} for r in rp["share"]["qr"])

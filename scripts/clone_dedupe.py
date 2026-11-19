@@ -12,8 +12,13 @@ plan：按大小分组 → 全量 sha256 → 每组按优先级定保留端（�
 run ：逐个复核（保留端与副本的 inode/大小/mtime 与计划一致、未被进程打开、6 小时内未改动、不在保护名单），
       cp -c -p 到同目录临时名 → 校验大小 → 恢复权限与时间 → 原子 rename 覆盖。已共享 inode 的跳过。
       名义重复量 ≠ 实际释放：已经是克隆的副本再克隆不腾空间，回执与最终报告以磁盘实测为准。
+已是 APFS 克隆的副本（与保留端共享物理块）：plan 用 F_LOG2PHYS_EXT 在开头/中间/结尾取 3 处物理位置抽样判定
+（>256 MiB 的大文件均匀取 8 处），抽样点全部相同才算“已共享”——这是抽样判定，不是全量比对，抽样点之外被改写成不同块的文件仍可能被误判为已共享，
+可省量以执行后磁盘实测为准。
+不计入可省量、不进执行清单；run 执行前对每个副本再测一次，已共享就跳过（不重写文件）。
+取不到物理位置（非 APFS、fcntl 报错）或只部分共享，一律按“未共享”处理，计划里标“共享状态未知/部分共享”。
 """
-import argparse, collections, hashlib, json, os, re, subprocess, sys, time
+import argparse, collections, fcntl, hashlib, json, os, re, struct, subprocess, sys, time
 
 SKIP_DIRS = {".git", "node_modules", ".venv", "__pycache__"}
 # 不处理：同步/系统库目录（改 inode 会让同步客户端重传或损坏库）
@@ -59,6 +64,58 @@ def collect(roots, min_bytes):
     return by
 
 
+# ---- 已共享（APFS 克隆）检测 ----
+F_LOG2PHYS_EXT = 65          # sys/fcntl.h：逻辑偏移 → 设备物理偏移
+_L2P = "=Iqq"                # struct log2phys（pack(4)）：flags, contigbytes, devoffset；输入时 devoffset 填文件内偏移
+_PROBE = 4096
+
+
+_BIG = 256 << 20             # 超过它的大文件加密探测点
+_BIG_PROBES = 8
+
+
+def probe_offsets(size):
+    """抽样探测点（按 4096 对齐，去重）：普通文件取开头、中间、结尾附近 3 处；>256 MiB 的大文件在首尾之间均匀取 8 处。"""
+    last = max(0, (size - 1) // _PROBE * _PROBE)
+    if size > _BIG:
+        return sorted({(last * i // (_BIG_PROBES - 1)) // _PROBE * _PROBE for i in range(_BIG_PROBES)})
+    return sorted({0, (size // 2) // _PROBE * _PROBE, last})
+
+
+def phys_signature(p, size=None):
+    """返回文件多处逻辑位置对应的物理偏移元组；任何一处取不到（非 APFS、稀疏洞、fcntl 报错）返回 None。"""
+    try:
+        if size is None:
+            size = os.stat(p).st_size
+        fd = os.open(p, os.O_RDONLY)
+    except OSError:
+        return None
+    try:
+        sig = []
+        for off in probe_offsets(size):
+            r = fcntl.fcntl(fd, F_LOG2PHYS_EXT, struct.pack(_L2P, 0, _PROBE, off))
+            sig.append(struct.unpack(_L2P, r[:struct.calcsize(_L2P)])[2])
+        return tuple(sig)
+    except (OSError, struct.error):
+        return None
+    finally:
+        os.close(fd)
+
+
+def share_state(keep, dup):
+    """与保留端的块共享状态（抽样判定，非全量）：shared（抽样点的物理位置全部相同）/ unshared（能取到且不同，含部分共享）/ unknown（取不到）。
+    不同卷的物理偏移不可比，直接判 unshared（cp -c 本来也做不了）。"""
+    try:
+        if os.stat(keep).st_dev != os.stat(dup).st_dev:
+            return "unshared"
+    except OSError:
+        return "unknown"
+    a, b = phys_signature(keep), phys_signature(dup)
+    if a is None or b is None:
+        return "unknown"
+    return "shared" if a == b else "unshared"
+
+
 def ident(p):
     st = os.stat(p)
     return [st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns]
@@ -66,6 +123,7 @@ def ident(p):
 
 def plan(roots, min_bytes, out):
     groups = []
+    shared_n = shared_bytes = 0
     for size, ps in sorted(collect(roots, min_bytes).items(), key=lambda x: -x[0]):
         if len(ps) < 2:
             continue
@@ -81,12 +139,27 @@ def plan(roots, min_bytes, out):
             grp.sort(key=keeper_rank)
             keep = grp[0]
             kid = ident(keep)
-            dups = [{"path": q, "ident": ident(q)} for q in grp[1:] if ident(q)[1] != kid[1]]
+            dups, shared = [], []
+            for q in grp[1:]:
+                if ident(q)[1] == kid[1]:
+                    continue                      # 同 inode（硬链接）本来就是一份
+                st = share_state(keep, q)
+                if st == "shared":
+                    shared.append({"path": q, "ident": ident(q)})
+                else:
+                    dups.append({"path": q, "ident": ident(q), "share_state": st})
+            shared_n += len(shared)
+            shared_bytes += size * len(shared)
             if dups:
-                groups.append({"sha256": h, "size": size, "keep": keep, "keep_ident": kid, "dups": dups})
-    nominal = sum(g["size"] * len(g["dups"]) for g in groups)
-    doc = {"schema": "clone-dedupe/1", "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "roots": roots,
-           "min_bytes": min_bytes, "groups": groups, "nominal_bytes": nominal}
+                groups.append({"sha256": h, "size": size, "keep": keep, "keep_ident": kid, "dups": dups, "shared": shared})
+    savable = sum(g["size"] * len(g["dups"]) for g in groups)
+    unknown_n = sum(1 for g in groups for d in g["dups"] if d["share_state"] == "unknown")
+    doc = {"schema": "clone-dedupe/2", "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "roots": roots,
+           "min_bytes": min_bytes, "groups": groups,
+           # nominal = 名义重复量（含已共享）；shared = 已是克隆、无需处理；savable = 可省（进执行清单的副本）
+           "nominal_bytes": savable + shared_bytes, "shared_files": shared_n, "shared_bytes": shared_bytes,
+           "savable_files": sum(len(g["dups"]) for g in groups), "savable_bytes": savable,
+           "unknown_share_files": unknown_n}
     json.dump(doc, open(out, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     return doc
 
@@ -125,7 +198,7 @@ def run(plan_file, receipt, dry=False, quiet_hours=6):
     doc = json.load(open(plan_file, encoding="utf-8"))
     opened = open_paths()
     now = time.time()
-    done = skipped = 0
+    done = skipped = already = 0
     nominal = 0
     with open(receipt, "a", encoding="utf-8") as rf:
         for g in doc["groups"]:
@@ -156,6 +229,10 @@ def run(plan_file, receipt, dry=False, quiet_hours=6):
                     skipped += 1
                     rf.write(json.dumps({"path": p, "status": "skipped", "why": why}, ensure_ascii=False) + "\n")
                     continue
+                if share_state(keep, p) == "shared":      # 计划之后才变成克隆的，或计划漏判的：不重写
+                    already += 1
+                    rf.write(json.dumps({"path": p, "keep": keep, "status": "shared-skip", "why": "已共享，跳过"}, ensure_ascii=False) + "\n")
+                    continue
                 if not dry:
                     try:
                         clone_replace(keep, p)
@@ -167,7 +244,7 @@ def run(plan_file, receipt, dry=False, quiet_hours=6):
                 nominal += g["size"]
                 rf.write(json.dumps({"path": p, "keep": keep, "bytes": g["size"], "sha256": g["sha256"],
                                      "status": "dry-run" if dry else "cloned"}, ensure_ascii=False) + "\n")
-    return {"cloned": done, "skipped": skipped, "nominal_bytes": nominal}
+    return {"cloned": done, "skipped": skipped, "already_shared": already, "nominal_bytes": nominal}
 
 
 def free_bytes(path="/"):
@@ -191,14 +268,16 @@ def main():
     if x.cmd == "plan":
         roots = [os.path.realpath(os.path.expanduser(r)) for r in x.root]
         doc = plan(roots, int(x.min_mb * 2**20), x.out)
-        print("计划 %s：%d 组，名义可共享 %.2f GiB（已是克隆的不会再腾空间，以执行后磁盘实测为准）" % (
-            x.out, len(doc["groups"]), doc["nominal_bytes"] / 2**30))
+        print("计划 %s：%d 组；已共享（无需处理）%d 个、%.2f GiB；可省 %d 个副本、%.2f GiB%s（以执行后磁盘实测为准）" % (
+            x.out, len(doc["groups"]), doc["shared_files"], doc["shared_bytes"] / 2**30, doc["savable_files"],
+            doc["savable_bytes"] / 2**30,
+            ("；其中 %d 个共享状态未知（取不到物理位置，按未共享计）" % doc["unknown_share_files"]) if doc["unknown_share_files"] else ""))
     else:
         before = free_bytes()
         r = run(x.plan, x.receipt, x.dry_run, x.quiet_hours)
         after = free_bytes()
-        print("%s %d 个副本（名义 %.2f GiB），跳过/失败 %d；磁盘可用 %+.2f GiB（实测；并发写盘会抵消）" % (
-            "预演" if x.dry_run else "已克隆", r["cloned"], r["nominal_bytes"] / 2**30, r["skipped"], (after - before) / 2**30))
+        print("%s %d 个副本（名义 %.2f GiB），已共享跳过 %d，其他跳过/失败 %d；磁盘可用 %+.2f GiB（实测；并发写盘会抵消）" % (
+            "预演" if x.dry_run else "已克隆", r["cloned"], r["nominal_bytes"] / 2**30, r["already_shared"], r["skipped"], (after - before) / 2**30))
 
 
 if __name__ == "__main__":

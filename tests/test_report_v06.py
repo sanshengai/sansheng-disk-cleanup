@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 import pytest
 
@@ -38,10 +38,6 @@ def removed_bytes(rc, cid):
     return sum(it["removed"]["bytes"] for c in rc["cards"] if c["id"] == cid for it in c["items"])
 
 
-def share_f(rp):
-    return float(parse_qs(urlparse(rp["share"]["url"]).query)["f"][0])
-
-
 # ───────────────────────── 处置方式口径 ─────────────────────────
 
 def test_trash_bytes_are_not_counted_as_freed(env):
@@ -50,11 +46,11 @@ def test_trash_bytes_are_not_counted_as_freed(env):
     rc = env.receipt()
     assert removed_bytes(rc, "c01") > 0                           # 确实处理了
     rp = report.build_report(str(env.run))
-    assert rp["freed"] == 0 and rp["used_after"] == rp["used_before"]
+    assert rp["freed"] == 0 and rp["freed_measured"] == rp["free_after"] - rp["free_before"]
     assert rp["disposal"]["freed"] == 0 and rp["disposal"]["trash"] == removed_bytes(rc, "c01")
     assert rp["disposal"]["trash_dirs"] and rp["disposal"]["trash_dirs"][0].startswith("叁笙清理-scan1-")
     assert rp["cards"] == [] and rp["categories"] == []
-    assert share_f(rp) == 0.0                                    # 分享链接用“已腾出”口径
+    assert not urlparse(rp["share"]["url"]).query                                    # 二维码不把条目核算发给旧版成果页
 
 
 def test_three_modes_across_runs_split_into_freed_trash_and_archived(env, vol):
@@ -81,7 +77,7 @@ def test_trash_and_delete_in_one_report(env):
     rp = report.build_report(str(env.run))
     assert rp["freed"] == c01 and rp["disposal"]["trash"] == c02 and rp["disposal"]["freed"] == c01
     assert [c["bytes"] for c in rp["cards"]] == [c01]
-    assert share_f(rp) == round(c01 / 1e9, 1)
+    assert not urlparse(rp["share"]["url"]).query
 
 
 def test_archive_with_trash_source_counts_as_trash_not_freed(env, vol):
@@ -180,7 +176,7 @@ def test_rendered_page_embeds_new_blocks_and_script_parses(env):
     for sec in ("disp-sec", "fixed-sec", "mem-sec", "reads-sec"):
         assert f'id="{sec}" hidden' in html                       # 默认隐藏，有数据时脚本才显示
     assert "这些内容发给了你的 AI 服务商" in html and "忘掉: " in html and "彻底删除本轮文件" in html
-    assert "已移入废纸篓，等待彻底删除" in html and "实际释放仍为 0 B" in html
+    assert "已移入废纸篓，等待彻底删除" in html and "按条目核算释放 0 B" in html
     assert "__REPORT_JSON__" not in html
     data = json.loads(re.search(r"const R=(\{.*?\});\nconst \$=", html, re.S).group(1))
     assert data["remembered"][0]["id"] == "m1" and data["reads"]["content"] == 1 and data["disposal"]["trash"] == 0

@@ -38,7 +38,7 @@
 
 - `<项目>/web/.local/<task>-YYYYMMDD/` 下存在 `authorized-*`、`DELIVERY*`、`RECEIPT*` 标记文件，且标记之后没有真实写入，可作为 `delivered` 线索（仍需引用检查；被其他 .local 任务的 JSON 以字符串提到，通常只是来源记录，写 `refs_reviewed(history_only)`）。
 - 带版本号的迭代目录（如 `v7执行`、`v10执行`、`v11重建`）：只保留最新 vN、现役工具脚本和最终样图备份；旧 vN 的出图批次（roll*、stage*-prep）列 B 类，先确认私有备份覆盖。
-- 读书蒸馏类 `_inbox/<batch>/`：书已上架（站点数据或正式书目录能找到同名 slug）时，`work/`、`raw/` 可删，保留 manifest/回执。
+- 内容处理类 `_inbox/<batch>/`：正式输出已核验（交付清单可定位同一条目，且原始素材已独立保留）时，`work/`、`raw/` 可删，保留 manifest/回执。
 
 ## 不能做的事
 

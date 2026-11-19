@@ -34,6 +34,8 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import plan  # noqa: E402
 import protect  # noqa: E402
+import codex_batch
+import session_materials
 import codex_state  # noqa: E402
 import units  # noqa: E402
 
@@ -66,6 +68,21 @@ def protected(path, profile, entry=False):
 def free_bytes():
     st = os.statvfs(protect.HOME)
     return st.f_bavail * st.f_frsize
+
+
+def home_volume_reading():
+    """同一目录描述符取得设备号和 POSIX 容量口径；统计失败不影响处置。"""
+    try:
+        fd = os.open(protect.HOME, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            device = os.fstat(fd).st_dev
+            st = os.fstatvfs(fd)
+            return {"device": device, "free": st.f_bavail * st.f_frsize,
+                    "used": (st.f_blocks - st.f_bfree) * st.f_frsize, "total": st.f_blocks * st.f_frsize}
+        finally:
+            os.close(fd)
+    except OSError:
+        return None
 
 
 def parse_lsof(text):
@@ -690,7 +707,7 @@ def collect_candidates(item, rp, profile, res, retired=None):
     return files, [], False
 
 
-def delete_files(files, res, parent_cache, disp=None, authorized_files=None, leaf_guard=None):
+def delete_files(files, res, parent_cache, disp=None, authorized_files=None, leaf_guard=None, material_proof=None):
     disp = disp or Disposer()
     for p, st0 in files:
         parent = os.path.dirname(p)
@@ -721,6 +738,11 @@ def delete_files(files, res, parent_cache, disp=None, authorized_files=None, lea
                 leaf_guard(p)
             except (OSError, ValueError, TypeError, KeyError, IndexError) as exc:
                 res.add_skip(p, "退役测试保留副本复核失败：" + str(exc))
+                continue
+        if disp.mode != "archive":
+            why = session_materials.path_error(p, protect.HOME, material_proof)
+            if why:
+                res.add_skip(p, why)
                 continue
         kind, why = disp.dispose(p)
         if kind == "skip":
@@ -780,6 +802,17 @@ def _execute_item(index, item, profile, dry_run, now, run=None, disp=None):
     if item.get("method") not in ("delete", "native") or (
             item["method"] == "delete" and item.get("scope") not in plan.SCOPES):
         return res.skip_item("封存条目的 method/scope 不合法")
+    if codex_state.is_identity_item(item):
+        # 会话文件已不在、只剩状态库与历史库记录的 Codex 线程：没有文件可核对 ino/dev，走自己的数据库复核
+        # （不进 verify_identity，带文件条目的原有路径不变）
+        if item["method"] != "native":
+            return res.skip_item("identity 条目的 method 必须是 native")
+        if disp.error:
+            return res.skip_item(disp.error)
+        if disp.mode == "archive":
+            return res.skip_item("原生命令没法归档，先留着")
+        res.d["disposal"] = {"mode": "native", "dir": None}
+        return run_native_threadless(item, profile, res, dry_run, now, run)
     retired = None
     if plan.retired_test_copy.is_item(item):
         try:
@@ -832,6 +865,11 @@ def _execute_item(index, item, profile, dry_run, now, run=None, disp=None):
         return res.skip_item(f"有进程正在打开其中的文件（如 {opened[0]}）")
 
     if dry_run:
+        if disp.mode != "archive":
+            for path, _ in files:
+                why = session_materials.path_error(path, protect.HOME, item.get("session_materials"))
+                if why:
+                    return res.skip_item(why)
         r = res.d["removed"]
         r["files"], r["bytes"] = len(files), sum(alloc_bytes(st) for _, st in files)
         r["sample"] = [p for p, _ in files[:SAMPLE]]
@@ -841,7 +879,7 @@ def _execute_item(index, item, profile, dry_run, now, run=None, disp=None):
 
     parent_cache = {}
     delete_files(files, res, parent_cache, disp, authorized_files,
-                 retired.verify_leaf if retired else None)
+                 retired.verify_leaf if retired else None, item.get("session_materials"))
     if item["scope"] == "ignored-only":
         # 只清理因删除而变空的目录（根目录自身保留）
         touched = set()
@@ -880,7 +918,7 @@ def native_cwd(run):
         return None, f"无法准备工作目录 {base}：{exc.strerror or exc}"
 
 
-def run_native(item, rp, res, dry_run, now, run=None):
+def run_native(item, rp, res, dry_run, now, run=None, *, batch=None):
     argv = item.get("argv")
     bad = plan._native_target_mismatch(argv, rp)     # 与 plan check 同一套形状表：防封存后被篡改或旧计划绕过
     if bad:
@@ -898,6 +936,19 @@ def run_native(item, rp, res, dry_run, now, run=None):
         if gerr:
             return res.skip_item(f"执行环境检查未通过：{gerr}")
     tid = plan._codex_target(argv)
+    compressed = bool(tid and rp.endswith(".jsonl.zst"))
+    if compressed:
+        if batch is None:
+            return res.skip_item("压缩会话需要明确批次授权与素材复核")
+        if item.get("path") != rp or item.get("realpath") != rp:
+            return res.skip_item("压缩会话路径与封存不一致")
+        err = codex_batch.compressed_error(rp, tid, protect.HOME)
+        if err:
+            return res.skip_item(err)
+    if batch is not None:
+        err = codex_batch.batch_error(batch, item, tid, protect.HOME, now)
+        if err:
+            return res.skip_item(err)
     if tid:
         # codex delete 会连带删除全部后代：任一后代还在（被跳过、失败或封存后新出现），父会话就不删
         rel = codex_state.relations(protect.HOME)
@@ -914,6 +965,11 @@ def run_native(item, rp, res, dry_run, now, run=None):
         return res.skip_item("无法确认是否被打开（lsof 超时或不可用）")
     if opened:
         return res.skip_item(f"有进程正在打开其中的文件（如 {opened[0]}）")
+    if tid:
+        tree = [tid, *codex_state.descendants(tid, rel["children"])]
+        why = session_materials.native_error(tree, protect.HOME, rp, item.get("session_materials"))
+        if why:
+            return res.skip_item(why)
     before_bytes = sum(alloc_bytes(st) for _, st in files)
     if dry_run:
         res.d["status"] = "planned"
@@ -953,6 +1009,20 @@ def run_native(item, rp, res, dry_run, now, run=None):
         return res.finish()
     # 退出码 0 不等于删掉了：现场核实，按前后实际占用计字节
     left = sum(alloc_bytes(st) for _, st in walk_tree(rp)[0]) if os.path.lexists(rp) else 0
+    if batch is not None:
+        try:
+            res.d["remaining_records"] = codex_batch.remaining(protect.HOME, tid)
+        except Exception as exc:
+            res.add_fail(rp, f"删除后无法核实状态与历史：{exc}")
+            return res.finish()
+        if any(res.d["remaining_records"].values()):
+            res.add_fail(rp, "原生命令返回成功，但线程或历史记录仍在")
+            return res.finish()
+        if compressed and not os.path.lexists(rp):
+            res.d["removed"]["files"] = 1
+        if compressed and os.path.lexists(rp):
+            res.d.update(status="removed", rollout_remaining=rp, reason="原生线程和历史已清除，压缩会话文件仍在")
+            return res.d
     if tid and os.path.lexists(rp):
         res.add_fail(rp, "codex delete 返回成功，但会话文件仍在（可能只删了数据库记录）")
         return res.finish()
@@ -960,6 +1030,227 @@ def run_native(item, rp, res, dry_run, now, run=None):
     res.d["status"] = "removed" if before_bytes - left > 0 or not os.path.lexists(rp) else "skipped"
     res.d["reason"] = ("native 命令执行成功" if res.d["status"] == "removed"
                        else "native 命令返回成功，但路径下的占用没有变化")
+    return res.d
+
+
+# ----------------------------------------------------------------- 会话文件已不在的 Codex 线程
+
+_ROLLOUT_SCAN = {}              # {home: (时刻, {线程号: 会话文件})}：按线程号找会话文件的目录遍历结果，短时复用
+ROLLOUT_SCAN_TTL = 30
+
+
+def _rollout_files(home):
+    """现场遍历 sessions / archived_sessions，按线程号找会话文件（只走目录、不读文件内容）。逐条目都遍历太慢，30 秒内复用。"""
+    hit = _ROLLOUT_SCAN.get(home)
+    if hit and time.monotonic() - hit[0] < ROLLOUT_SCAN_TTL:
+        return hit[1]
+    files = codex_state.scan_rollouts(os.path.join(home, ".codex"))
+    _ROLLOUT_SCAN[home] = (time.monotonic(), files)
+    return files
+
+
+def _threadless_gone(tid):
+    """状态库里已经没有这个线程（读不出来按“还在”算）。pilot 回执里 removed 的声明靠它现场核对。"""
+    rows, errs = codex_state.read_threads(protect.HOME, tid)
+    return not errs and not rows
+
+
+def verify_threadless(item, profile, now, *, batch=None):
+    """会话文件已不在的线程，执行前逐项重新只读复核（状态库与历史库都用 mode=ro 短查询）。
+    返回 (信息字典, None) 或 (None, 跳过原因)。信息：tid、tree（根线程加全部后代）、argv、shape、prog。"""
+    home = protect.HOME
+    idn = item.get("identity")
+    bad = codex_state.identity_error(idn)
+    if bad:
+        return None, f"封存的 identity 不合格：{bad}"
+    argv = item.get("argv")
+    tid = plan._codex_target(argv) if isinstance(argv, list) and argv and all(isinstance(a, str) for a in argv) else None
+    hit = protect.native_match(argv) if tid else None
+    if not tid or hit is None or hit[0].sid != "codex-delete":
+        return None, "native 命令与形状表不符：identity 条目只接受 codex delete --force <线程UUID>"
+    if tid != idn["thread_id"].lower():
+        return None, f"native 命令里的线程 {tid} 与封存的 identity.thread_id 不一致"
+    path = item.get("path")
+    want = codex_state.expected_item_path(home, tid, idn["rollout_path"])
+    if not isinstance(path, str) or os.path.normpath(path) != want:
+        return None, f"路径与封存身份不符（应为 {want}）"
+    rp = os.path.realpath(path)
+    if rp != item.get("realpath"):
+        return None, f"路径解析结果已变化（封存 {item.get('realpath')}，现在 {rp}）"
+    reason = protected(rp, profile)
+    if reason:
+        return None, f"保护路径：{reason}"
+    if not protect.under_roots(rp, profile):
+        return None, "不在 profile.roots 之内"
+    shape = hit[0]
+    prog = protect.resolve_prog(argv[0])
+    if "prog" not in item:
+        return None, "封存条目缺少 prog（程序路径记录），旧封存或被改动的封存不执行原生命令"
+    if item["prog"] != prog:
+        return None, f"程序路径与封存时不一致（封存 {item['prog']}，现在 {prog}），已跳过"
+
+    rows, errs = codex_state.read_threads(home)
+    if errs:
+        return None, f"状态库读取失败，无法核对：{errs[0]}"
+    mine = rows.get(tid) or []
+    if not mine:
+        return None, "状态库里已经没有这个线程"
+    if len(mine) > 1:
+        return None, f"线程同时出现在 {len(mine)} 个状态库里，无法确定该删哪一个"
+    row = mine[0]
+    if row["rollout_path"] != idn["rollout_path"]:
+        return None, f"状态库里的 rollout_path 已变（封存 {idn['rollout_path']!r}，现在 {row['rollout_path']!r}）"
+    for p in sorted({path, idn["rollout_path"], row["rollout_path"]} - {""}):
+        if os.path.lexists(p):
+            return None, f"会话文件又出现了：{p}"
+    elsewhere = _rollout_files(home).get(tid)
+    if elsewhere and os.path.lexists(elsewhere):
+        return None, f"会话文件又出现了：{elsewhere}"
+    if str(row.get("updated_at")) != str(idn["state_updated_at"]):
+        return None, f"线程封存后又有更新（updated_at 封存 {idn['state_updated_at']!r}，现在 {row.get('updated_at')!r}）"
+
+    counts, herrs = codex_state.history_counts(home, [tid])
+    if herrs:
+        return None, f"历史库读取失败，无法核对：{herrs[0]}"
+    if counts[tid][0] > idn["history_items"]:
+        return None, f"历史条目比封存时多（封存 {idn['history_items']} 条，现在 {counts[tid][0]} 条），封存后有新内容"
+
+    desc, terrs = codex_state.tree_of(home, tid)
+    if terrs:
+        return None, f"状态库的父子关系读取失败：{terrs[0]}"
+    children, _ = codex_state.read_edges(home)
+    parent = next((p for p, cs in children.items() if tid in cs and p in rows), None)
+    if batch is not None:
+        err = codex_batch.batch_error(batch, item, tid, home, now)
+        if err:
+            return None, err
+        fresh = codex_state.scan_rollouts(os.path.join(home, ".codex"))
+        if tid in fresh:
+            return None, "会话文件又出现了"
+    if parent and batch is None:
+        return None, f"线程是 {parent} 的子任务，不是根线程，不单独删"
+    files = _rollout_files(home)
+    rel = codex_state.relations(home)["rollout"]
+    alive = [d for d in desc
+             if any(p and os.path.lexists(p) for p in (files.get(d), rel.get(d), ((rows.get(d) or [{}])[0]).get("rollout_path")))]
+    if alive:   # codex delete 会连带删除全部后代：任一后代的会话文件还在，就不删根线程
+        return None, f"子会话 {alive[0]} 等 {len(alive)} 个仍在，删除父会话会连带删除它们，已跳过"
+    tree = [tid] if batch is not None else [tid] + desc
+    for t in tree:
+        r = (rows.get(t) or [None])[0]
+        if r is None:
+            continue
+        ts = codex_state.to_epoch(r.get("updated_at"))
+        if ts is None:
+            return None, f"线程 {t} 的 updated_at 无法判断，保守跳过"
+        if ts > now - RECENT_SECONDS:
+            return None, f"线程 {t} 在 24 小时内还有更新，可能仍在使用"
+    return {"tid": tid, "tree": tree, "argv": argv, "shape": shape, "prog": prog}, None
+
+
+def run_native_threadless(item, profile, res, dry_run, now, run=None, *, batch=None):
+    """对“会话文件已不在”的线程执行 codex delete：同 run_native 的程序路径核对、空工作目录、白名单环境、不经 shell；
+    不同在于没有文件可量字节、也没有文件可核对，执行后改为复核两个库：根线程和全部后代在 state 里都没了、
+    thread_items 里也没有这些线程的行；只删了一半记失败。字节记为“库内条目”，不算直接删除的文件。"""
+    info, why = verify_threadless(item, profile, now, batch=batch)
+    if why:
+        return res.skip_item(why)
+    argv, tid, tree = info["argv"], info["tid"], info["tree"]
+    why = session_materials.native_error(tree, protect.HOME, spec=item.get("session_materials"))
+    if why:
+        return res.skip_item(why)
+    idn = item["identity"]
+    res.d["prog"] = info["prog"]
+    res.d["db_records"] = {"threads": len(tree), "history_items": idn["history_items"],
+                           "history_bytes": idn["history_bytes"]}
+    res.d["argv"] = list(argv)
+    if dry_run:
+        res.d["status"] = "planned"
+        res.d["reason"] = "dry-run：将执行 " + " ".join(argv) + f"（只删库内记录：{len(tree)} 个线程）"
+        res.d["env_forced"] = info["shape"].forced_env(protect.HOME)
+        return res.d
+    cwd, cwd_err = native_cwd(run)
+    if cwd_err:
+        return res.skip_item(cwd_err)
+    env = protect.native_env(info["shape"], info["prog"])
+    res.d["cwd"] = cwd
+    res.d["env"] = env
+    path = item["path"]
+    # 真实 codex delete 会不会连带删 ~/.codex/generated_images/<线程号> 没有验证过：执行前先量一遍整棵树的原图目录，
+    # 执行后看哪些没了，如实写进回执（它们另有带文件的条目排在后面，被删掉的那些后面会记“路径已不存在”）
+    imgs_before = []
+    for t in info["tree"]:
+        d = codex_state.images_dir_of(protect.HOME, t)
+        if d:
+            try:
+                fl, dl, _, _ = walk_tree(d)
+            except OSError:
+                continue
+            imgs_before.append((d, len(fl), len(dl) + 1, sum(alloc_bytes(st) for _, st in fl)))
+    try:
+        cp = subprocess.run(argv, shell=False, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                            timeout=NATIVE_TIMEOUT, cwd=cwd, env=env)
+    except FileNotFoundError:
+        res.add_fail(path, f"命令不存在：{argv[0]}")
+        return res.finish()
+    except subprocess.TimeoutExpired:
+        res.add_fail(path, f"命令超过 {NATIVE_TIMEOUT} 秒仍未结束")
+        return res.finish()
+    except OSError as exc:
+        res.add_fail(path, f"命令无法启动：{exc}")
+        return res.finish()
+    try:
+        leftovers = os.listdir(cwd)
+    except OSError:
+        leftovers = []
+    if leftovers:
+        res.d["cwd_leftovers"] = leftovers[:20]
+    res.d["returncode"] = cp.returncode
+    res.d["output_tail"] = ((cp.stdout or "") + (cp.stderr or ""))[-500:]
+    if cp.returncode != 0:
+        res.add_fail(path, f"命令退出码 {cp.returncode}")
+        return res.finish()
+    if batch is not None:
+        try:
+            remaining = codex_batch.remaining(protect.HOME, tid)
+            res.d["remaining_records"] = remaining
+            if any(remaining.values()):
+                res.add_fail(path, "原生删除后状态、轮次或历史条目仍在")
+                return res.finish()
+        except Exception as exc:
+            res.add_fail(path, f"删除后无法复核：{exc}")
+            return res.finish()
+    gone = [x for x in imgs_before if not os.path.lexists(x[0])]
+    res.d["generated_images_before"] = len(imgs_before)
+    if gone:
+        res.d["generated_images_removed_by_codex"] = [
+            {"path": d, "files": f, "dirs": n, "bytes": b} for d, f, n, b in gone]
+        res.d["removed"]["files"] += sum(x[1] for x in gone)
+        res.d["removed"]["dirs"] += sum(x[2] for x in gone)
+        res.d["removed"]["bytes"] += sum(x[3] for x in gone)
+        res.d["removed"]["sample"] = [x[0] for x in gone[:SAMPLE]]
+    # 退出码 0 不等于删干净：两个库都要复核
+    rows, errs = codex_state.read_threads(protect.HOME)
+    counts, herrs = codex_state.history_counts(protect.HOME, tree)
+    if errs or herrs:
+        res.add_fail(path, f"删除后无法复核数据库：{(errs + herrs)[0]}")
+        return res.finish()
+    in_state = [t for t in tree if rows.get(t)]
+    in_history = [t for t in tree if counts.get(t, (0,))[0] > 0]
+    if in_state or in_history:
+        res.add_fail(path, "删除不完整：" + "；".join(
+            x for x in ((f"状态库里还有 {len(in_state)} 个线程（如 {in_state[0]}）" if in_state else ""),
+                        (f"历史库里还有 {len(in_history)} 个线程的条目（如 {in_history[0]}）" if in_history else "")) if x))
+        return res.finish()
+    res.d["status"] = "removed"
+    res.d["reason"] = (f"native 命令执行成功：状态库与历史库里该线程及其 {len(tree) - 1} 个后代的记录都已清除"
+                       f"（库内条目 {idn['history_items']} 条，约 {units.fmt_bytes(idn['history_bytes'])}；文件没有变小，"
+                       "空间由随后的历史库回收实测）")
+    if gone:
+        res.d["reason"] += (f"；codex delete 还连带删掉了 {len(gone)} 个原图目录（约 {units.fmt_bytes(sum(x[3] for x in gone))}），"
+                            "排在后面的同名原图目录条目会记“路径已不存在”")
+    elif imgs_before:
+        res.d["reason"] += f"；{len(imgs_before)} 个原图目录没有被 codex delete 删掉，由后面的原图目录条目处理"
     return res.d
 
 
@@ -1141,6 +1432,7 @@ def run_plan(run, seal, selection, dry_run, pilot=False, opts=None, answers=None
     answers = answers or {}
     profile = plan.load_profile()
     now = time.time()
+    volume_before = home_volume_reading()
     before = free_bytes()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     scan_id = seal["scan_id"]
@@ -1199,11 +1491,19 @@ def run_plan(run, seal, selection, dry_run, pilot=False, opts=None, answers=None
     if not dry_run and codex_deleted(receipt):
         receipt["history_reclaim"] = reclaim_codex_history()
     after = free_bytes()
+    volume_after = home_volume_reading()
     summary = {"removed_files": 0, "removed_dirs": 0, "skipped_items": 0, "skipped_entries": 0,
                "failed_items": 0, "failed_entries": 0, "removed_items": 0, "bytes_by_files": 0,
-               "bytes_native": 0, "bytes_freed_now": 0, "bytes_trash": 0, "bytes_archived": 0}
+               "bytes_native": 0, "bytes_freed_now": 0, "bytes_trash": 0, "bytes_archived": 0,
+               "db_threads": 0, "db_history_items": 0, "db_history_bytes": 0}
     for c in receipt["cards"]:
         for it in c["items"]:
+            if it["status"] in ("removed", "partial") and it.get("db_records"):
+                # 会话文件已不在的线程：删的是库内记录，没有文件字节可量；按封存的库内条目字节单列，
+                # 不并入“直接删除的文件”，真正腾出的空间由历史库回收按文件前后大小实测
+                summary["db_threads"] += it["db_records"].get("threads", 0)
+                summary["db_history_items"] += it["db_records"].get("history_items", 0)
+                summary["db_history_bytes"] += it["db_records"].get("history_bytes", 0)
             summary["removed_files"] += it["removed"]["files"]
             summary["removed_dirs"] += it["removed"]["dirs"]
             summary["bytes_by_files"] += it["removed"]["bytes"]
@@ -1226,7 +1526,8 @@ def run_plan(run, seal, selection, dry_run, pilot=False, opts=None, answers=None
     reclaimed = sum(max(0, r.get("reclaimed", 0)) for r in receipt.get("history_reclaim", []))
     # bytes_by_files 已包含原生命令条目的实测字节（removed.bytes），bytes_native 只是其中的原生命令部分。
     # 放进废纸篓的字节要清空废纸篓才腾出，不计入“按条目释放”（否则会和磁盘余量变化对不上）
-    summary.update({"free_before": before, "free_after": after, "freed_measured": measured,
+    summary.update({"home_volume_before": volume_before, "home_volume_after": volume_after,
+                    "free_before": before, "free_after": after, "freed_measured": measured,
                     "history_reclaimed": reclaimed,
                     "freed_by_items": summary["bytes_freed_now"] + reclaimed})
     if not dry_run:
@@ -1274,6 +1575,9 @@ def print_receipt(rc):
         for r in rc.get("history_reclaim", []):
             print(f"  历史库回收 {r['db']}：{fmt_bytes(r['size_before'])} → {fmt_bytes(r['size_after'])}"
                   + (f"；{r['error']}" if r.get("error") else f"，完整性 {r.get('integrity')}"))
+        if s.get("db_threads"):
+            print(f"库内条目：删除了 {s['db_threads']} 个线程的数据库记录（历史条目 {s['db_history_items']} 条，"
+                  f"约 {fmt_bytes(s['db_history_bytes'])}）；这不是直接删除的文件，真正腾出的空间看上面的历史库回收")
         print(f"按条目核算释放 {fmt_bytes(s['freed_by_items'])}（直接删除的文件 {fmt_bytes(s.get('bytes_freed_now', s['bytes_by_files']))}，"
               f"其中原生命令 {fmt_bytes(s['bytes_native'])}；历史库回收 {fmt_bytes(s['history_reclaimed'])}）；"
               f"磁盘余量变化 {fmt_bytes(s['freed_measured'])}")
@@ -1308,6 +1612,10 @@ def _removed_claim_holds(it, seal_item):
     path = it["path"]
     if not isinstance(path, str) or not path:
         return False
+    if codex_state.is_identity_item(seal_item):
+        # 会话文件本来就不在：路径不存在说明不了什么，要看状态库里这个线程现在是不是真没了
+        tid = str(seal_item["identity"].get("thread_id") or "").lower()
+        return bool(tid) and _threadless_gone(tid)
     if not os.path.lexists(path):
         return True
     sample = (it.get("removed") or {}).get("sample")
@@ -1397,7 +1705,7 @@ def finish_report(run, tag=""):
     try:
         import report
         path, rp = report.make(run)
-        print(f"{tag}成果页：{path}（腾出 {fmt_bytes(rp['freed'])}）", flush=True)
+        print(f"{tag}成果页：{path}（按条目核算，腾出 {fmt_bytes(rp['freed'])}）", flush=True)
     except (OSError, ValueError, KeyError) as exc:      # 成果页失败不影响已完成的清理
         print(f"{tag}成果页没生成：{exc}；可以稍后运行 python3 scripts/report.py --run {run}", file=sys.stderr)
     try:
@@ -1684,6 +1992,20 @@ def _board_stop(msg, code=2):
     return code
 
 
+REVIEW_TITLE = "叁笙清理 · 待核查答复"
+
+
+def split_review_part(text):
+    """看板“复制清单”可能把“叁笙清理 · 待核查答复”接在清理选择后面：返回 (清理部分, 核查答复部分或 None)。
+    从第一条以该抬头开头的行起，往后全部归核查答复；清理部分只取这之前的行，答复里的任何文字都进不了清理解析。
+    抬头在首个非空行（纯答复文本）时清理部分为空，交给原有解析报“首行不是叁笙清理选择”，不会触发任何删除。"""
+    lines = (text or "").splitlines(keepends=True)
+    for i, ln in enumerate(lines):
+        if ln.strip().startswith(REVIEW_TITLE):
+            return "".join(lines[:i]), "".join(lines[i:])
+    return text, None
+
+
 def cmd_go_from_board(args):
     """看板路径一条命令：读导出文本 → 校验 → 保存设置/台账 → 必要时重新封存 → 预演 → 试点 → 正式执行 → 成果页。
     退出码：2 = 拒绝（清单不合格、台账导出、scan_id/seal/sel 对不上，什么都没删）；3 = 停下请用户看（设置/台账让判断变了需要
@@ -1696,6 +2018,7 @@ def cmd_go_from_board(args):
             text = f.read()
     except OSError as exc:
         return _board_stop(f"读不了清单文件 {args.from_board}：{exc}")
+    text, review_part = split_review_part(text)     # 核查答复部分另存，不参与下面任何解析
     if plan.prefs.is_ledger_export(text):
         return _board_stop("拒绝：这是项目台账（抬头“叁笙清理 · 项目台账”），不是清理清单，不含任何清理授权，什么都没有删除。"
                            "请用 python3 scripts/plan.py profile --apply <文件> 保存台账，再让用户从清理看板复制清单")
@@ -1724,6 +2047,14 @@ def cmd_go_from_board(args):
     if not selection:
         return _board_stop("清单里没有选中任何卡片，什么都没有删除；若只想保存设置，请用 plan.py profile --apply")
     print(f"【go】读取看板清单：scan_id {ex['scan_id']}，seal {seal['digest']}，选中 {len(selection)} 张卡片", flush=True)
+    if review_part is not None:
+        rpath = os.path.join(run, "review-answers-" + time.strftime("%Y%m%d-%H%M%S") + ".txt")
+        try:
+            with open(rpath, "w", encoding="utf-8") as f:
+                f.write(review_part.rstrip("\n") + "\n")
+            print(f"【go】核查答复已另存到 {rpath}，它不是删除授权（只用于决定下一步补查什么）", flush=True)
+        except OSError as exc:
+            print(f"【go】核查答复没能另存（{exc}）；不影响清理部分，请把答复原文另行告诉 Agent", file=sys.stderr, flush=True)
 
     # 只有“确认规则: / 不要规则:”行的清单也要先保存规则，且在任何删除之前
     confirm_ids, reject_ids, _ = plan.prefs.parse_rule_decisions(text)

@@ -34,6 +34,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import prefs  # noqa: E402
 import protect  # noqa: E402
+import session_materials
 import codex_state  # noqa: E402
 import setup_q  # noqa: E402
 import units  # noqa: E402
@@ -830,7 +831,10 @@ def compute_default_select(card, items, verdict_out, nodes):
 
 
 def _item_newest_ts(it, nodes):
-    """条目最近一次修改的时间戳：节点自己的 newest_mtime（路径逐字相同）优先，其次现场 lstat；都拿不到返回 None。"""
+    """条目最近一次修改的时间戳：节点自己的 newest_mtime（路径逐字相同）优先，其次现场 lstat；都拿不到返回 None。
+    会话文件已不在的线程（identity 条目）没有文件可量，用状态库记录的 updated_at。"""
+    if codex_state.is_identity_item(it):
+        return codex_state.to_epoch(it["identity"].get("state_updated_at"))
     rp = protect.lexical(it["path"])
     primary, _ = related_nodes(rp, nodes)
     mt = primary.get("newest_mtime") if primary and os.path.normpath(str(primary.get("path"))) == rp else None
@@ -956,10 +960,175 @@ def cleanup_targets(cards):
     return {"files": files, "trees": trees}
 
 
+def seal_session_materials(item, rec, ctx, errs):
+    if "session_materials" not in item:
+        return
+    try:
+        proof = item["session_materials"]
+        copies = session_materials.proofs(proof)
+        if any(dependency_selected(p, ctx) for p in (proof["path"], *copies.values())):
+            raise ValueError("素材保留证明或副本也在本轮删除范围")
+        rec["session_materials"] = dict(proof)
+    except session_materials.ERRORS as exc:
+        errs.append(f"素材保留证明无效：{exc}")
+
+
 def dependency_selected(dependency, ctx):
     dep = os.path.realpath(dependency)
     return dep in ctx.get("cleanup_files", set()) or any(
         within(dep, target) for target in ctx.get("cleanup_paths", []))
+
+
+def _threadless_state(ctx):
+    """一次 check 内只读一遍状态库（线程表 + 父子边），逐条目复用；每张卡重新读，不跨卡缓存。"""
+    if "_codex_state" not in ctx:
+        rows, e1 = codex_state.read_threads(protect.HOME)
+        children, e2 = codex_state.read_edges(protect.HOME)
+        for p, cs in codex_state.relations(protect.HOME)["children"].items():
+            children.setdefault(p, set()).update(cs)
+        ctx["_codex_state"] = (rows, children, e1 + e2)
+    return ctx["_codex_state"]
+
+
+def _item_thread_ids(item):
+    """条目带的 Codex 线程号：identity 的线程号、session 字段、路径文件名里的会话号、codex 删除命令的线程号。"""
+    ids = set()
+    idn = item.get("identity") if isinstance(item.get("identity"), dict) else {}
+    argv = item.get("argv") if isinstance(item.get("argv"), list) else []
+    path = item.get("path")
+    for cand in (idn.get("thread_id"), item.get("session"), os.path.basename(path) if isinstance(path, str) else None,
+                 argv[-1] if argv and argv[0] == "codex" else None):
+        for m in UUID_RE.findall(str(cand or "")):
+            ids.add(m.lower())
+    return ids
+
+
+def _thread_tree(item, ctx):
+    """条目所在的 Codex 线程树：(线程号集合, 树上各线程在状态库里记录的工作目录, 状态库错误)。
+    线程号取自条目本身（会话文件已不在的线程、原图目录 ~/.codex/generated_images/<线程号> 都能取到），
+    再按状态库与会话文件里的父子关系补上全部后代。状态库读不了时只剩条目自己的线程号、没有工作目录。
+    工作目录用于项目归属：probe projects 只从现存会话文件收会话号，会话文件已不在的线程和它们的原图目录只能按它归属。"""
+    own = _item_thread_ids(item)
+    if not own:
+        return set(), [], []
+    rows, children, errors = _threadless_state(ctx)
+    tree = set(own)
+    for t in own:
+        tree.update(codex_state.descendants(t, children))
+    cwds = []
+    for t in sorted(tree):
+        for r in rows.get(t) or []:
+            c = r.get("cwd")
+            if isinstance(c, str) and os.path.isabs(c):
+                cwds.append(c)
+    return tree, list(dict.fromkeys(cwds)), errors
+
+
+def _check_threadless_item(item, ctx):
+    """会话文件已不在、状态库与历史库里还有记录的 Codex 线程（identity.kind=codex_thread_without_rollout）。
+    返回 (错误列表, 封存记录或 None)。这类条目没有文件可量：不查 ino/dev、不要求 facts 节点覆盖，
+    换成对状态库的现场核对；任一项不满足整卡降级并写明原因。放行条件：
+    ① argv 是 ["codex","delete","--force",<UUID>] 且线程号等于 identity.thread_id；② 状态库里有这个线程；
+    ③ 记录的 rollout_path 与封存一致；④ 该路径现在（以及按 UUID 能找到的会话文件）不存在；⑤ 不在保护规则下；
+    ⑥ 只放根线程（有父线程的必须由父线程带走）；⑦ updated_at 与封存一致且整棵树 24 小时内没动过；
+    ⑧ 交互线程（source 不含 exec）必须是 interactive：不得带 class=batch 混进批量卡。"""
+    path, idn = item.get("path"), item.get("identity")
+    errs = []
+    if item.get("method") != "native":
+        return [f"{path}：identity 条目的 method 必须是 native"], None
+    argv = item.get("argv")
+    if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
+        return [f"{path}：native 的 argv 必须是非空字符串数组"], None
+    bad = codex_state.identity_error(idn)
+    if bad:
+        return [f"{path}：{bad}"], None
+    tid = _codex_target(argv)
+    hit = protect.native_match(argv)
+    if not tid or hit is None or hit[0].sid != "codex-delete":
+        return [f"{path}：identity 条目的 argv 必须是 [\"codex\",\"delete\",\"--force\",<完整线程UUID>]"], None
+    if tid != idn["thread_id"].lower():
+        return [f"{path}：argv 里的线程 {tid} 与 identity.thread_id {idn['thread_id'].lower()} 不一致"], None
+    home = protect.HOME
+    want = codex_state.expected_item_path(home, tid, idn["rollout_path"])
+    if os.path.normpath(path) != want:
+        return [f"{path}：identity 条目的 path 必须是 {want}（由状态库记录的 rollout_path 推出）"], None
+    rp = os.path.realpath(path)
+    reason = protect.protected_reason(rp, ctx["profile"])
+    if reason:
+        errs.append(f"{path}：属于保护路径（{reason}）")
+    if not protect.under_roots(rp, ctx["profile"]):
+        errs.append(f"{path}：不在 profile.roots 之内")
+    if item.get("class") is not None and item.get("class") not in ITEM_CLASSES:
+        errs.append(f"{path}：class 必须是 {'/'.join(ITEM_CLASSES)}，收到 {item.get('class')!r}")
+
+    rows, children, state_errors = _threadless_state(ctx)
+    if state_errors:
+        errs.append(f"{path}：状态库读取失败，无法核对线程 {tid}（{state_errors[0]}）")
+        return errs, None
+    mine = rows.get(tid) or []
+    if not mine:
+        errs.append(f"{path}：状态库里没有线程 {tid}，无从核对")
+        return errs, None
+    if len(mine) > 1:
+        errs.append(f"{path}：线程 {tid} 同时出现在 {len(mine)} 个状态库里，无法确定该删哪一个")
+        return errs, None
+    row = mine[0]
+    if row["rollout_path"] != idn["rollout_path"]:
+        errs.append(f"{path}：状态库里线程 {tid} 的 rollout_path 已与封存不一致"
+                    f"（封存 {idn['rollout_path']!r}，现在 {row['rollout_path']!r}）")
+    for p in {path, idn["rollout_path"], row["rollout_path"]} - {""}:
+        if os.path.lexists(p):
+            errs.append(f"{path}：会话文件现在存在（{p}），不属于“文件已不在”的线程，请走带文件的会话条目")
+    live = codex_state.relations(home)["rollout"].get(tid)
+    if live and os.path.lexists(live):
+        errs.append(f"{path}：按线程号在 sessions/archived_sessions 里找到了会话文件（{live}），不属于“文件已不在”的线程")
+    if str(row.get("updated_at")) != str(idn["state_updated_at"]):
+        errs.append(f"{path}：状态库里线程 {tid} 的 updated_at 已与封存不一致"
+                    f"（封存 {idn['state_updated_at']!r}，现在 {row.get('updated_at')!r}），线程封存后又有更新")
+
+    # 只放根线程：有父线程的由父线程带走，不单独删（删子任务是另一个决定）
+    parent = next((p for p, cs in children.items() if tid in cs and p in rows), None)
+    if parent:
+        errs.append(f"{path}：线程 {tid} 是 {parent} 的子任务，条目里只放根线程")
+    # 整棵树 24 小时内没动过（子任务被续聊过也算）
+    now = time.time()
+    tree = [tid] + codex_state.descendants(tid, children)
+    for t in tree:
+        r = (rows.get(t) or [None])[0]
+        if r is None:
+            continue
+        ts = codex_state.to_epoch(r.get("updated_at"))
+        if ts is None:
+            errs.append(f"{path}：线程 {t} 的 updated_at 无法判断（{r.get('updated_at')!r}），保守不删")
+        elif ts > now - 24 * 3600:
+            errs.append(f"{path}：线程 {t} 在 24 小时内还有更新，可能仍在使用")
+    # 后代的会话文件还在：codex delete 会连带删掉它们，不删根线程（与 act 执行侧同一规则）
+    rollout_of = codex_state.relations(home)["rollout"]
+    alive = [d for d in tree[1:]
+             if any(p and os.path.lexists(p) for p in (rollout_of.get(d), ((rows.get(d) or [{}])[0]).get("rollout_path")))]
+    if alive:
+        errs.append(f"{path}：子会话 {alive[0]} 等 {len(alive)} 个的会话文件仍在，删除根线程会连带删除它们；"
+                    "先处理这些带文件的子会话，或不删这个根线程")
+    # 库内条目数与字节：不采信条目自带的数字，按线程号现场查一遍（走 thread_id 索引的短查询）
+    counts, herrs = codex_state.history_counts(home, [tid], with_bytes=True)
+    if herrs:
+        errs.append(f"{path}：历史库读取失败，无法核对库内条目数（{herrs[0]}）")
+    else:
+        n, b = counts[tid]
+        if (n, b) != (idn["history_items"], idn["history_bytes"]):
+            errs.append(f"{path}：identity 里的库内条目与历史库现状不一致（封存 {idn['history_items']} 条 / "
+                        f"{idn['history_bytes']} 字节，现在 {n} 条 / {b} 字节），不采信条目自带的数字")
+    # 交互线程只能走交互卡：class 不得写成 batch；批量（exec）线程不得有父线程
+    exec_root = codex_state.is_exec_source(row.get("source"))
+    if not exec_root and item_class(item) != "interactive":
+        errs.append(f"{path}：线程 {tid} 的来源是 {str(row.get('source'))[:40]!r}（不是 exec 脚本会话），"
+                    "是交互对话，必须按 interactive 一卡一个逐个确认，不能标成 batch 混进批量卡")
+
+    rec = {"path": path, "realpath": rp, "method": "native", "argv": list(argv),
+           "prog": protect.resolve_prog(argv[0]), "env_forced": protect.native_match(argv)[0].forced_env(home),
+           "identity": dict(idn), "bytes": idn["history_bytes"]}
+    seal_session_materials(item, rec, ctx, errs)
+    return errs, (rec if not errs else None)
 
 
 def check_item(item, ctx):
@@ -972,6 +1141,8 @@ def check_item(item, ctx):
         return [f"path 必须是绝对路径：{path!r}"], None
     if method not in ("delete", "native"):
         return [f"{path}：method 必须是 delete 或 native，收到 {method!r}"], None
+    if "identity" in item:
+        return _check_threadless_item(item, ctx)
     try:
         st = os.lstat(path)
     except OSError as exc:
@@ -1000,6 +1171,7 @@ def check_item(item, ctx):
         keep = []
 
     rec = {"path": path, "realpath": rp, "ino": st.st_ino, "dev": st.st_dev, "method": method}
+    seal_session_materials(item, rec, ctx, errs)
     allow_recent = False
     if "run_authorization" in item:
         try:
@@ -1354,30 +1526,41 @@ class ProjectIndex:
             roots += [os.path.realpath(r) for r in (sc.get("roots") or []) if isinstance(r, str)]
             self.entries.append({
                 "key": key, "status": e["status"], "name": e.get("name") or sc.get("name") or os.path.basename(key) or key,
+                "conversations": e.get("conversations") if e.get("conversations") in protect.CONVERSATION_POLICIES else None,
                 "roots": list(dict.fromkeys(roots)),
                 "sessions": {x.lower() for x in (sc.get("session_ids") or []) if isinstance(x, str)},
                 "claude_dirs": {x for x in (sc.get("claude_dirs") or []) if isinstance(x, str)}})
 
     def match(self, item, rp):
         """条目属于哪些项目：返回台账条目列表（路径归属取最深的一个项目 + 所有被整个包含的进行中/别碰项目 + 会话归属）。"""
+        return [e for e, _ in self.match_via(item, rp).values()]
+
+    def match_via(self, item, rp):
+        """同 match，另记每个项目是怎么归属上的：{项目键: [台账条目, {归属方式}]}。归属方式：
+        path（条目在项目目录里）、contains（条目把整个进行中 / 别碰项目包在里面）、
+        claude_dir（~/.claude/projects 下属于该项目的目录）、session（会话号属于该项目）。"""
+        hits = {}
         if not self.entries:
-            return []
-        hits, best = {}, None
+            return hits
+
+        def add(e, via):
+            hits.setdefault(e["key"], [e, set()])[1].add(via)
+        best = None
         for e in self.entries:
             for root in e["roots"]:
                 if within(rp, root):
                     if best is None or len(root) > best[0]:
                         best = (len(root), e)
                 elif within(root, rp) and e["status"] in ("active", "protected"):
-                    hits[e["key"]] = e
+                    add(e, "contains")
         if best:
-            hits[best[1]["key"]] = best[1]
+            add(best[1], "path")
         cp = os.path.join(protect.HOME, ".claude", "projects") + "/"
         if rp.startswith(cp):
             top = rp[len(cp):].split("/", 1)[0]
             for e in self.entries:
                 if top in e["claude_dirs"]:
-                    hits[e["key"]] = e
+                    add(e, "claude_dir")
         ids = set()
         for cand in (item.get("session"), os.path.basename(rp),
                      (item.get("argv") or [None])[-1] if isinstance(item.get("argv"), list) and item.get("argv")
@@ -1387,8 +1570,100 @@ class ProjectIndex:
         if ids:
             for e in self.entries:
                 if ids & e["sessions"]:
-                    hits[e["key"]] = e
+                    add(e, "session")
+        return hits
+
+    def match_cwds(self, cwds):
+        """会话的工作目录 → 所属项目：每个工作目录取包含它的最深一个项目（与 probe projects 按工作目录归会话同一口径）。
+        不套用“条目把整个项目包含在内”那条：工作目录是家目录的会话，不等于包含家目录下的所有项目。"""
+        hits = {}
+        for c in cwds or []:
+            rp, best = os.path.realpath(c), None
+            for e in self.entries:
+                for root in e["roots"]:
+                    if within(rp, root) and (best is None or len(root) > best[0]):
+                        best = (len(root), e)
+            if best:
+                hits[best[1]["key"]] = best[1]
         return list(hits.values())
+
+
+CONVERSATION_VIAS = frozenset({"session", "claude_dir", "cwd"})
+
+
+ROLLOUT_NAME_RE = re.compile(r"rollout-.+-(" + UUID_RE.pattern + r")\.jsonl(?:\.zst)?", re.I)
+
+
+def conversation_record(item, ctx=None):
+    """条目是不是单个 AI 对话记录（“逐个问”只放开这一类）：
+    ~/.codex/sessions、archived_sessions 下的单个会话文件 rollout-…-<会话号>.jsonl(.zst)，
+    ~/.claude/projects/<目录>/<会话号>.jsonl，以及会话文件已不在的 Codex 线程记录（状态库 identity，另由现场核对把关）。
+    用 codex 删除命令时，命令里的线程号必须等于文件名里的会话号；条目写的 session 要么等于它，要么是它所在对话的根线程
+    （探针给整棵树的条目都写根线程号：文件名里的会话号必须是 session 的后代，按状态库与会话文件里的父子关系核对）。
+    目录一律不算：月目录、sessions 根里可能混着别的项目的对话，Claude 会话的附属目录（子 Agent 记录、工具输出）
+    不受保留天数约束；符号链接不算；生成图目录（~/.codex/generated_images）等对话产出不算，它们可能是项目成品。"""
+    if not isinstance(item, dict):
+        return False
+    if codex_state.is_identity_item(item):
+        return True
+    path = item.get("path")
+    if not (isinstance(path, str) and os.path.isabs(path)) or os.path.islink(path) or not os.path.isfile(path):
+        return False
+    rp = os.path.realpath(path)
+    home = os.path.realpath(protect.HOME)
+    name = os.path.basename(rp)
+    sid = None
+    if any(within(rp, os.path.join(home, ".codex", d)) for d in ("sessions", "archived_sessions")):
+        m = ROLLOUT_NAME_RE.fullmatch(name)
+        sid = m.group(1).lower() if m else None
+    else:
+        cp = os.path.join(home, ".claude", "projects")
+        rel = os.path.relpath(rp, cp).split(os.sep) if within(rp, cp) else []
+        if len(rel) == 2 and rel[1].endswith(".jsonl") and UUID_RE.fullmatch(rel[1][:-len(".jsonl")]):
+            sid = rel[1][:-len(".jsonl")].lower()
+    if sid is None:
+        return False
+    sess = item.get("session")
+    if sess is not None and str(sess).lower() != sid:
+        children = _threadless_state(ctx)[1] if isinstance(ctx, dict) else {}
+        if sid not in {str(t).lower() for t in codex_state.descendants(str(sess).lower(), children)}:
+            return False
+    argv = item.get("argv") if isinstance(item.get("argv"), list) else []
+    if argv and argv[0] == "codex" and str(argv[-1]).lower() != sid:
+        return False
+    return True
+
+
+def _conversation_hold(item, tree, tree_errs):
+    """“对话逐个问”放开前的最后一道核对，返回不放开的原因（没有返回 None）：
+    ① 对话的线程树上还有 Codex 生成图目录：可能是项目成品，codex delete 会不会连带删它没有验证过，带图的对话照旧保护；
+    ② 用 codex 删除命令删、状态库又读不了：没法核对整棵树有没有生成图，先不放开。"""
+    gdir = os.path.join(protect.HOME, ".codex", "generated_images")
+    imgs = sorted(t for t in tree if os.path.lexists(os.path.join(gdir, t.lower())))   # 符号链接也算有图，宁可多拦
+    if imgs:
+        return (f"这个对话还有 Codex 生成的图（{len(imgs)} 个线程，如 ~/.codex/generated_images/{imgs[0]}），"
+                "可能是项目成品；“对话逐个问”不放开带图的对话")
+    argv = item.get("argv") if isinstance(item.get("argv"), list) else []
+    if argv and argv[0] == "codex" and tree_errs:
+        return f"状态库读不了（{tree_errs[0]}），没法核对这个对话有没有生成图；“对话逐个问”先不放开"
+    return None
+
+
+def conversation_ask_applies(entry, vias, item=None, rp=None, ctx=None):
+    """台账里这个项目设了“AI 对话逐个问”（conversations=ask）时，哪些条目不再因“项目还在进行中”整卡保留：
+    只有“进行中”的项目；条目本身是 AI 对话记录（conversation_record）；它只是按会话归属到这个项目（会话号、
+    ~/.claude/projects 目录、状态库记录的工作目录）；路径也不在该项目的任何目录里（嵌着做完的子项目时，
+    路径归属只记在子项目上，这里另外核一遍）。生成图等对话产出、路径落在项目目录里或把整个项目包在里面
+    （path / contains）的，照旧按进行中保护；“别碰”的项目不放开。
+    放开的只是这一条规则：这类卡只在看板上由用户确认（不进对话档位、“以后都删”规则不适用），
+    交互对话照旧一卡一个、看板不预选，保留天数、进程、引用等其余检查都不变。"""
+    if not (isinstance(entry, dict) and entry.get("status") == "active"
+            and entry.get("conversations") == protect.CONVERSATIONS_ASK
+            and bool(vias) and set(vias) <= CONVERSATION_VIAS and conversation_record(item, ctx)):
+        return False
+    if not isinstance(rp, str):
+        return False
+    return not any(within(rp, root) or within(root, rp) for root in entry.get("roots") or [])
 
 
 PROJECTS_MISSING_REASON = "台账里有进行中或别碰的项目，但这次扫描还没有项目识别结果（projects.json），无法确认这批东西不属于它们"
@@ -1572,7 +1847,7 @@ def check_plan(run):
         items = card.get("items") or []
         recs = []
         ev_checks, soft, warns, risk_notes = [], [], [], []
-        card_projects, project_cap, prefill = [], None, None
+        card_projects, project_cap, prefill, card_conv_ask = [], None, None, []
         setting_prefill, setting_q, wt_ask, proj_done = None, None, False, False
         if "default_select" in card:
             warns.append("default_select 由 plan.py 按规则计算，plan.json 里写的值被忽略")
@@ -1623,10 +1898,25 @@ def check_plan(run):
                     if not (isinstance(it, dict) and isinstance(it.get("path"), str) and os.path.isabs(it["path"])):
                         per_item.append([])
                         continue
-                    hit = pindex.match(it, os.path.realpath(it["path"]))
+                    detail = pindex.match_via(it, os.path.realpath(it["path"]))
+                    # 带 Codex 线程号的条目（会话文件已不在的线程、原图目录等）：按状态库里整棵树的工作目录补上项目归属
+                    tree, tree_cwds, tree_errs = _thread_tree(it, ctx)
+                    for e in pindex.match_cwds(tree_cwds):
+                        detail.setdefault(e["key"], [e, set()])[1].add("cwd")
+                    hit = [e for e, _ in detail.values()]
                     per_item.append(hit)
                     checkpoint_ok = any(r.get("path") == it["path"] and r.get("checkpoint") for r in recs)
-                    errs.extend(project_item_errors(it["path"], hit, checkpoint_ok))
+                    # 进行中项目设了“AI 对话逐个问”：只按会话归属的对话记录不再整卡保留（其余检查照旧）
+                    rp_it = os.path.realpath(it["path"])
+                    asked = [e for e, vias in detail.values() if conversation_ask_applies(e, vias, it, rp_it, ctx)]
+                    hold = _conversation_hold(it, tree, tree_errs) if asked else None
+                    if hold:
+                        errs.append(hold)
+                        asked = []
+                    errs.extend(project_item_errors(it["path"], [e for e in hit if e not in asked], checkpoint_ok))
+                    for e in asked:
+                        if e["name"] not in card_conv_ask:
+                            card_conv_ask.append(e["name"])
                     for e in hit:
                         seen_proj.setdefault(e["key"], {"key": e["key"], "name": e["name"], "status": e["status"]})
                 card_projects = sorted(seen_proj.values(), key=lambda x: x["key"])
@@ -1714,17 +2004,21 @@ def check_plan(run):
             records[cid]["preset_raw"] = _floor_preset(card, card_preset(card, records[cid]["verdict"], risk_notes), wt_ask)
             if card_projects:
                 records[cid]["projects"] = card_projects
+            if card_conv_ask:
+                records[cid]["conversation_ask"] = sorted(card_conv_ask)
             # 预填只是预填，仍要用户确认：项目做完了（按“做完的项目怎么处理”预填删或归档；含交互对话的卡永不预填）；其次是初始设置里的“不用了的软件 / 废稿不留 / 整棵工作树删”
             pf = None
             if prefill and not isess:          # 含交互对话的卡永不预填（逐个确认），conversation_policy=done 也一样
                 pf = prefill
             if pf is None and setting_prefill and not isess:
                 pf = setting_prefill
-            if pf and records[cid]["verdict"] == "decide" and not risk_notes:
+            # 因“对话逐个问”放开的卡也不预填：要用户自己一张张定
+            if pf and records[cid]["verdict"] == "decide" and not risk_notes and not card_conv_ask:
                 records[cid]["prefill"] = pf
             records[cid]["rule_key"] = prefs.rule_key(card, preset, card_category(card)[0])
             # 降过级或带风险：本机“以后都删”规则不适用；工作树选了“每次问我”也不适用
-            records[cid]["review"] = bool(downgraded or risk_notes or wt_ask)
+            # 因“对话逐个问”放开的卡也算要你看：只在看板确认，规则不替你删
+            records[cid]["review"] = bool(downgraded or risk_notes or wt_ask or card_conv_ask)
             if _installer_card(card, items):
                 records[cid]["installer"] = True          # 提案里“安装包直接清”据此按规则处理
             records[cid]["interactive"] = bool(isess)                     # 含交互会话：只在看板里逐个确认
@@ -1733,7 +2027,7 @@ def check_plan(run):
             flat_errors.append({"card": cid, "message": e})
         oc = {"id": cid, "title": card.get("title"), "verdict_in": verdict,
               "verdict_out": out, "downgraded": downgraded, "errors": errs,
-              "default_select": compute_default_select(card, items, out, nodes)}
+              "default_select": compute_default_select(card, items, out, nodes) and not card_conv_ask}
         if cid in records:
             # 实测体积（封存条目字节之和）：看板与提案都用它，不用 Agent 在 plan.json 里写的 bytes（试用发现：没写就全是 0）
             oc["bytes_checked"] = sum(int(r.get("bytes") or 0) for r in records[cid]["items"])
@@ -1741,8 +2035,12 @@ def check_plan(run):
             oc["evidence_checks"] = ev_checks
         if card_projects:
             oc["projects"] = card_projects
+        if card_conv_ask:
+            oc["conversation_ask"] = sorted(card_conv_ask)
         if cid in records:
             oc["preset"], oc["preset_raw"] = records[cid]["preset"], records[cid]["preset_raw"]
+            if records[cid].get("interactive"):
+                oc["interactive"] = True          # 看板据此不让批量按钮和“全选本类”勾它
             if project_cap:
                 oc["project_cap"] = project_cap
             if records[cid].get("prefill"):
@@ -2062,8 +2360,14 @@ def board_plan(plan, result):
             continue
         bc = dict(c)
         bc.pop("default_select", None)         # 用户写的不作数；只认 check 算出来的
+        bc.pop("conversation_ask", None)
+        bc.pop("interactive", None)
         r = eff.get(c.get("id"))
         bc["default_select"] = bool(r and r.get("default_select"))
+        if r is not None and r.get("conversation_ask"):
+            bc["conversation_ask"] = list(r["conversation_ask"])
+        if r is not None and r.get("interactive"):
+            bc["interactive"] = True
         bc["category"], bc["source"] = card_category(c)
         q = c.get("question")
         if isinstance(q, str) and q.strip():
@@ -2450,10 +2754,11 @@ def build_proposal(run):
         c = {"id": cid, "title": r.get("title") or cid, "verdict": r.get("verdict"), "preset": r["preset"],
              "preset_raw": r.get("preset_raw") if r.get("preset_raw") in PRESETS else r["preset"],
              "rule_key": r.get("rule_key"), "review": bool(r.get("review")), "interactive": bool(r.get("interactive")),
+             "conv_ask": bool(r.get("conversation_ask")),
              "bytes": sum(int(it.get("bytes") or 0) for it in r.get("items") or [] if isinstance(it, dict)),
              "category": (shown.get(cid) or {}).get("category"), "ask": (shown.get(cid) or {}).get("ask")}
         rule = prefs.rule_for(profile, c["rule_key"]) if c["rule_key"] else None
-        if rule == "delete" and (c["review"] or c["interactive"]):
+        if rule == "delete" and (c["review"] or c["interactive"] or c["conv_ask"]):
             rule = None
         # 设置“安装包直接清”：和一条“以后都删”的规则一样处理（仍不适用于降过级、带风险或含交互对话的卡；用户明确的“留”规则优先）
         if rule is None and S["installer"] == "auto" and r.get("installer") and not c["review"] and not c["interactive"]:
@@ -2465,8 +2770,8 @@ def build_proposal(run):
     cats = {c["id"]: c["name"] for c in BOARD_CATEGORIES}
     options = {}
     for preset, word, label in CHOICES:
-        # 含交互会话的卡只能在看板里逐个确认（对话里的一句“好”不是对它的确认），任何一档都不含
-        cs = [c for c in live if _RANK[c["preset"]] <= _RANK[preset] and not c["interactive"]]
+        # 含交互会话的卡、因“对话逐个问”放开的卡只能在看板里逐个确认（对话里的一句“好”不是对它的确认），任何一档都不含
+        cs = [c for c in live if _RANK[c["preset"]] <= _RANK[preset] and not c["interactive"] and not c["conv_ask"]]
         ids = sorted(c["id"] for c in cs)
         answers = sorted(f"{c['id']}=删" for c in cs if c.get("verdict") == "decide")
         by_cat = {}
@@ -2491,6 +2796,9 @@ def build_proposal(run):
     inter = [c for c in live if c["interactive"]]
     if inter:
         reasons.append(f"有 {len(inter)} 项含 AI 交互对话，人可能还会回来续聊，要在看板里逐个确认")
+    conv = [c for c in live if c["conv_ask"] and not c["interactive"]]
+    if conv:
+        reasons.append(f"有 {len(conv)} 项是你设了“对话逐个问”的项目里的 AI 对话记录，要在看板里确认")
     questions = prefs.pending_questions(profile, [c["rule_key"] for c in live if c["rule_key"] and not c["rule"]])
     in_default = set(options[default]["cards"])
     # “删了找不回”的提醒按卡原本的风险（preset_raw）判定：归档项目把 all 档卡降到推荐档后，回“好”照样会删它，更要提醒
@@ -2646,7 +2954,8 @@ def cmd_profile(args):
 def cmd_project(args):
     before = protect.profile_guard(load_profile())["digest"]
     try:
-        print("已保存：" + prefs.set_project(args.key, args.status, scan_id=getattr(args, "scan_id", None)))
+        print("已保存：" + prefs.set_project(args.key, args.status, scan_id=getattr(args, "scan_id", None),
+                                             conversations=getattr(args, "conversations", None)))
     except ValueError as exc:
         print(f"没保存：{exc}", file=sys.stderr)
         return 2
@@ -2677,7 +2986,11 @@ def main(argv=None):
     pj = sub.add_parser("project", help="改单个项目的台账状态（如回答“X 做完了吗”）")
     pj.add_argument("--scan-id", dest="scan_id", default=None, help="这次扫描的编号（写进“这次我记住了”，可省）")
     pj.add_argument("--key", required=True, help="项目键：项目目录的绝对路径，或 env:android 这类环境项目")
-    pj.add_argument("--status", required=True, help="active / done / archived / protected，或 进行中 / 做完了 / 归档 / 别碰")
+    pj.add_argument("--status", default=None, help="active / done / archived / protected，或 进行中 / 做完了 / 归档 / 别碰")
+    pj.add_argument("--conversations", default=None,
+                    help="这个项目里的 AI 对话记录怎么处理：protect 跟项目一起留着（默认）/ ask 逐个问"
+                         "（只对进行中的项目生效，只放开按会话归属的 AI 对话记录本身；生成图等产出、项目目录里的文件照旧保护；"
+                         "放开的卡只在看板上确认）")
     args = ap.parse_args(argv)
     return {"check": cmd_check, "seal": cmd_seal, "board": cmd_board, "setup": cmd_setup, "onboard": cmd_setup, "propose": cmd_propose,
             "rule": cmd_rule, "profile": cmd_profile, "project": cmd_project}[args.cmd](args)

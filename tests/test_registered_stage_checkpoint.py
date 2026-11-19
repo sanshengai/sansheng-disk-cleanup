@@ -23,6 +23,26 @@ def digest(path):
 
 
 class RegisteredStageCheckpointTests(unittest.TestCase):
+    def test_private_manifest_location(self):
+        old = self.repo / checkpoint.SNAPSHOT
+        new = self.repo / "data/registered-files.json"
+        new.parent.mkdir()
+        self.git("mv", str(old), str(new))
+        self.git("commit", "-qm", "move manifest")
+        candidate = self.git("rev-parse", "HEAD").strip()
+        adoption = Path(self.item["checkpoint"]["adoption"])
+        data = json.loads(adoption.read_text())
+        data["candidate"] = candidate
+        dump(adoption, data)
+        self.item["checkpoint"]["adoption_sha256"] = digest(adoption)
+        config = self.repo / ".local/config.json"
+        with patch.dict(os.environ, {"SANSHENG_DISK_CLEANUP_TRIAGE": str(config)}):
+            self.assertFalse(checkpoint.verify(self.item)[0])
+            dump(config, {"registration_manifests": {str(self.repo): "data/registered-files.json"}})
+            self.assertTrue(checkpoint.verify(self.item)[0])
+            dump(config, {"registration_manifests": {str(self.repo): "../manifest.json"}})
+            self.assertFalse(checkpoint.verify(self.item)[0])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="stage-checkpoint-test-")
         self.addCleanup(self.temp.cleanup)

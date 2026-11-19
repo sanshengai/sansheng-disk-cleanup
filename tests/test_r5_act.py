@@ -245,7 +245,7 @@ def match(rel):
 RISKY = [
     "Library/Developer/Xcode/Archives/2026-01-01/App.xcarchive", "Library/Developer/Xcode/UserData/KeyBindings/x",
     ".android/avd/Pixel_6.avd", ".android/debug.keystore", "work/app/release.keystore", "work/app/upload.jks",
-    ".sansheng/yiye-english-app/release.keystore", ".gradle/gradle.properties", ".m2/settings.xml",
+    ".sansheng/sample-mobile-app/release.keystore", ".gradle/gradle.properties", ".m2/settings.xml",
     ".m2/settings-security.xml", ".cargo/credentials.toml", ".cargo/credentials", ".cargo/bin/rg",
     ".pub-cache/credentials.json", ".cache/huggingface/token", ".lmstudio/conversations/a.json",
     ".ollama/id_ed25519", ".ollama/id_ed25519.pub",

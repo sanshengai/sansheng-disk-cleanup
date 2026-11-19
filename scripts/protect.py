@@ -124,6 +124,14 @@ def home_problem():
 PROJECT_STATUSES = ("active", "done", "archived", "protected")
 PROJECT_STATUS_ZH = {"active": "进行中", "done": "做完了", "archived": "归档", "protected": "别碰"}
 PROJECT_STATUS_FROM_ZH = {v: k for k, v in PROJECT_STATUS_ZH.items()}
+# 进行中项目里的 AI 对话记录怎么处理（台账 conversations 字段）：缺省 = protect，跟项目一起留着；
+# ask = 逐个问：只放开按会话归属的对话记录（会话号 / Claude 项目目录 / 状态库工作目录），
+# 路径落在项目目录里的文件照旧保护；只对“进行中”生效，“别碰”的项目不放开。
+CONVERSATIONS_ASK = "ask"
+CONVERSATION_POLICIES = ("protect", CONVERSATIONS_ASK)
+CONVERSATION_POLICY_ZH = {"protect": "跟项目一起留着", CONVERSATIONS_ASK: "逐个问"}
+CONVERSATION_POLICY_FROM_ZH = {"跟项目一起留着": "protect", "一起留着": "protect", "保护": "protect",
+                               "逐个问": CONVERSATIONS_ASK, "逐个问我": CONVERSATIONS_ASK}
 # 环境项目没有单一的项目目录：键 → 它占的位置（家目录相对）。标“别碰”时这些位置并入保护名单。
 ENV_PROJECT_ROOTS = {
     "env:android": ["Library/Android", ".android", ".local/share/android-sdk", ".gradle"],
@@ -234,13 +242,16 @@ GUARD_TOOL_KEYS = ("android", "xcode", "docker", "model-caches", "creative-media
 
 
 def guard_projects(v):
-    """台账里影响判断的部分：{项目键: {status, deliverables}}（名字、时间、来源不影响判断，不在其内）。"""
+    """台账里影响判断的部分：{项目键: {status, deliverables[, conversations]}}（名字、时间、来源不影响判断，不在其内）。
+    conversations 只在设成 ask 时进摘要：缺省与显式写 protect 等价，旧封存的摘要不变。"""
     out = {}
     if isinstance(v, dict):
         for k, e in v.items():
             if isinstance(k, str) and isinstance(e, dict) and e.get("status") in PROJECT_STATUSES:
                 out[k] = {"status": e["status"],
                           "deliverables": sorted({x for x in (e.get("deliverables") or []) if isinstance(x, str)})}
+                if e.get("conversations") == CONVERSATIONS_ASK:
+                    out[k]["conversations"] = CONVERSATIONS_ASK
     return out
 
 
@@ -532,7 +543,8 @@ def _codex_rule(value, rp, home):
     base = os.path.join(home, ".codex")
     if not any(_within(rp, os.path.join(base, d)) for d in ("sessions", "archived_sessions")):
         return "codex delete 的 path 必须是 ~/.codex/sessions 或 archived_sessions 里的会话文件"
-    if not re.fullmatch(r"rollout-.+-" + re.escape(value) + r"\.jsonl", os.path.basename(rp), re.I):
+    prefix = r"rollout-(?:.+-)?" if rp.endswith(".zst") else r"rollout-.+-"
+    if not re.fullmatch(prefix + re.escape(value) + r"\.jsonl(?:\.zst)?", os.path.basename(rp), re.I):
         return f"codex delete 的线程 {value.lower()} 与 path 的文件名不对应"
     return None
 
@@ -621,7 +633,7 @@ def _brew_env_guard(home):
 SHAPES = [
     # codex 单会话删除（会连带删后代，plan.py/act.py 另有"子在前父在后"检查）。来源：cards/codex.md；本机 0.162.1 核对。
     Shape("codex-delete", "codex", ("delete", "--force", Slot("thread-uuid", UUID_PAT, True)),
-          "按线程 UUID 删除一个 Codex 会话", _codex_rule),
+          "按线程 UUID 删除一个 Codex 会话", _codex_rule, env=lambda h: {"CODEX_HOME": _dir(h, ".codex")}),
     # 来源：cards/android.md；本机 sdkmanager --help 核对（--uninstall <package>）。包 ID 的 ; 对应 SDK 目录层级。
     Shape("sdkmanager-uninstall", "sdkmanager", ("--uninstall", _PKG),
           "卸载一个 SDK 包（如系统镜像）；不允许卸载 cmdline-tools 与 platform-tools",

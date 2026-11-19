@@ -17,7 +17,6 @@ import json
 import os
 import re
 import sys
-from urllib.parse import urlencode
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
@@ -31,13 +30,15 @@ from act import disposal_flags  # noqa: E402
 from vendor.qrcodegen import QrCode  # noqa: E402
 
 TEMPLATE = os.path.join(os.path.dirname(HERE), "assets", "report.html")
-# 扫码落地页：官网，随 Skill 公开一起上线；页面在浏览器端读这几个数字渲染
+# 扫码打开工具介绍；现有 v1 线上数值契约不能表达条目核算与卷读数。
 SHARE_BASE = "https://sanshengai.top/tools/disk-cleanup/"
 AI_SECTION = "AI 工作"
 REPO_URL = "https://github.com/sanshengai/sansheng-disk-cleanup"      # 首次成果页的 Star 提示链接
 
 
-_gb1 = units.gb_number
+
+
+_gb1 = units.gb_number  # 保留既有成果页的十进制 GB 格式入口。
 
 
 _STAMPED = re.compile(r"^receipt-(pilot-)?\d{8}T\d{6}Z\.json$")      # 预演回执 receipt-dryrun-*.json 不在其内
@@ -88,7 +89,8 @@ def load_receipts(run):
                     d = it.get('disposal') or {}
                     if d.get('mode') == 'trash' and (c['id'], it['path'], d.get('dir')) in done:
                         it['disposal'] = dict(d, mode='delete', finalized=True)
-        if j.get('finished_at'):
+        full['_finalization'] = j
+        if j.get('finished_at') and j['finished_at'] >= (full.get('finished_at') or ''):
             full['finished_at'] = j['finished_at']
     return full, found
 
@@ -209,9 +211,31 @@ def build_disposal(receipts, freed):
                          for (v, src), b in sorted(archived_by_volume(receipts).items()) if b > 0]}
 
 
-def share_url(freed, used_before, used_after, ai_freed):
-    q = {"v": 1, "f": _gb1(freed), "b": _gb1(used_before), "a": _gb1(used_after), "ai": _gb1(ai_freed)}
-    return SHARE_BASE + "?" + urlencode(q)
+def volume_window(receipts, finalization=None):
+    """同一封单中首轮开始到末轮结束的 HOME 卷实测；补清废纸篓也属于这段时间。"""
+    runs = list(receipts)
+    if finalization:
+        runs.append({"started_at": finalization.get("started_at"), "finished_at": finalization.get("finished_at"),
+                     "summary": finalization})
+    unknown = dict(disk_total=None, used_before=None, used_after=None, free_before=None,
+                   free_after=None, freed_measured=None)
+    if not runs or any(not r.get("started_at") or not r.get("finished_at") for r in runs):
+        return unknown
+    first = min(runs, key=lambda r: (r["started_at"], not r.get("pilot")))
+    last = max(reversed(runs), key=lambda r: (r["finished_at"], not r.get("pilot")))
+    before = (first.get("summary") or {}).get("home_volume_before")
+    after = (last.get("summary") or {}).get("home_volume_after")
+    for reading in (before, after):
+        if not isinstance(reading, dict) or any(type(reading.get(k)) is not int or reading[k] < 0
+                                                for k in ("device", "free", "used", "total")):
+            return unknown
+        if not reading["total"] or reading["used"] + reading["free"] > reading["total"]:
+            return unknown
+    if before["device"] != after["device"]:
+        return unknown
+    return dict(disk_total=after["total"] if before["total"] == after["total"] else None,
+                used_before=before["used"], used_after=after["used"],
+                free_before=before["free"], free_after=after["free"], freed_measured=after["free"] - before["free"])
 
 
 def qr_rows(text):
@@ -221,18 +245,13 @@ def qr_rows(text):
 
 
 def build_report(run):
-    facts = plan.read_json(os.path.join(run, "facts.json"))
     pl, _ = plan.load_plan(run)
     full, receipts = load_receipts(run)
     by_card = freed_by_card(receipts)
     reclaimed = sum(int((r.get("summary") or {}).get("history_reclaimed") or 0) for r in receipts)
     freed = sum(by_card.values()) + reclaimed
 
-    total = int((facts.get("disk") or {}).get("total") or 0)
-    first = receipts[0].get("summary") or {}
-    free_before = int(first.get("free_before") or (facts.get("disk") or {}).get("free") or 0)
-    used_before = max(0, total - free_before)
-    used_after = max(0, used_before - freed)
+    volume = volume_window(receipts, full.get("_finalization"))
 
     cats = {c["id"]: c for c in plan.BOARD_CATEGORIES}
     cards_by_id = {c.get("id"): c for c in pl.get("cards") or [] if isinstance(c, dict)}
@@ -252,13 +271,12 @@ def build_report(run):
 
     governance = [{"title": g.get("title"), "suggest": g.get("suggest"), "how": g.get("how"), "done": bool(g.get("done"))}
                   for g in pl.get("governance") or [] if isinstance(g, dict) and g.get("title")]
-    url = share_url(freed, used_before, used_after, ai_freed)       # 分享链接里的数字一律是“已腾出”口径（废纸篓里的不算）
+    # 旧在线成果页只支持“腾出 GB”，无法表达条目核算与有符号的卷变化。
+    url = SHARE_BASE
     return {
         "schema": "report/1", "scan_id": full.get("scan_id"), "created_at": plan.now_iso(),
         "finished_at": full.get("finished_at"),
-        "disk_total": total, "used_before": used_before, "used_after": used_after,
-        "free_before": free_before, "free_after": free_before + freed,
-        "freed": freed, "freed_measured": sum(int((r.get("summary") or {}).get("freed_measured") or 0) for r in receipts),
+        **volume, "volume_scope": "home", "freed": freed,
         "ai_freed": ai_freed, "categories": categories, "category_order": order,
         "cards": sorted(card_rows, key=lambda x: -x["bytes"]),
         "governance": governance, "share": {"url": url, "qr": qr_rows(url)},
@@ -268,6 +286,9 @@ def build_report(run):
 
 
 def render(run, report, out="report.html"):
+    if report.get("volume_scope") != "home":
+        # 从旧 report.json 单独重画时，没有回执可复核旧的合成读数。
+        report = dict(report, **volume_window([]), share={"url": SHARE_BASE, "qr": qr_rows(SHARE_BASE)})
     with open(TEMPLATE, encoding="utf-8") as f:
         html = f.read()
     with open(plan.LOGO, "rb") as f:
@@ -333,8 +354,12 @@ def main(argv=None):
         return 2
     print(f"成果页：{path}")
     fb = units.fmt_bytes
-    print(f"腾出 {fb(report['freed'])}（其中 AI 工作 {fb(report['ai_freed'])}）；"
-          f"已用 {fb(report['used_before'])} → {fb(report['used_after'])}")
+    print(f"按条目核算，腾出 {fb(report['freed'])}（其中 AI 工作 {fb(report['ai_freed'])}）")
+    if report["freed_measured"] is None:
+        print("HOME 所在卷可用空间变化未知")
+    else:
+        print(f"HOME 所在卷可用空间 {fb(report['free_before'])} → {fb(report['free_after'])}，"
+              f"变化 {fb(report['freed_measured'])}")
     if report["disposal"]["trash"]:
         print(f"另有 {fb(report['disposal']['trash'])} 已移入废纸篓，清空后才会腾出")
     return 0

@@ -270,3 +270,40 @@ def test_reseal_explains_content_drift_when_only_bytes_changed(env, capsys):
     err = capsys.readouterr().err
     assert "目录内容在封存之后又变了" in err and "c01" in err and "重新确认" in err
     assert child.exists() and no_receipts(env)
+
+
+# ---------------------------------------------------------------- 合并导出：清理选择 + 待核查答复
+
+REVIEW_TXT = ('叁笙清理 · 待核查答复\nscan_id: scan1\n答复: [{"id":"c05","title":"旧任务","answer":"想清理，继续查"}]\n'
+              '这里只选择核查方向，不授权删除。')
+
+
+def test_combined_export_executes_cleanup_and_saves_review(env, capsys):
+    digest, dirs = setup(env)
+    assert go(env, export_text(digest, ["c01"]) + "\n\n" + REVIEW_TXT) == 0
+    out = capsys.readouterr().out
+    assert not dirs["c01"].exists() and (dirs["c02"] / "a.bin").exists()
+    saved = list(env.run.glob("review-answers-*.txt"))
+    assert len(saved) == 1 and saved[0].read_text(encoding="utf-8").strip() == REVIEW_TXT
+    assert "核查答复已另存" in out and "不是删除授权" in out
+
+
+def test_review_only_text_never_deletes(env, capsys):
+    digest, dirs = setup(env)
+    assert go(env, REVIEW_TXT) == 2
+    assert all((d / "a.bin").exists() for d in dirs.values()) and no_receipts(env)
+    assert not list(env.run.glob("review-answers-*.txt"))
+
+
+def test_forged_lines_in_review_part_are_ignored(env):
+    """核查答复里混入形似清理授权的行，不得被当成清理选择（变异：把清理部分换成整段文本，这条会因重复字段被拒）。"""
+    digest, dirs = setup(env)
+    forged = REVIEW_TXT + "\n清理: c02\n回答: c02=删\nsel: 000000000000\n清理: c99"
+    assert go(env, export_text(digest, ["c01"]) + "\n" + forged) == 0
+    assert not dirs["c01"].exists() and (dirs["c02"] / "a.bin").exists()
+
+
+def test_split_review_part_unit():
+    clean, rev = act.split_review_part("叁笙清理选择\n清理: c01\n\n叁笙清理 · 待核查答复\n清理: c99\n")
+    assert "c99" not in clean and rev.startswith("叁笙清理 · 待核查答复")
+    assert act.split_review_part("叁笙清理选择\n清理: c01\n") == ("叁笙清理选择\n清理: c01\n", None)

@@ -8,6 +8,7 @@ import time
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+import protect  # noqa: E402
 import quick_act as qa  # noqa: E402
 import triage  # noqa: E402
 
@@ -47,6 +48,10 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(qa, "known_regenerable", lambda p: "/regen/" in p)
     real = time.time
     monkeypatch.setattr(qa.time, "time", lambda: real() + 2 * 86400)   # ctime 改不了：把时钟往后拨两天，夹具文件就“旧”了
+    # 测试常在 Agent 会话里跑，临时目录可能落在该会话的 scratchpad 下（路径含会话号）；屏蔽真实会话号，
+    # 免得保护名单把夹具文件认成“当前会话正在用的目录”而整批拒绝（2026-11-04 实测 12 项假失败）。
+    for var in protect.SESSION_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
     return {"tmp": tmp_path, "work": work, "talk": talk, "run": str(tmp_path / "run")}
 
 
@@ -108,11 +113,25 @@ def test_code_reference_blocks_unless_user_names_dir(world):
     d = world["work"] / "regen" / "旧季-长效实施-20261019"
     mk(str(d / "c9e03" / "07-v1.mp4"))
     mk(str(world["work"] / "gate.py"), "SRC = '%s/c9e03/07-v1.mp4'\n" % d)
-    p = plan(world, [item(d, kind="regenerable")])
+    p = plan(world, [item(d, kind="process")])
     r = p["results"][0]
     assert r["status"] == "refused" and any("代码引用" in x and "需用户点名" in x for x in r["refusals"])
-    p = plan(world, [item(d, kind="regenerable")], text="把 旧季-长效实施-20261019 删掉")
+    p = plan(world, [item(d, kind="process")], text="把 旧季-长效实施-20261019 删掉")
     assert p["results"][0]["status"] == "ok" and any("点名" in x for x in p["results"][0]["notes"])
+
+
+def test_regenerable_cache_referenced_by_code_is_tool_state_even_if_named(world, monkeypatch):
+    """项目脚本按路径引用的缓存需要保留，即使请求点名该缓存。"""
+    monkeypatch.setattr(triage, "HARD_KEEP", ("/.git",))      # 不受本机配置里的保护词影响
+    d = world["work"] / "regen" / "npm" / "_npx"
+    mk(str(d / "0123456789abcdef" / "node_modules" / "hyperframes" / "package.json"))
+    mk(str(world["work"] / "mix.py"), "engines = sorted((Path.home()/'%s').glob('*/node_modules/hyperframes'))\n" % d)
+    p = plan(world, [item(d)], text="同意删除：%s" % d)
+    r = p["results"][0]
+    assert r["status"] == "refused" and any("工具状态" in x for x in r["refusals"])
+    os.remove(world["work"] / "mix.py")                     # 反例：没有代码引用时照常可删
+    p = plan(world, [item(d)], text="同意删除：%s" % d)
+    assert p["results"][0]["status"] == "ok"
 
 
 def test_other_agent_transcript_blocks_but_own_transcript_does_not(world):
@@ -330,3 +349,213 @@ def test_self_transcript_ambiguous_or_unverified(world):
     assert any("找不到用户原话" in x for x in r["refusals"])
     r = plan(world, [item(d, kind="process")], text=text, self_transcript=str(world["talk"] / "s1.jsonl"))["results"][0]
     assert any("其他 Agent" in x for x in r["refusals"])   # s2 仍算他人
+
+
+# ---------- 本会话派过子 Agent（回归：run 曾把子 Agent 记录当成手工指定的记录去核对原话，整批拒绝） ----------
+SELF_TEXT = "其他不需要的过程文件你都可以全部删掉"
+
+
+def note(path, text):
+    os.makedirs(os.path.dirname(str(path)), exist_ok=True)
+    open(str(path), "w", encoding="utf-8").write(json.dumps({"text": text}, ensure_ascii=False))
+
+
+def with_subagents(world, monkeypatch):
+    talk = world["talk"]
+    monkeypatch.setattr(qa, "TRANSCRIPT_GLOBS", (str(talk / "*.jsonl"), str(talk / "*" / "subagents" / "**" / "*.jsonl")))
+    return talk
+
+
+def test_run_self_inputs_only_drops_subagents_of_listed_mains():
+    main, own = "/p/proj/s1.jsonl", "/p/proj/s1/subagents/agent-a.jsonl"
+    wf, stray = "/p/proj/s1/subagents/workflows/wf_1/journal.jsonl", "/p/proj/s2/subagents/agent-b.jsonl"
+    assert qa.run_self_inputs({"self_transcripts": [main, own, wf, stray]}) == [main, stray]
+    assert qa.run_self_inputs({"self_transcripts": [own]}) == [own]      # 列表里没有它的主记录：照旧核对，不放行
+    assert qa.run_self_inputs({}) == [] and qa.run_self_inputs({"self_transcripts": None}) == []
+
+
+def test_run_counts_own_subagents_as_self(world, monkeypatch):
+    talk = with_subagents(world, monkeypatch)
+    c = world["work"] / "regen" / "验收包-20261104"
+    mk(str(c / "a.bin")); mk(str(c / "b.bin"))
+    note(talk / "sess-mine.jsonl", SELF_TEXT)
+    sub = talk / "sess-mine" / "subagents" / "agent-a1.jsonl"
+    note(sub, "复核 %s" % c)                                   # 子 Agent 提到了这个目录，但它的记录里没有用户原话
+    p = plan(world, [item(c, scope="children")], text=SELF_TEXT)
+    assert p["results"][0]["status"] == "ok" and str(sub) in p["self_transcripts"]
+    note(talk / "sess-mine" / "subagents" / "workflows" / "wf_1" / "agent-b2.jsonl", "再看一眼 %s" % c)   # plan 之后新派的
+    rec = run(world, p["seal"])
+    assert not [r for r in rec if r["status"] == "refused"], rec
+    assert len([r for r in rec if r["status"] == "deleted"]) == 2 and not os.listdir(c)
+
+
+def test_run_still_refuses_when_other_sessions_subagent_uses_it(world, monkeypatch):
+    """反例：只有本会话名下的子 Agent 算自己；别的会话的子 Agent 在 plan 之后提到同一目录，run 照样拒绝。"""
+    talk = with_subagents(world, monkeypatch)
+    c = world["work"] / "regen" / "验收包-20261105"
+    mk(str(c / "a.bin"))
+    note(talk / "sess-mine.jsonl", SELF_TEXT)
+    note(talk / "sess-mine" / "subagents" / "agent-a1.jsonl", "复核 %s" % c)
+    p = plan(world, [item(c, scope="children")], text=SELF_TEXT)
+    assert p["results"][0]["status"] == "ok"
+    note(talk / "sess-other" / "subagents" / "agent-c3.jsonl", "还在用 %s" % c)
+    rec = run(world, p["seal"])
+    refused = [r for r in rec if r["status"] == "refused"]
+    assert refused and any("其他 Agent" in w for w in refused[0]["why"]), rec
+    assert not [r for r in rec if r["status"] == "deleted"] and os.listdir(c)
+
+
+def _cold_world(world, monkeypatch, extra=("视频成品",)):
+    ad = world["tmp"] / "cold_adapter.py"
+    ad.write_text("import json,sys\nps=json.load(open(sys.argv[sys.argv.index('--paths-file')+1]))\n"
+                  "print(json.dumps({'ok':ps,'missing':[],'changed':[],'sample':[{'path':p,'ok':True} for p in ps[:1]],'restore_hint':'取回'}))\n")
+    monkeypatch.setattr(triage, "LOCAL", dict(triage.LOCAL, offdisk_backup={"label": "冷存", "adapter": [sys.executable, str(ad)]},
+                                              hard_keep_extra=list(extra)))
+    monkeypatch.setattr(triage, "HARD_KEEP", ("cleanup-archive", "-slot", "/.git") + tuple(extra))
+
+
+def test_cold_batch_named_passes_user_hard_keep(world, monkeypatch):
+    _cold_world(world, monkeypatch)
+    d = world["work"] / "视频成品" / "旧季-20261001"
+    mk(str(d / "ep1.mp4"))
+    it = item(d, kind="backed_up", cold_batch="b1")
+    r = plan(world, [it], text="同意冷存并删除本地：视频成品/旧季-20261001")["results"][0]
+    assert not any("硬保护" in x for x in r["refusals"]), r["refusals"]
+    assert any("已由用户点名放行" in x for x in r["notes"])
+
+
+def test_cold_hard_keep_refused_without_naming_or_batch(world, monkeypatch):
+    _cold_world(world, monkeypatch)
+    d = world["work"] / "视频成品" / "旧季-20261001"
+    mk(str(d / "ep1.mp4"))
+    r = plan(world, [item(d, kind="backed_up", cold_batch="b1")], text="低风险的直接删，证据充分的全部删")["results"][0]
+    assert any("硬保护" in x for x in r["refusals"])                    # 没点名
+    r = plan(world, [item(d, kind="backed_up")], text="同意冷存并删除本地：视频成品/旧季-20261001")["results"][0]
+    assert any("硬保护" in x for x in r["refusals"])                    # 不是冷存批次
+
+
+def test_cold_batch_never_passes_builtin_hard_keep(world, monkeypatch):
+    _cold_world(world, monkeypatch)
+    d = world["work"] / "proj" / "site-slot" / "old"
+    mk(str(d / "a.bin"))
+    r = plan(world, [item(d, kind="backed_up", cold_batch="b1")], text="同意冷存并删除本地：proj/site-slot/old")["results"][0]
+    assert any("硬保护" in x for x in r["refusals"])
+
+
+def test_normalize_and_named_terminal_quirks_with_negatives(world):
+    # 正例：折行、花括号、吞掉的 ~、两层前缀通配、同父上下文短目录名
+    # 用 world["work"] 模拟 示例工作区，测试花括号、折行、两层通配与严格反例
+    w = world["work"]
+    u = ("直接永久删除 "
+         f"{w}/web/{{dist,.local}} 与 "
+         f"{w}/tmp-\n  work/sub-task-alpha 与 "
+         f"{w}/batches/math-* 与 "
+         f"{w}/历史/子目录 并保留其他")
+    assert qa.named(item(w / "web" / "dist"), None, u)
+    assert qa.named(item(w / "web" / ".local"), None, u)
+    assert qa.named(item(w / "tmp-work" / "sub-task-alpha"), None, u)
+    assert qa.named(item(w / "batches" / "math-20261105"), None, u)
+    assert qa.named(item(w / "历史" / "子目录"), None, f"直接永久删除 {w}/历史 下的 子目录")
+
+    # stripped-tilde (/... under HOME)
+    rel_item = item(qa.HOME + "/.sansheng/video-study/dl")
+    assert qa.named(rel_item, None, "清理 /.sansheng/video-\n  study/dl")
+
+    # 反例：空输入、前缀碰撞、子路径不得放大到父目录或兄弟目录、括号内“保留/避开…”、模糊表述、裸通配符
+    assert not qa.named(item(w / "web" / "dist"), None, "")
+    assert not qa.named(item(w / "proc" / "out"), None, f"直接永久删除 {w}/proc/out2")
+    assert not qa.named(item(w / "a" / "b"), None, f"直接永久删除 {w}/a/b/c")
+    assert not qa.named(item(w / "a" / "b" / "d"), None, f"直接永久删除 {w}/a/b/c")
+    assert not qa.named(item(w / "_workspace" / "sample-build-20260101"), None, "直接永久删除（保留sample-build-20260101）")
+    assert not qa.named(item(w / "视频成品" / "生产线改造验收-20261015"), None, "直接永久删除 10月独立试片")
+    assert not qa.named(item(w / "web" / "dist"), None, "直接永久删除 *")
+
+
+def test_verified_obsolete_gates_and_execution(world, monkeypatch):
+    d = world["work"] / "proc" / "旧过程目录-20261101"
+    mk(str(d / "a.bin"))
+    # 反例 1：缺明确直删意图词 -> 拒绝
+    r1 = plan(world, [item(d, kind="verified_obsolete")], text=f"整理一下 {d}")["results"][0]
+    assert r1["status"] == "refused" and any("直删意图" in x for x in r1["refusals"])
+    # 反例 2：未点名路径 -> 拒绝
+    r2 = plan(world, [item(d, kind="verified_obsolete")], text="直接永久删除不需要的文件")["results"][0]
+    assert r2["status"] == "refused" and any("明确写出路径" in x for x in r2["refusals"])
+    # 反例 3：即使点名且含直删意图，命中 HOME_RULES 的 Documents 也必须拒绝
+    doc_dir = qa.HOME + "/Documents/Codex"
+    monkeypatch.setattr(os.path, "lexists", lambda p, orig=os.path.lexists: True if p == doc_dir else orig(p))
+    r3 = plan(world, [item(doc_dir, kind="verified_obsolete")], text=f"直接永久删除 {doc_dir}")["results"][0]
+    assert r3["status"] == "refused" and any("保护名单" in x for x in r3["refusals"])
+    # 正例：意图 + 点名 -> 直接永久删除（method=delete）并真删
+    p = plan(world, [item(d, kind="verified_obsolete")], text=f"直接永久删除 {d}")
+    assert p["results"][0]["status"] == "ok" and p["results"][0]["method"] == "delete"
+    rec = run(world, p["seal"])
+    assert any(r.get("status") == "deleted" for r in rec) and not d.exists()
+
+
+def test_ephemeral_run_dir_rejected(world, monkeypatch):
+    assert qa.ephemeral_run_dir_problem("") is not None
+    assert qa.ephemeral_run_dir_problem("/tmp/foo-run") is not None
+    assert qa.ephemeral_run_dir_problem("/private/tmp/foo-run") is not None
+    assert qa.ephemeral_run_dir_problem(world["run"]) is None   # pytest-of- 允许
+    f = world["tmp"] / "it.json"
+    d = world["work"] / "regen" / "x"
+    mk(str(d / "1.bin"))
+    f.write_text(json.dumps([item(d)]))
+    with pytest.raises(SystemExit):
+        qa.main(["plan", "--items", str(f), "--user-text", f"直接永久删除 {d}", "--run", "/tmp/bad-run-dir"])
+
+
+def test_keep_names_and_purge_orphan_and_all(world, monkeypatch):
+    d = world["work"] / "regen" / "keep-test"
+    mk(str(d / "drop.bin")); mk(str(d / "aligned" / "keep.txt"))
+    p = plan(world, [item(d, scope="children", keep_names=["aligned"])])
+    assert [os.path.basename(t["path"]) for t in p["results"][0]["targets"]] == ["drop.bin"]
+    run(world, p["seal"])
+    assert not (d / "drop.bin").exists() and (d / "aligned" / "keep.txt").exists()
+
+    # 孤儿 .待删-YYYYMMDD：原文件还在时不删；无授权提前删拒；原文件消失 + 授权后删掉
+    odir = world["work"] / "orphans"
+    live_mp4 = mk(str(odir / "c01.mp4"))
+    q_mp4 = mk(str(odir / "c01.mp4.待删-20261110"))
+    with pytest.raises(SystemExit):
+        qa.main(["purge", "--orphan-scan", str(odir), "--days", "0"])
+    qa.main(["purge", "--orphan-scan", str(odir), "--days", "0", "--user-text", "清理 .待删-"])
+    assert os.path.exists(q_mp4)   # 原路径 c01.mp4 还在，不能删
+    os.remove(live_mp4)
+    qa.main(["purge", "--orphan-scan", str(odir), "--days", "0", "--user-text", "清理 .待删-"])
+    assert not os.path.exists(q_mp4)
+
+
+def test_antigravity_session_grouping_and_subagent(world, monkeypatch):
+    ag = world["tmp"] / ".gemini" / "antigravity-cli"
+    cid = "11111111-2222-3333-4444-555555555555"
+    sub_cid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    tr = ag / "brain" / cid / ".system_generated" / "logs" / "transcript.jsonl"
+    db = ag / "conversations" / f"{cid}.db"
+    sub_tr = ag / "brain" / sub_cid / ".system_generated" / "logs" / "transcript.jsonl"
+    monkeypatch.setattr(qa, "TRANSCRIPT_GLOBS", (
+        str(ag / "conversations" / "*.db"),
+        str(ag / "brain" / "*" / ".system_generated" / "logs" / "transcript*.jsonl"),
+    ))
+    txt = "请把 /x/y/旧会话目录20261118 清理掉"
+    tr.parent.mkdir(parents=True, exist_ok=True)
+    tr.write_text(json.dumps({"user": txt, "conversationId": sub_cid}, ensure_ascii=False) + "\n", encoding="utf-8")
+    note(db, txt)
+    note(sub_tr, "子 agent 只读复核 " + str(world["work"] / "regen" / "ag-dir"))
+    files = qa.recent_transcripts(72)
+    mine, err = qa.self_transcripts(files, txt, [])
+    assert err is None and str(tr) in mine and str(db) in mine and str(sub_tr) in mine
+
+
+def test_cold_batch_rechecks_consumers_added_after_seal(world, monkeypatch):
+    _cold_world(world, monkeypatch)
+    root = world["work"] / "library"
+    d = root / "originals"
+    mk(str(d / "sample.bin"))
+    triage.LOCAL["cold_storage"] = {"consumer_scopes": [{"source": str(d), "roots": [str(root)]}]}
+    p = plan(world, [item(d, kind="backed_up", cold_batch="b1")], text="同意冷存并删除本地：library/originals")
+    assert p["results"][0]["status"] == "ok"
+    (root / "reader").symlink_to("originals/sample.bin")
+    rec = run(world, p["seal"])
+    assert any(r["status"] == "refused" and "软链接" in str(r["why"]) for r in rec)
+    assert (d / "sample.bin").is_file()

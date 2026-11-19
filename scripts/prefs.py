@@ -173,6 +173,17 @@ LEDGER_TITLE = "叁笙清理 · 项目台账"
 _LEDGER_STATUS_KEYS = ("状态", "status")
 _LEDGER_DELIV_KEYS = ("成品", "deliverables")
 _LEDGER_NAME_KEYS = ("名称", "name")
+_LEDGER_CONV_KEYS = ("对话", "conversations")
+
+
+def _conv_policy_of(v):
+    """台账里“AI 对话怎么处理”的取值 → protect / ask；不认识返回 None。"""
+    if isinstance(v, str):
+        v = v.strip()
+        if v in protect.CONVERSATION_POLICIES:
+            return v
+        return protect.CONVERSATION_POLICY_FROM_ZH.get(v)
+    return None
 
 
 def is_ledger_export(text):
@@ -271,11 +282,30 @@ def apply_ledger(p, projects, scan_id=None):
         name = next((entry[k] for k in _LEDGER_NAME_KEYS if isinstance(entry.get(k), str) and entry[k].strip()), None)
         name = (name or old.get("name") or protect.ENV_PROJECT_NAMES.get(key) or os.path.basename(key.rstrip("/")) or key)[:80]
         old_status = old.get("status") if old.get("status") in protect.PROJECT_STATUSES else None
+        # AI 对话的处理方式：这一行没写就沿用原来的（看板导出的台账行不带它，不能因此把“逐个问”冲掉）
+        old_conv = old.get("conversations") if old.get("conversations") in protect.CONVERSATION_POLICIES else "protect"
+        conv = old_conv
+        for k in _LEDGER_CONV_KEYS:
+            if k in entry:
+                c = _conv_policy_of(entry[k])
+                if c is None:
+                    errs.append(f"项目 {raw_key} 的 AI 对话处理方式只能是 跟项目一起留着 / 逐个问，收到 {entry[k]!r}")
+                else:
+                    conv = c
+                break
         store[key] = {"name": name, "status": status, "deliverables": list(dict.fromkeys(deliv)),
                       "updated_at": now_iso(), "source": "board"}
+        if conv == protect.CONVERSATIONS_ASK:
+            store[key]["conversations"] = conv
         if status != old_status and (old_status is not None or status != "active"):
             _note(p, "project", f"项目“{name}”标为{protect.PROJECT_STATUS_ZH.get(status, status)}",
                   {"key": key, "old_status": old_status, "status": status}, scan_id)
+        if conv != old_conv:
+            # 单独的记忆种类：撤销时只恢复对话处理方式，不动项目状态（记成 project 会被当成“原来没有这个项目”整条删掉）
+            _note(p, "project_conversations", f"项目“{name}”里的 AI 对话改成{protect.CONVERSATION_POLICY_ZH[conv]}",
+                  {"key": key, "old_conversations": old_conv, "conversations": conv}, scan_id)
+            done.append(f"项目“{name}”里的 AI 对话：{protect.CONVERSATION_POLICY_ZH[conv]}"
+                        + ("（只对进行中的项目生效；路径在项目目录里的文件照旧保护）" if conv == protect.CONVERSATIONS_ASK else ""))
         counts[status] = counts.get(status, 0) + 1
     if counts:
         done.append("项目台账：" + "、".join(f"{protect.PROJECT_STATUS_ZH[s]} {n} 个" for s, n in counts.items()
@@ -283,14 +313,28 @@ def apply_ledger(p, projects, scan_id=None):
     return done, errs, bool(counts) or not projects
 
 
-def set_project(key, status, deliverables=None, scan_id=None):
-    """对话里改单个项目的状态（如回答“X 做完了吗”）。返回一句说明；不合法抛 ValueError。"""
-    st = _status_of(status)
-    if st is None:
-        raise ValueError("状态只能是 active / done / archived / protected（进行中 / 做完了 / 归档 / 别碰）")
+def set_project(key, status=None, deliverables=None, scan_id=None, conversations=None):
+    """对话里改单个项目的状态（如回答“X 做完了吗”）或它的 AI 对话处理方式（“这个项目里的对话逐个问我”）。
+    返回一句说明；不合法抛 ValueError。只改对话处理方式时沿用台账里原来的状态，项目不在台账里就要先给状态。"""
+    if status is None and conversations is None:
+        raise ValueError("至少给出状态或 AI 对话处理方式之一")
+    entry = {}
+    if status is not None:
+        st = _status_of(status)
+        if st is None:
+            raise ValueError("状态只能是 active / done / archived / protected（进行中 / 做完了 / 归档 / 别碰）")
+        entry["status"] = st
+    if conversations is not None:
+        cv = _conv_policy_of(conversations)
+        if cv is None:
+            raise ValueError("AI 对话处理方式只能是 protect / ask（跟项目一起留着 / 逐个问）")
+        entry["conversations"] = cv
+    if deliverables is not None:
+        entry["deliverables"] = deliverables
     p = load()
-    done, errs, _ = apply_ledger(p, {key: {"status": st, **({"deliverables": deliverables} if deliverables is not None else {})}},
-                                 scan_id)
+    done, errs, _ = apply_ledger(p, {key: entry}, scan_id)
+    if errs and conversations is not None:
+        raise ValueError("；".join(errs))
     if not done:
         raise ValueError("；".join(errs) or "没有保存")
     p["onboarded_at"] = p.get("onboarded_at") or now_iso()

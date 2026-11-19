@@ -14,6 +14,8 @@ git status / merge-base）分档。只读：不删、不改、不写家目录。
   tier3  会话/模型/镜像/存档/未归类大目录：给大小与最小定位，需用户判断
   keep   在用或受保护（含原因），绝不进 tier1/2
 """
+import production_handoff
+
 import argparse, bisect, collections, glob, json, os, re, shlex, subprocess, sys, time
 from urllib.parse import unquote
 from concurrent.futures import ThreadPoolExecutor
@@ -32,7 +34,7 @@ GB = 1024 ** 3   # 本报告全程用 GiB（1024³）；scan.py 的摘要是十�
 XDIR = os.path.join(os.path.dirname(TMP.rstrip("/")), "X")   # 与 $TMPDIR(T) 同级的 X 目录（Chrome 代码签名克隆）
 
 # (c) 第1档里用原生命令代替 rm -rf 的类别
-# 规则见 SKILL.md「第 1 档统一规则」：原生命令优先；其余“删除目录内容”用 find -x DIR -mindepth 1 -delete（不跟随链接、不跨卷、保留目录本身），
+# 规则见 SKILL.md「第 1 档统一规则」：原生命令优先；其余“删除目录内容”用 /usr/bin/find -x DIR -mindepth 1 -delete（不跟随链接、不跨卷、保留目录本身），
 # 不写裸 rm -rf（硬约束）。检查命令与删除命令永远是两条独立命令。
 NATIVE_CMD = {"Homebrew 缓存": "brew cleanup", "npm 缓存": "npm cache clean --force", "uv 缓存": "uv cache clean",
               "pip 缓存": "python3 -m pip cache purge"}
@@ -68,6 +70,7 @@ def flow_artifact(path):
 LOCAL_DEFAULTS = {
     "work_root": None,            # 你的工作区根目录（引用检查、生产目录、成品拆分都在这里面做）
     "production_globs": [],       # 生产目录（相对 work_root 的 glob），只展示、永不进可删档
+    "production_manifest_globs": ["production-handoff.json"],
     "ledger_globs": [],           # 制作台账等二进制登记文件（相对文件名 glob），路径出现在里面即视为登记在册
     "ref_doc_extra": [],          # 额外要搜引用的文档文件名 glob
     "hard_keep_extra": [],        # 额外的永不进可删档路径片段
@@ -116,8 +119,61 @@ REF_DOC_GLOBS = ("AGENTS.md", "README*.md", "*.json",
 # 前后对照（*-before.json / *-after.json）、回执与日志、records/ 下的过程记录。
 HISTORY_REF_RX = re.compile(
     r"/disk-watch/|/\.sansheng/disk-cleanup/|/sansheng-triage/|/sansheng-disk-cleanup-ro/"
+    r"|/sansheng-disk-cleanup/producers\.json$|/build/intermediates/"
     r"|snapshot|comparison|[-_](before|after)\.json$|registry-(before|after)|/records/|receipt|回执|台账快照"
     r"|\.log$|\.jsonl$|/history/|audit|/runs/|/_archive/|/cleanup-archive-", re.I)
+
+GENERIC_REF_BASENAMES = {
+    "production", "frames", "cache", "caches", "tmp", "temp", "build", "dist", "out", "output", "outputs",
+    "src", "data", "runs", "logs", "assets", "sessions", "conversations", "brain", "images", "videos",
+    "dl", "store", "inspect", "packs", "drafts", "backups", "work", "workspace", "requests",
+    "local", ".local", "public", "v1", "v2", "v3", "v4", "ark",
+}
+
+
+def _ref_keys(path):
+    """生成引用检索关键字：路径形式全收，单独目录名仅限 ≥8 字符且非通用词，避免 dist/dl/store 误伤全仓。"""
+    p = path.rstrip("/") or path
+    base = os.path.basename(p)
+    keys = {p, tilde(p)}
+    if os.path.isdir(COWORK) and p.startswith(COWORK + "/"):
+        keys.add(os.path.relpath(p, COWORK))
+    if base and len(base) >= 8 and base.lower() not in GENERIC_REF_BASENAMES:
+        keys.add(base)
+    return sorted(k for k in keys if k and k != ".")
+
+
+def _file_matched_keys(fpath, keys, stop_on_first=False):
+    """核对文件内按路径边界实际命中的关键字集合（右侧允许 / 以匹配其下文件引用）。"""
+    bkeys = [(k, k.encode("utf-8"), re.compile(rb"(?<![A-Za-z0-9_.\-])" + re.escape(k.encode("utf-8")) + rb"(?![A-Za-z0-9_.\-])"))
+             for k in keys if k]
+    if not bkeys:
+        return set()
+    width = max(len(b) for _, b, _ in bkeys) + 1
+    found, tail = set(), b""
+    try:
+        with open(fpath, "rb") as fh:
+            while True:
+                chunk = fh.read(8 << 20)
+                if not chunk:
+                    break
+                buf = tail + chunk
+                for k, b, rx in bkeys:
+                    if k not in found and b in buf and rx.search(buf):
+                        found.add(k)
+                        if stop_on_first:
+                            return found
+                if len(found) == len(bkeys):
+                    break
+                tail = buf[-width:]
+    except OSError:
+        return set()
+    return found
+
+
+def _file_has_ref_boundary(fpath, keys):
+    """核对文件内是否按路径边界出现了任一关键字，防止 proc/out 误中 proc/out2（右侧允许 / 以匹配其下文件引用）。"""
+    return bool(_file_matched_keys(fpath, keys, stop_on_first=True))
 
 
 def split_ref_hits(hits):
@@ -189,14 +245,25 @@ def is_production(path):
 
 
 def ledger_registered(path, timeout=30):
-    """红线 1：路径名出现在任一登记文件（本机配置 ledger_globs，如制作台账 sqlite；rg -a 搜二进制里的文本，便宜）→ 视为登记在册。"""
-    base = os.path.basename(path.rstrip("/"))
+    """红线 1：路径名或父级相对片段出现在任一登记文件（如制作台账 sqlite）→ 视为登记在册。
+    短/通用目录名（如 dl、v4）改搜两级后缀或相对路径，避免二进制表误中。"""
+    p = path.rstrip("/") or path
+    base = os.path.basename(p)
     if not base or not LEDGER_GLOBS or not os.path.isdir(COWORK):
+        return []
+    if len(base) >= 8 and base.lower() not in GENERIC_REF_BASENAMES:
+        needle = base
+    elif p.startswith(COWORK + "/"):
+        needle = os.path.relpath(p, COWORK)
+    else:
+        parent = os.path.basename(os.path.dirname(p))
+        needle = (parent + "/" + base) if parent else base
+    if len(needle) < 4:
         return []
     cmd = ["rg", "-l", "-a", "-F", "--no-ignore", "--hidden"]
     for g in LEDGER_GLOBS:
         cmd += ["-g", g]
-    rc, out, _ = run(cmd + ["-e", base, COWORK], timeout=timeout)
+    rc, out, _ = run(cmd + ["-e", needle, COWORK], timeout=timeout)
     return [l for l in out.splitlines() if l]
 
 
@@ -204,17 +271,20 @@ _REF_CACHE = {}
 
 
 def prefetch_refs(paths, timeout=180):
-    """性能：把所有候选的引用检查合成一次 rg（-o -F -f 模式文件），结果按关键字回填缓存。
+    """性能：把所有候选的引用检查合成一次 rg（-o -F -f 模式文件），结果按关键字与路径边界回填缓存。
     语义与 reference_hits 相同（只读）；超时则不填缓存，逐项回退。"""
     paths = [p for p in paths if p and p.startswith(COWORK + "/")]
     if not paths or not os.path.isdir(COWORK):
         return
     keymap = {}
+    path_keys_map = {}
     for p in paths:
-        base = os.path.basename(p.rstrip("/"))
-        for k in {base, p, tilde(p), os.path.relpath(p, COWORK)}:
-            if k:
-                keymap.setdefault(k, set()).add(p)
+        ks = _ref_keys(p)
+        path_keys_map[p] = ks
+        for k in ks:
+            keymap.setdefault(k, set()).add(p)
+    if not keymap:
+        return
     pf = os.path.join(TMP, "triage-ref-patterns-%d.txt" % os.getpid())
     open(pf, "w", encoding="utf-8").write("\n".join(sorted(keymap)) + "\n")
     cmd = ["rg", "-o", "-F", "-H", "--no-line-number", "--no-ignore", "--hidden", "--max-filesize", "8M",
@@ -224,48 +294,78 @@ def prefetch_refs(paths, timeout=180):
     rc, out, _ = run(cmd + ["-f", pf, COWORK], timeout=timeout)
     rc2, out2 = 0, ""
     if LEDGER_GLOBS:
-        lcmd = ["rg", "-o", "-a", "-F", "-H", "--no-line-number", "--no-ignore", "--hidden"]
-        for g in LEDGER_GLOBS:
-            lcmd += ["-g", g]
-        rc2, out2, _ = run(lcmd + ["-f", pf, COWORK], timeout=timeout)
+        lkeys = sorted({k for p in paths for k in _ref_keys(p) if "/" in k or (len(k) >= 8 and k.lower() not in GENERIC_REF_BASENAMES)})
+        if lkeys:
+            lpf = pf + ".ledger"
+            open(lpf, "w", encoding="utf-8").write("\n".join(lkeys) + "\n")
+            lcmd = ["rg", "-o", "-a", "-F", "-H", "--no-line-number", "--no-ignore", "--hidden"]
+            for g in LEDGER_GLOBS:
+                lcmd += ["-g", g]
+            rc2, out2, _ = run(lcmd + ["-f", lpf, COWORK], timeout=timeout)
+            try:
+                os.remove(lpf)
+            except OSError:
+                pass
     try:
         os.remove(pf)
     except OSError:
         pass
     if rc in (124, 127) or rc2 in (124, 127):
         return
-    hits = {p: set() for p in paths}
-    for ln in (out + "\n" + out2).splitlines():
+    text_hits = {p: set() for p in paths}
+    ledger_hits = {p: set() for p in paths}
+    for ln in out.splitlines():
         fpath, sep, key = ln.partition(":")
         if not sep:
             continue
         for p in keymap.get(key, ()):
             if not fpath.startswith(p.rstrip("/") + "/"):
-                hits[p].add(fpath)
+                text_hits[p].add(fpath)
+    for ln in out2.splitlines():
+        fpath, sep, key = ln.partition(":")
+        if not sep:
+            continue
+        for p in keymap.get(key, ()):
+            if not fpath.startswith(p.rstrip("/") + "/"):
+                ledger_hits[p].add(fpath)
+    file_to_ps = {}
+    for p, fs in text_hits.items():
+        for f in fs:
+            if HISTORY_REF_RX.search(f):
+                ledger_hits[p].add(f)
+            else:
+                file_to_ps.setdefault(f, set()).add(p)
+    verified_by_p = {p: set() for p in paths}
+    for f, ps in file_to_ps.items():
+        cand_keys = sorted({k for p in ps for k in path_keys_map[p]})
+        matched = _file_matched_keys(f, cand_keys)
+        for p in ps:
+            if any(k in matched for k in path_keys_map[p]):
+                verified_by_p[p].add(f)
     for p in paths:
-        _REF_CACHE[p] = sorted(hits[p])
+        _REF_CACHE[p] = sorted(verified_by_p[p] | ledger_hits[p])
 
 
 def reference_hits(path, timeout=60):
     if path in _REF_CACHE:
         return _REF_CACHE[path]
-    """红线 2：在工作区的 AGENTS.md / README*.md / *.json 台账、脚本与 Skill 指令里搜目录名与路径（rg -l -F）。
+    """红线 2：在工作区的 AGENTS.md / README*.md / *.json 台账、脚本与 Skill 指令里搜有效关键字（rg -l -F）。
     返回命中文件列表；超时返回 None（= 引用未查，按“引用、问用户”处理）。"""
     base = os.path.basename(path.rstrip("/"))
     if not os.path.isdir(COWORK) or not base:
         return []
-    keys = {base, path, tilde(path)}
-    if path.startswith(COWORK + "/"):
-        keys.add(os.path.relpath(path, COWORK))
+    keys = _ref_keys(path)
+    if not keys:
+        return []
     cmd = ["rg", "-l", "-F", "--no-ignore", "--hidden", "--max-filesize", "8M", "-g", "!.git", "-g", "!node_modules"]
     for g in REF_DOC_GLOBS:
         cmd += ["-g", g]
-    for k in sorted(keys):
+    for k in keys:
         cmd += ["-e", k]
     rc, out, _ = run(cmd + [COWORK], timeout=timeout)
     if rc in (124, 127):
         return None
-    hits = [l for l in out.splitlines() if l and not l.startswith(path.rstrip("/") + "/")]
+    hits = [l for l in out.splitlines() if l and not l.startswith(path.rstrip("/") + "/") and _file_has_ref_boundary(l, keys)]
     return hits + ledger_registered(path)
 
 
@@ -405,7 +505,7 @@ def split_children(ctx, it, hrs, min_bytes, starts=None):
         row["last_write"] = ctx.last_write(k)
         chk, cmd = tier1_commands(it["category"], k)
         row["check_command"] = chk.replace("%MIN%", str(int(hrs * 60)))
-        row["command"] = cmd if it["category"] in DEDICATED_CMD else "find -x %s -delete" % shlex.quote(k)
+        row["command"] = cmd if it["category"] in DEDICATED_CMD else "/usr/bin/find -x %s -delete" % shlex.quote(k)
         ok.append(row)
     return ok, held
 SKIP_IN_GENERIC_CACHES = ("pip", "Homebrew")   # 已有专门类别
@@ -419,12 +519,12 @@ def effective_hours(default_hours, card_hours):
 def tier1_commands(cat, path):
     """返回 (检查命令, 删除命令)。两条独立命令；删除命令绝不是裸 rm -rf。"""
     q = shlex.quote(path)
-    check = "find -x %s -type f -mmin -%%MIN%% ! -name .DS_Store -print -quit   # 无输出 = 静默期无写入" % q
+    check = "/usr/bin/find -x %s -type f -mmin -%%MIN%% ! -name .DS_Store -print -quit   # 无输出 = 静默期无写入" % q
     if cat in NATIVE_CMD:
         return check, NATIVE_CMD[cat]
     if cat in DEDICATED_CMD:
         return check, DEDICATED_CMD[cat]
-    return check, "find -x %s -mindepth 1 -delete" % q
+    return check, "/usr/bin/find -x %s -mindepth 1 -delete" % q
 
 
 def running_apps():
@@ -478,6 +578,10 @@ def denied_top(denied, n=10):
             key = "/".join(p.split("/")[:4])
         cnt[key] = cnt.get(key, 0) + 1
     return sorted(cnt.items(), key=lambda x: -x[1])[:n]
+
+
+# 本机 PATH 里的 find 可能是 GNU findutils（不认 -x，报 unknown predicate、rc=1、输出为空），-x 一律走系统自带的 BSD find
+BSD_FIND = "/usr/bin/find"
 
 
 def run(cmd, timeout=60, cwd=None):
@@ -571,7 +675,8 @@ class Ctx:
             if best is None or t > best[0]:
                 best = (t, f)
         if not best:
-            return None
+            # find 失败（权限拒绝、路径消失）且无输出 ≠ “没有写入”：标记未查，调用方显示“未查”
+            return {"time": None, "file": "", "partial": False, "unchecked": True} if rc != 0 else None
         return {"time": datetime.fromtimestamp(best[0]).astimezone().isoformat(timespec="minutes"),
                 "file": best[1], "partial": rc == 124}
 
@@ -585,14 +690,15 @@ class Ctx:
         return n if self.lsof_ok else None
 
     def recent_write(self, path, hours=None):
-        """静默期内是否有真实文件写入（忽略 .DS_Store / *.lock / index）。返回 True/False/None(超时)。"""
+        """静默期内是否有真实文件写入（忽略 .DS_Store / *.lock / index）。返回 True/False/None(未查：超时或 find 失败)。"""
         mins = int((hours or self.args.quiet_hours) * 60)
         rc, out, err = run(["find", path, "-xdev", "-type", "f", "-mmin", "-%d" % mins,
                             "!", "-name", ".DS_Store", "!", "-name", "*.lock", "!", "-name", "index", "-print", "-quit"],
                            timeout=45)
-        if rc == 124:
-            return None
-        return bool(out.strip())
+        if out.strip():
+            return True
+        # rc≠0 且无输出（超时、权限拒绝、路径消失）= 没查成，不能当“静默期内无写入”；返回 None（未查）
+        return None if rc != 0 else False
 
     def size(self, path):
         if path in self.sizes:
@@ -619,6 +725,9 @@ class Ctx:
         return None
 
 
+RENDERING_UNCHECKED = []   # 最近一次 rendering_dirs 中 find 失败、未能确认的目录
+
+
 def rendering_dirs(minutes=10, timeout=30):
     """“在渲染/波动”：生产目录下（取到第 3 层）最近 N 分钟有真实写入的目录。只读、每目录 -quit 早停。"""
     out = []
@@ -630,9 +739,16 @@ def rendering_dirs(minutes=10, timeout=30):
                     cands.append(d)
     def chk(d):
         rc, o, _ = run(["find", d, "-xdev", "-type", "f", "-mmin", "-%d" % minutes, "!", "-name", ".DS_Store", "-print", "-quit"], timeout=timeout)
-        return d if o.strip() else None
+        if o.strip():
+            return d
+        if rc != 0:
+            unchecked.append(d)   # 没查成：保守按“可能在渲染”处理，同时记入未查清单
+            return d
+        return None
+    unchecked = []
     with ThreadPoolExecutor(8) as ex:
         hit = [d for d in ex.map(chk, cands) if d]
+    RENDERING_UNCHECKED[:] = sorted(unchecked)
     # 只保留最深的命中（父目录命中多半因为子目录）
     for d in sorted(hit, key=len, reverse=True):
         if not any(o.startswith(d + "/") for o in out):
@@ -691,16 +807,24 @@ _DIR_INDEX = {}
 
 def dir_index(timeout=120):
     """工作区 5 层内的目录名 → 第一个路径。整轮只建一次（第三轮根因 7：原来每个 tgz 各跑一次 find，
-    每次最长 60 秒，26 个包占了 triage 总耗时 592 秒里的 350 秒）。"""
+    每次最长 60 秒，26 个包占了 triage 总耗时 592 秒里的 350 秒）。
+    find 失败（rc≠0 或超时）不当成“没找到”：记入 dir_index_unchecked()，调用方在报告里标“未查”；
+    已找到的目录名仍可用（部分输出里的命中是真实存在的）。"""
     if "idx" not in _DIR_INDEX:
-        rc, out, _ = run(["find", "-x", COWORK, "-maxdepth", "5", "-type", "d",
+        rc, out, err = run([BSD_FIND, "-x", COWORK, "-maxdepth", "5", "-type", "d",
                           "(", "-name", ".git", "-o", "-name", "node_modules", "-o", "-name", "cleanup-archive-*", ")", "-prune",
                           "-o", "-type", "d", "-print"], timeout=timeout)
         idx = {}
         for ln in out.splitlines():
             idx.setdefault(os.path.basename(ln), ln)
         _DIR_INDEX["idx"] = idx
+        _DIR_INDEX["unchecked"] = None if rc == 0 else ("超时" if rc == 124 else "find rc=%d %s" % (rc, (err or "").strip()[:80]))
     return _DIR_INDEX["idx"]
+
+
+def dir_index_unchecked():
+    """目录索引不完整的原因；None = 索引完整。先调用 dir_index() 才有值。"""
+    return _DIR_INDEX.get("unchecked")
 
 
 def offdisk_card(a):
@@ -708,7 +832,7 @@ def offdisk_card(a):
     q = shlex.quote(a["path"])
     a["offdisk_ok"] = True
     a["check_command"] = "/usr/bin/stat -f %%z %s   # 应输出 %d（与%s台账记录的大小一致）" % (q, a["bytes"], BACKUP_LABEL)
-    a["command"] = "find -x %s -maxdepth 0 -type f -delete" % q
+    a["command"] = "/usr/bin/find -x %s -maxdepth 0 -type f -delete" % q
     return a
 
 
@@ -736,7 +860,9 @@ def archive_check(deep=False, timeout=180):
             if not orig:
                 orig = dir_index().get(tops[0])
         r["orig"] = orig
-        if not orig or not os.path.isdir(orig):
+        if not orig and dir_index_unchecked():
+            r["status"] = "原路径未查（目录索引 find 失败：%s；不能据此判为唯一副本，修好后重跑）" % dir_index_unchecked()
+        elif not orig or not os.path.isdir(orig):
             r["status"] = "唯一副本（原路径不在；本机仅此一份，删前必须恢复或确认盘外完整）"
         elif not deep:
             r["status"] = "原路径在，但未逐文件比对（加 --archive-deep 用 tar -tvzf 对比；原目录可能已被改动/删减，不能直接当重复件删）"
@@ -785,13 +911,14 @@ def dup_roots(ctx):
 
 def dup_scan(ctx, min_mb=20, top=12):
     """第三轮根因 3：跨目录重复副本（成品库 / 交付 / 分发暂存 / 工作树 各一份，11-03 实测 42G）从未检测。
-    这里按大小分组 + 抽样哈希给出名义可共享量与分布；处置用 clone_dedupe.py（APFS 克隆原地替换，不删路径）。"""
+    这里按大小分组 + 抽样哈希给出名义重复量、已共享量（早就是克隆）与扣除后的可省量；处置用 clone_dedupe.py（APFS 克隆原地替换，不删路径）。"""
     import clone_dedupe as cd
     roots = dup_roots(ctx)
     if not roots:
         return None
     by = cd.collect(roots, int(min_mb * 2 ** 20))
     groups = []
+    unknown_n = 0
     for size, ps in by.items():
         if len(ps) < 2:
             continue
@@ -806,18 +933,32 @@ def dup_scan(ctx, min_mb=20, top=12):
                 continue
             grp.sort(key=cd.keeper_rank)
             ino = os.stat(grp[0]).st_ino
-            dups = [q for q in grp[1:] if os.stat(q).st_ino != ino]
-            if dups:
-                groups.append({"size": size, "keep": grp[0], "dups": dups})
+            dups, shared = [], []
+            for q in grp[1:]:
+                if os.stat(q).st_ino == ino:
+                    continue
+                # 已与保留端共享物理块的（早就是 APFS 克隆）不算可省；取不到物理位置按未共享计、标“未知”
+                st = cd.share_state(grp[0], q)
+                (shared if st == "shared" else dups).append(q)
+                if st == "unknown":
+                    unknown_n += 1
+            if dups or shared:
+                groups.append({"size": size, "keep": grp[0], "dups": dups, "shared": shared})
     where = {}
     for g in groups:
         for q in g["dups"]:
             r = next((x for x in roots if q.startswith(x + "/")), "")
             k = "/".join(os.path.relpath(q, r).split("/")[:3]) if r else q
             where[k] = where.get(k, 0) + g["size"]
-    nominal = sum(g["size"] * len(g["dups"]) for g in groups)
+    shared_files = sum(len(g["shared"]) for g in groups)
+    shared_bytes = sum(g["size"] * len(g["shared"]) for g in groups)
+    savable = sum(g["size"] * len(g["dups"]) for g in groups)
+    nominal = savable + shared_bytes
+    groups = [g for g in groups if g["dups"]]
     rq = " ".join("--root %s" % shlex.quote(r) for r in roots)
     return {"roots": roots, "groups": len(groups), "dup_files": sum(len(g["dups"]) for g in groups), "nominal_bytes": nominal,
+            # nominal_bytes = 名义重复量（含已共享）；savable_bytes = 扣除已共享后可省；shared_* = 已是克隆、无需处理
+            "savable_bytes": savable, "shared_files": shared_files, "shared_bytes": shared_bytes, "unknown_share_files": unknown_n,
             "by_location": sorted(where.items(), key=lambda x: -x[1])[:top],
             "samples": [{"keep": g["keep"], "dup": g["dups"][0], "size": g["size"]} for g in sorted(groups, key=lambda g: -g["size"] * len(g["dups"]))[:5]],
             "plan_command": "python3 scripts/clone_dedupe.py plan %s --out <run目录>/dedupe-plan.json" % rq,
@@ -855,6 +996,45 @@ def breadth_first(ctx):
     ctx.mark("du_breadth", t)
 
 
+TOOL_REF_GLOBS = ("*.py", "*.mjs", "*.cjs", "*.js", "*.ts", "*.ps1", "*.psm1", "*.sh", "*.json")
+TOOL_REF_SKIP_RX = re.compile(
+    r"/_archive/|/disk-watch/|/\.sansheng/disk-cleanup/|/sansheng-disk-cleanup/"
+    r"|/producers\.json$|/build/|/dist/|/\.local/|/_upgrade/"
+)
+
+
+def tool_state_refs(paths, repo=None, timeout=180):
+    """可再生缓存被项目代码或回执按路径引用时，它是工具状态，不是缓存（例：`Path.home()/'.npm/_npx'` 按哈希
+    找固定版本的渲染引擎，删了 npx 会重装成新版本，逐字节复核的门禁全部失败）。在工作区 Git 已跟踪的脚本与 .json
+    里搜家目录相对路径（同时覆盖 ~/ 写法和绝对路径），归档与清理报告不算。返回 {path: [文件…]}；git 出错返回 None。"""
+    repo = repo or COWORK
+    pats = {}
+    for p in paths:
+        if p.startswith(HOME + "/"):
+            rel = os.path.relpath(p, HOME)
+            if "/" in rel:                      # 只按路径搜：单个目录名太容易误中
+                pats.setdefault(rel, []).append(p)
+    if not pats or not os.path.isdir(repo):
+        return {}
+    cmd = ["git", "-C", repo, "grep", "-I", "-F", "-o", "-z"]
+    for rel in pats:
+        cmd += ["-e", rel]
+    rc, out, _ = run(cmd + ["--"] + list(TOOL_REF_GLOBS), timeout=timeout)
+    if rc not in (0, 1):
+        return None
+    hits = {}
+    for line in out.splitlines():
+        f, _, m = line.partition("\0")
+        ab = os.path.join(repo, f)
+        if TOOL_REF_SKIP_RX.search(ab):
+            continue
+        for p in pats.get(m.split("\0")[-1], []):
+            hits.setdefault(p, [])
+            if ab not in hits[p]:
+                hits[p].append(ab)
+    return hits
+
+
 def tier1(ctx):
     out = []
     for cat, globs, note, card_h in TIER1:
@@ -883,15 +1063,24 @@ def tier1(ctx):
     t1, keep, demoted, wait_app = [], [], [], []
     starts = chrome_starts() if os.path.isdir(CHROME_CLONE_ROOT) else None
     min_b = ctx.args.min_tier1_mb * 1024 * 1024
+    t = time.monotonic()
+    tool_refs = tool_state_refs([it["path"] for it in items if (it["bytes"] or 0) >= min_b])
+    ctx.mark("tier1_tool_refs", t)
     for it in items:
         if (it["bytes"] or 0) < min_b:
             continue
         why = ctx.keep_reason(it["path"])
+        refs = None if tool_refs is None else tool_refs.get(it["path"])
         if why:
             it["reason"] = why
             keep.append(it)
+        elif tool_refs is None or refs:
+            it["reason"] = ("工具状态：项目代码按路径引用它（%s），删了会重装成别的版本，依赖它的证据与门禁对不上"
+                            % "，".join(tilde(f) for f in refs[:3])) if refs else "工具引用检查失败（git grep 出错或超时），不进第 1 档"
+            it["tool_refs"] = [tilde(f) for f in (refs or [])[:20]]
+            keep.append(it)
         elif it["open"] is None or it["recent"] is None:
-            it["reason"] = "信号不全（lsof 或写入检查超时），降为 tier3"
+            it["reason"] = "信号不全（lsof 或写入检查未查/超时），降为 tier3"
             it["tier"] = 3
             keep.append(it)
         elif it["open"] > 0 or it["recent"] or it["path"] == CHROME_CLONE_ROOT:
@@ -959,7 +1148,7 @@ def ignored_usage(wt, timeout=180):
     return rows, sum(b for _, b in rows), None
 
 
-def stale_subtasks(ctx, wt, depth=4, min_gb=1.0, stale_days=7, timeout=300, min_untracked_gb=0.5):
+def stale_subtasks(ctx, wt, depth=6, min_gb=1.0, stale_days=7, timeout=300, min_untracked_gb=0.5):
     """第三轮根因 4：活跃的长期工作树整棵“保留”，里面停写多日的旧子任务（11-03 实测 73G）从不出现。
     只读：du -d depth 找 ≥min_gb 的目录，取“整体 stale_days 天无真实写入”的最外层（至少第 2 层，
     不把顶层目录整个交给 git clean），统计其中 未跟踪+忽略 的体积，给 git clean 命令卡（已跟踪的在仓库里，不动）。"""
@@ -1072,10 +1261,10 @@ def worktrees(ctx):
             fails.append("%d 处未提交改动（%s）" % (r["dirty"], ", ".join(r["dirty_paths"][:3])))
         if r["open"] is None: fails.append("lsof 不可用")
         elif r["open"]: fails.append("%d 个文件被进程打开" % r["open"])
-        if r["recent"] is None: fails.append("写入检查超时")
+        if r["recent"] is None: fails.append("写入检查未查（超时或 find 失败）")
         elif r["recent"]: fails.append("%g 小时内有写入" % ctx.args.quiet_hours)
         if not (r["on_origin_main"] or r["remote_branches"] or r["tag"]): fails.append("HEAD 不在任何远端分支（可能有未推送提交）")
-        big_ign = r["ignored_bytes"] >= 500 * 1024 * 1024
+        big_ign = (r["ignored_bytes"] or 0) >= 500 * 1024 * 1024
         if fails:
             r["reason"] = "；".join(fails)
             keep.append(r)
@@ -1114,8 +1303,33 @@ TIER3_GLOBS = [
 ]
 
 
+def active_android_system_images(home=None):
+    """读 ~/.android/avd/*.avd/config.ini 的 image.sysdir.1，返回当前 AVD 正在引用的系统镜像目录集合。"""
+    home = home or HOME
+    sdk = os.path.join(home, "Library", "Android", "sdk")
+    refs = set()
+    for ini in glob.glob(os.path.join(home, ".android", "avd", "*.avd", "config.ini")):
+        try:
+            text = open(ini, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        for ln in text.splitlines():
+            k, sep, v = ln.partition("=")
+            if sep and k.strip() == "image.sysdir.1":
+                rel = v.strip().strip("/")
+                if not rel:
+                    continue
+                cand = os.path.normpath(os.path.join(sdk, rel))
+                parts = rel.split("/")
+                if len(parts) >= 2 and parts[0] == "system-images":
+                    refs.add(os.path.normpath(os.path.join(sdk, "system-images", parts[1])))
+                refs.add(cand)
+    return refs
+
+
 def tier3(ctx, claimed):
     out = []
+    android_active = active_android_system_images(HOME)
     for cat, g, note in TIER3_GLOBS:
         for p in sorted(glob.glob(g)):
             if not os.path.isdir(p) or any(p == c or p.startswith(c + "/") or c.startswith(p + "/") for c in claimed):
@@ -1124,8 +1338,11 @@ def tier3(ctx, claimed):
             if b is None:
                 b = ctx.size(p)
             if (b or 0) >= ctx.args.min_gb * GB:
+                kh = ctx.keep_reason(p)
+                if not kh and cat == "Android 镜像" and os.path.normpath(p) in android_active:
+                    kh = "AVD 正在引用该系统镜像（在用）"
                 out.append({"category": cat, "path": p, "bytes": b, "note": note,
-                            "keep_hint": ctx.keep_reason(p)})
+                            "keep_hint": kh})
     hb = HOME + "/.cache/huggingface/hub/blobs"
     if os.path.isdir(hb):
         b = ctx.sizes.get(hb) or ctx.size(hb)
@@ -1161,7 +1378,7 @@ VIDEO_CLASSES = [("作废", r"作废"), ("已交付/交付", r"已交付|交付|
 
 
 def classify_video(rel, mtime, now=None):
-    """先看最近写入再看名字（第三轮根因 5：今天还在写的“历史英语试播”因名字含“试播”被归进“试做/旧版”）。
+    """先看最近写入再看名字（第三轮根因 5：今天还在写的“新项目试播”因名字含“试播”被归进“试做/旧版”）。
     “作废”是明确标记，优先级最高。"""
     if re.search(VIDEO_CLASSES[0][1], rel, re.I):
         return VIDEO_CLASSES[0][0]
@@ -1178,8 +1395,10 @@ def classify_video(rel, mtime, now=None):
 
 def voided_dirs(root, timeout=120):
     """任意深度带“作废”标记的目录（取最外层）。第三轮：只列第二层时，第五层的 .作废-重叠（3.2G、0 引用）看不见。"""
-    rc, out, _ = run(["find", "-x", root, "-type", "d", "-name", "*作废*", "-prune"], timeout=timeout)
-    return sorted(set(l for l in out.splitlines() if l.strip())), rc == 124
+    rc, out, err = run([BSD_FIND, "-x", root, "-type", "d", "-name", "*作废*", "-prune"], timeout=timeout)
+    # 第二个返回值：None = 查完；否则是“未查”的原因（rc≠0 或超时），不能当成“没有作废目录”
+    unchecked = None if rc == 0 else ("超时" if rc == 124 else "find rc=%d %s" % (rc, (err or "").strip()[:80]))
+    return sorted(set(l for l in out.splitlines() if l.strip())), unchecked
 
 
 def video_products(ctx, root=VIDEO_ROOT, ref_root=None, timeout=120):
@@ -1188,7 +1407,7 @@ def video_products(ctx, root=VIDEO_ROOT, ref_root=None, timeout=120):
         return None
     t = time.monotonic()
     rows = []
-    vd, vd_partial = voided_dirs(root)
+    vd, vd_unchecked = voided_dirs(root)
     for a in sorted(os.listdir(root)):
         pa = os.path.join(root, a)
         if not os.path.isdir(pa) or os.path.islink(pa) or a.startswith("__"):
@@ -1205,7 +1424,7 @@ def video_products(ctx, root=VIDEO_ROOT, ref_root=None, timeout=120):
         lw = ctx.last_write(r["path"])
         r["last_write"] = lw
         try:
-            mt = datetime.fromisoformat(lw["time"]).timestamp() if lw else None
+            mt = datetime.fromisoformat(lw["time"]).timestamp() if lw and lw.get("time") else None
         except ValueError:
             mt = None
         r["class"] = classify_video(r["rel"], mt)
@@ -1238,7 +1457,7 @@ def video_products(ctx, root=VIDEO_ROOT, ref_root=None, timeout=120):
     ctx.mark("video_products", t)
     for r in rows:   # 深层作废目录的体积已含在它所属的第二层目录里，合计时不重复
         r["nested"] = bool(r.get("deep_void"))
-    return {"root": root, "rows": sorted(rows, key=lambda x: -(x["bytes"] or 0)), "refs_partial": partial, "void_partial": vd_partial}
+    return {"root": root, "rows": sorted(rows, key=lambda x: -(x["bytes"] or 0)), "refs_partial": partial, "void_partial": bool(vd_unchecked), "void_unchecked": vd_unchecked}
 
 
 def worktree_breakdown(ctx, rows, prefer=LOCAL["prefer_worktree"], timeout=120):
@@ -1384,6 +1603,67 @@ def phases_text(ph):
     return "、".join("%s %ss" % (names.get(k, k), v) for k, v in ph.items())
 
 
+def quarantine_summary(home=None, cowork=None):
+    """汇总历次回执中未清除且仍在磁盘上的 .待删-* 隔离项（含已满 7 天可清除数量与体积）。"""
+    home = home or HOME
+    cowork = cowork or COWORK
+    globs = [os.path.join(home, ".sansheng", "disk-cleanup", "**", "quick-receipt.jsonl")]
+    if cowork and os.path.isdir(cowork):
+        globs.append(os.path.join(cowork, "_workspace", "disk-watch", "**", "quick-receipt.jsonl"))
+    now = time.time()
+    cut_7d = now - 7 * 86400
+    seen_targets = {}
+    for g in globs:
+        for rf in sorted(glob.glob(g, recursive=True)):
+            rows = []
+            try:
+                for ln in open(rf, encoding="utf-8", errors="replace"):
+                    if ln.strip():
+                        rows.append(json.loads(ln))
+            except (OSError, ValueError):
+                continue
+            purged = {r.get("moved_to") for r in rows if r.get("status") == "purged"}
+            for r in rows:
+                if r.get("status") != "quarantined":
+                    continue
+                q = r.get("moved_to")
+                if not q or q in purged or q in seen_targets or not os.path.lexists(q):
+                    continue
+                try:
+                    at = datetime.fromisoformat(r["at"]).timestamp()
+                except (KeyError, ValueError):
+                    at = now
+                seen_targets[q] = {"bytes": r.get("bytes") or 0, "expired": at <= cut_7d}
+    return {
+        "count": len(seen_targets),
+        "bytes": sum(v["bytes"] for v in seen_targets.values()),
+        "expired_7d_count": sum(1 for v in seen_targets.values() if v["expired"]),
+        "expired_7d_bytes": sum(v["bytes"] for v in seen_targets.values() if v["expired"]),
+    }
+
+
+def cold_ledger_summary(ledger_path=None):
+    """只读汇总 ~/.sansheng/netdisk/cold-ledger.json 各状态批次数与字节数。"""
+    p = ledger_path or os.path.join(HOME, ".sansheng", "netdisk", "cold-ledger.json")
+    if not os.path.isfile(p):
+        return None
+    try:
+        batches = (json.load(open(p, encoding="utf-8")).get("batches") or {}).values()
+    except (OSError, ValueError):
+        return None
+    out = {}
+    for st in ("planned", "staged", "partial", "offloaded"):
+        bs = [b for b in batches if b.get("status") == st]
+        out[st] = {"count": len(bs), "bytes": sum(b.get("bytes") or 0 for b in bs)}
+    return out
+
+
+def handoff_paths(explicit):
+    patterns = list(LOCAL.get("production_manifest_globs") or [])
+    patterns.extend(os.path.join(g, "production-handoff.json") for g in LOCAL.get("production_globs") or [])
+    return production_handoff.discover(COWORK, patterns, explicit)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default="/tmp/sansheng-triage/" + datetime.now().strftime("%Y%m%d-%H%M%S"))
@@ -1399,6 +1679,7 @@ def main():
     ap.add_argument("--no-dups", action="store_true", help="跳过重复副本扫描")
     ap.add_argument("--archive-deep", action="store_true", help="同盘存档 tgz 逐文件对比原路径（解压流，慢；结果缓存在 $TMPDIR）")
     ap.add_argument("--update-latest", help="显式给出 latest-triage.json 链接路径时，指向本次 --out/triage.json（唯一的写操作，默认不写）")
+    ap.add_argument("--production-manifest", action="append", default=[], help="项目生产交付清单，可重复")
     args = ap.parse_args()
     if os.path.realpath(args.out).startswith(os.path.realpath(HOME) + "/") and "--out" not in " ".join(sys.argv):
         sys.exit("只读模式拒绝写家目录")
@@ -1424,6 +1705,16 @@ def main():
     t3, p3, r3 = apply_red_lines(t3)
     un, p4, r4 = apply_red_lines(un)
     protected_production, referenced_ask = p1 + p2 + p3 + p4, r1 + r2 + r3 + r4
+    handoffs = [production_handoff.read(p) for p in handoff_paths(args.production_manifest)]
+    for group in (t1, t1_wait, t2, t3, un):
+        kept = []
+        for row in group:
+            why = production_handoff.protection(row["path"], handoffs)
+            if why:
+                protected_production.append(dict(row, red_line=why))
+            else:
+                kept.append(row)
+        group[:] = kept
     gr = growth(ctx, args.prev, df)
     nd = gr["new"] if gr else None
     vp = None if args.no_video or not VIDEO_ROOT else video_products(ctx)
@@ -1463,11 +1754,14 @@ def main():
     df_end = df_both(HOME)
     elapsed = round(time.monotonic() - ctx.t0, 1)
     dtop = denied_top(ctx.denied)
+    qsum = quarantine_summary()
+    csum = cold_ledger_summary()
     res = {"schema": "triage/2", "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
            "units": "GiB (1024^3)", "elapsed_seconds": elapsed, "phases": ctx.phase, "df": df, "tmpdir": TMP,
-           "df_end": df_end, "rendering": ctx.rendering, "archives": arch, "backup_failures": _BACKUP.get("fails"),
+           "df_end": df_end, "rendering": ctx.rendering, "rendering_unchecked": list(RENDERING_UNCHECKED), "archives": arch, "backup_failures": _BACKUP.get("fails"),
            "cleanup_log": CLEANUP_LOG if CLEANUP_LOG and os.path.isfile(CLEANUP_LOG) else None,
-           "tier1": t1, "tier1_wait_app": t1_wait, "tier2": t2, "tier2_prune": prune, "tier3": t3, "tier3_protected_ref": t3_ref, "protected_production": protected_production, "referenced_ask": referenced_ask,
+           "quarantine_summary": qsum, "cold_ledger_summary": csum,
+           "production_handoffs": handoffs, "tier1": t1, "tier1_wait_app": t1_wait, "tier2": t2, "tier2_prune": prune, "tier3": t3, "tier3_protected_ref": t3_ref, "protected_production": protected_production, "referenced_ask": referenced_ask,
            "keep": keep_all, "flow_artifacts": [x["path"] for x in flows], "growth": gr, "unclassified": un,
            "video_products": vp, "worktree_breakdown": wb, "duplicates": dups, "vanished_during_scan": sorted(set(vanished)),
            "new_dirs": nd, "coverage": {"denied_count": len(ctx.denied), "denied_samples": ctx.denied[:15], "denied_top": dtop,
@@ -1492,12 +1786,34 @@ def main():
 
 def _lw(x):
     w = x.get("last_write")
-    return ("%s `%s`%s" % (w["time"].replace("T", " ")[:16], display(w["file"])[-50:], "（超时，可能更晚）" if w["partial"] else "")) if w else "—"
+    return ("%s `%s`%s" % (w["time"].replace("T", " ")[:16], display(w["file"])[-50:], "（超时，可能更晚）" if w["partial"] else "")) if w and not w.get("unchecked") else ("未查" if w else "—")
 
 
 def _who(x):
     hs = x.get("holders") or []
     return "<br>".join("%s PID %d（%d 个文件）`%s`" % (h["name"], h["pid"], h["files"], h["cmdline"][:90].replace("|", "\\|")) for h in hs) or "—"
+
+
+def render_dups(dp):
+    """重复副本一节（名义重复 / 已共享 / 扣除后可省 分开写）；无内容返回空列表。"""
+    L = []
+    if dp and (dp["dup_files"] or dp.get("shared_files")):
+        L += ["", "## 重复副本（APFS 克隆去重，不删任何路径）· 名义重复 %s，已共享 %s（无需处理），扣除后可省 %s（%d 组、%d 个副本，≥20MB）" % (
+            human(dp["nominal_bytes"]), human(dp.get("shared_bytes", 0)), human(dp.get("savable_bytes", dp["nominal_bytes"])), dp["groups"], dp["dup_files"]), "",
+              "同一内容在多个目录各存一份（常见：成品库 / 交付 / 分发暂存 / 工作树）。删副本会破坏交付目录和流水线路径；"
+              "改成 APFS 克隆后每个路径照常可用，磁盘只占一份。这里是抽样哈希，`plan` 会全量 sha256 复核。"
+              "**已共享**指副本与保留端在抽样点（开头/中间/结尾，>256MiB 的大文件取 8 处）上的物理块相同（抽样判定、非全量；早就是克隆，%d 个、%s），不计入可省量；"
+              "取不到物理位置的 %d 个按未共享计、共享状态未知，可省量以执行后磁盘实测为准。" % (
+                  dp.get("shared_files", 0), human(dp.get("shared_bytes", 0)), dp.get("unknown_share_files", 0)), "",
+              "| 副本所在位置 | 可省（未共享） |", "|---|---|"]
+        if dp["dup_files"]:
+            L += ["| `%s` | %s |" % (k, human(v)) for k, v in dp["by_location"]]
+            L += ["", "示例（保留 ← 副本）："] + ["- `%s` ← `%s`（%s）" % (display(x["keep"]), display(x["dup"]), human(x["size"])) for x in dp["samples"]]
+            L += ["", "命令（用户批准后按顺序跑）：", "", "1. 计划（只读，全量哈希）：`%s`" % dp["plan_command"],
+                  "2. 预演：`%s`" % dp["dry_command"], "3. 执行：`%s`" % dp["command"]]
+        else:
+            L += ["| （无可省副本，全部已共享） | 0 |"]
+    return L
 
 
 def render(res, args):
@@ -1512,10 +1828,18 @@ def render(res, args):
          "", "**开头/结尾 df**：开头已用 %s / 可用 %s → 结尾已用 %s / 可用 %s（扫描期间变化 %s%s）" % (
              human(df["used"]), human(df["avail"]), human(res["df_end"]["used"]), human(res["df_end"]["avail"]),
              "+" if res["df_end"]["used"] >= df["used"] else "-", human(abs(res["df_end"]["used"] - df["used"]))),
-         "", "**在渲染/波动**（最近 10 分钟有写入的生产目录，大小与增长不可信、不计入增长）：" + ("；".join("`%s`" % display(d) for d in res["rendering"]) or "无"),
+         "", "**在渲染/波动**（最近 10 分钟有写入的生产目录，大小与增长不可信、不计入增长）：" + ("；".join("`%s`" % display(d) for d in res["rendering"]) or "无")
+         + (("；其中 %d 个目录 find 失败、**未查**（权限拒绝或路径消失），保守按在渲染处理" % len(res["rendering_unchecked"])) if res.get("rendering_unchecked") else ""),
          "", ("清理日志：`%s` 存在" % display(res["cleanup_log"])) if res.get("cleanup_log") else "**⚠ 清理日志 `%s` 不存在（红线 5 未落地）**" % display(CLEANUP_LOG or ""), "",
+         "隔离区（`.待删-*` 回执在盘项）：%d 项 / %s（其中满 7 天可立即 `quick_act.py purge --all`：%d 项 / %s）" % (
+             (res.get("quarantine_summary") or {}).get("count", 0),
+             human((res.get("quarantine_summary") or {}).get("bytes", 0)),
+             (res.get("quarantine_summary") or {}).get("expired_7d_count", 0),
+             human((res.get("quarantine_summary") or {}).get("expired_7d_bytes", 0))),
+         *(["冷存台账健康摘要：" + "；".join("%s %d 批（%s）" % (k, v["count"], human(v["bytes"])) for k, v in (res.get("cold_ledger_summary") or {}).items())] if res.get("cold_ledger_summary") else []),
+         "",
          "第1档统一规则：白名单类别 + 无进程打开 + 对应 App 未运行 + 静默期无写入（默认 %g 小时；卡片更严时取较严者，如视频渲染/Library/Caches 24 小时）。"
-         "每项先跑“检查”命令（无输出才继续），再跑“删除”命令；删除命令原生优先，其余为 `find -x DIR -mindepth 1 -delete`（保留目录本身、不跟随链接），不使用 `rm -rf`。" % args.quiet_hours,
+         "每项先跑“检查”命令（无输出才继续），再跑“删除”命令；删除命令原生优先，其余为 `/usr/bin/find -x DIR -mindepth 1 -delete`（保留目录本身、不跟随链接），不使用 `rm -rf`。" % args.quiet_hours,
          "", "## 第 1 档 可再生缓存 · 合计 %s（用户批准后执行）" % human(s(t1)), "",
          "| 类别 | 路径 | 大小 | 最近写入 | 静默期 | 检查（先跑） | 删除（后跑） |", "|---|---|---|---|---|---|---|"]
     L += ["| %s | `%s` | %s | %s | %gh | `%s` | `%s` |" % (x["category"], display(x["path"]), human(x["bytes"]), _lw(x), x["quiet_hours"],
@@ -1566,7 +1890,8 @@ def render(res, args):
               "| tgz | 大小 | 检查（先跑） | 删除（后跑） |", "|---|---|---|---|"]
         L += ["| `%s` | %s | `%s` | `%s` |" % (display(a["path"]), human(a["bytes"]), a["check_command"], a["command"]) for a in od]
     if vp:
-        L += ["", "### 需用户判断的成品清单（`%s` 整体仍受保护；只列，不给删除命令）%s" % (display(vp["root"]), "；引用计数**部分**（搜索超时）" if vp["refs_partial"] else ""), "",
+        L += ["", "### 需用户判断的成品清单（`%s` 整体仍受保护；只列，不给删除命令）%s" % (display(vp["root"]), ("；引用计数**部分**（搜索超时）" if vp["refs_partial"] else "")
+              + ("；深层“作废”目录**未查**（%s），不代表没有" % vp["void_unchecked"] if vp.get("void_unchecked") else "")), "",
               "| 分类 | 目录 | 大小 | 最近写入 | 被引用次数 | 提示 |", "|---|---|---|---|---|---|"]
         order = {"作废": 0, "试做/重制/v1-v3/旧版": 1, "已交付/交付": 2, "进行中（24 小时内有写入）": 3, "当日产出": 4, "其他": 5}
         for x in sorted(vp["rows"], key=lambda x: (order.get(x["class"], 9), -(x["bytes"] or 0))):
@@ -1576,16 +1901,7 @@ def render(res, args):
         dv = [r for r in vp["rows"] if r.get("deep_void")]
         if dv:
             L += ["", "其中深层“作废”目录 %d 个、合计 %s（名字带作废标记；0 引用的可请用户确认后删除）。" % (len(dv), human(sum(r["bytes"] or 0 for r in dv)))]
-    dp = res.get("duplicates")
-    if dp and dp["dup_files"]:
-        L += ["", "## 重复副本（APFS 克隆去重，不删任何路径）· 名义可共享 %s（%d 组、%d 个副本，≥20MB）" % (human(dp["nominal_bytes"]), dp["groups"], dp["dup_files"]), "",
-              "同一内容在多个目录各存一份（常见：成品库 / 交付 / 分发暂存 / 工作树）。删副本会破坏交付目录和流水线路径；"
-              "改成 APFS 克隆后每个路径照常可用，磁盘只占一份。这里是抽样哈希，`plan` 会全量 sha256 复核；已经是克隆的不会再腾空间，以执行后实测为准。", "",
-              "| 副本所在位置 | 名义可共享 |", "|---|---|"]
-        L += ["| `%s` | %s |" % (k, human(v)) for k, v in dp["by_location"]]
-        L += ["", "示例（保留 ← 副本）："] + ["- `%s` ← `%s`（%s）" % (display(x["keep"]), display(x["dup"]), human(x["size"])) for x in dp["samples"]]
-        L += ["", "命令（用户批准后按顺序跑）：", "", "1. 计划（只读，全量哈希）：`%s`" % dp["plan_command"],
-              "2. 预演：`%s`" % dp["dry_command"], "3. 执行：`%s`" % dp["command"]]
+    L += render_dups(res.get("duplicates"))
     pp, ra = res.get("protected_production") or [], res.get("referenced_ask") or []
     if pp:
         L += ["", "## 受保护·生产目录（只展示，不可删；红线 1）", ""]
@@ -1632,6 +1948,11 @@ def render(res, args):
     L += ["- du 超时：%s；lsof：%s" % (", ".join(map(display, cov["du_timeouts"])) or "无", "正常" if cov["lsof_ok"] else "不可用")]
     L += ["", "## 下一步", "", "- SKILL.md 要求每次扫描后运行 `probe projects`；它依赖 scan.py 的 facts.json 并写 `<run>/projects.json`（不加 --run 会写进家目录最近一次 run），triage 不产生 facts，所以只提示不代跑；用 `--read-only` 扫描时 run 落在 /tmp：",
           "  `python3 scripts/scan.py scan --read-only` 后 `python3 scripts/scan.py probe projects --run <run目录>`"]
+    for handoff in res.get("production_handoffs", []):
+        L += ["", "## 生产交付清单", "", "`%s`" % display(handoff["manifest"]), ""]
+        for row in handoff["entries"]:
+            decision = "待复核" if row["decision"] == "review" else "保留"
+            L.append("- %s · %s · `%s` · %s" % (decision, row["role"], row["path"], row.get("hold", row["reason"])))
     return "\n".join(L) + "\n"
 
 

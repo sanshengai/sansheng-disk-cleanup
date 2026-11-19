@@ -117,3 +117,5 @@ checkpoint 为 `{kind:"retired_test_copy", path:"绝对证明路径", sha256:"�
 - `files`：非空的 `{path,retained_copy,sha256}` 数组，精确等于 item 的 `scope:"files"` 清单。两端须为独立普通文件；保留端位于既有 deliverable_roots，不能同时列入任何删除卡。
 
 沿原入口创建本轮 `run_authorization.py --retire-completed-outputs` 授权，需要近期例外时另加 `--allow-recent`；不改全局 profile。再运行原引用检查、check、seal、propose 和 act。检查与执行共用同一证明校验，执行时每个叶文件在实际处置前重新验证源、保留端 SHA 和证据身份；任一漂移仅跳过该文件，不转为整目录删除。未选、不同内容、无保留副本和唯一证据继续保留。
+
+登记阶段的候选提交默认在 `registration/manifest.json` 留存清单。仓库采用其他位置时，可在本机 `triage-local.json` 的 `registration_manifests` 对象中，以所属仓库绝对路径为键（多个工作树共用时，使用 Git 公共目录的绝对路径）、清单在仓内的相对路径为值配置。

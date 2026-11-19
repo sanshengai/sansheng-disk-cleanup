@@ -13,7 +13,7 @@ import subprocess
 from datetime import datetime
 
 KINDS = ("source", "gold", "evaluation", "approval")
-SNAPSHOT = "个人网站/web/career-api/career_api/data/short-answer/manifest.json"
+SNAPSHOT = "registration/manifest.json"
 PHASE = "candidate-accumulated-not-derived-not-published"
 
 
@@ -202,7 +202,18 @@ def _verify(item):
     candidate = adoption["candidate"]
     if not isinstance(candidate, str) or not re.fullmatch(r"[0-9a-f]{40}", candidate):
         raise ValueError("adoption 缺少候选提交")
-    snapshot = _git(owner, "show", candidate + ":" + SNAPSHOT)
+    config_file = Path(os.environ.get("SANSHENG_DISK_CLEANUP_TRIAGE") or
+                       Path.home() / ".sansheng/disk-cleanup/triage-local.json").expanduser()
+    try:
+        with config_file.open(encoding="utf-8") as source:
+            mapping = json.load(source).get("registration_manifests", {})
+    except FileNotFoundError:
+        mapping = {}
+    common = Path(_git(owner, "rev-parse", "--path-format=absolute", "--git-common-dir").decode().strip())
+    location = mapping.get(str(owner), mapping.get(str(common), SNAPSHOT))
+    if not isinstance(location, str) or Path(location).is_absolute() or ".." in Path(location).parts or not location:
+        raise ValueError("登记快照必须是仓库内的相对路径")
+    snapshot = _git(owner, "show", candidate + ":" + location)
     if hashlib.sha256(snapshot).hexdigest() != proof["stage_manifest_sha256"]:
         raise ValueError("adoption 候选未绑定本组 manifest")
     retained = [{"path": receipt["reviewPath"], "sha256": receipt["reviewSHA256"]}] + [

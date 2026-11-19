@@ -11,6 +11,7 @@ from contextlib import contextmanager
 import act
 import plan
 import protect
+import session_materials
 
 
 @contextmanager
@@ -75,10 +76,16 @@ def candidates(run, seal):
                 dest = os.path.join(root, os.path.relpath(src, protect.HOME))
                 with opened(dest) as (_, _, fd):
                     fp = fingerprint(fd)
+                proof = original.get("session_materials")
+                reason = session_materials.path_error(dest, protect.HOME, proof, original=src)
+                if reason:
+                    raise ValueError(reason)
                 if (fp['st_dev'], fp['st_ino']) != (original.get('dev'), original.get('ino')):
                     raise ValueError('废纸篓文件不是封存时的原文件')
                 out[dest] = {'path': dest, 'source': src, 'card': card['id'], 'dir': root,
                              'bytes': int(item['removed']['bytes']), 'fingerprint': fp}
+                if proof is not None:
+                    out[dest]["session_materials"] = proof
     if not out:
         raise ValueError('没有可核实的本轮废纸篓文件')
     for root in {i['dir'] for i in out.values()}:
@@ -120,7 +127,7 @@ def main(argv=None):
             raise ValueError('文件或预演摘要有变化，拒绝执行；请重新预演')
         journal = copy.deepcopy(snapshot)
         journal.update({'reason': a.reason, 'started_at': plan.now_iso(), 'removed': [], 'bytes': 0,
-                        'free_before': act.free_bytes(), 'finished_at': None})
+                        'home_volume_before': act.home_volume_reading(), 'free_before': act.free_bytes(), 'finished_at': None})
         plan.write_json(journal_path, journal)
         for item in items:
             with opened(item['path']) as (parent, name, fd):
@@ -128,11 +135,14 @@ def main(argv=None):
                 current = os.stat(name, dir_fd=parent, follow_symlinks=False)
                 if fp != item['fingerprint'] or (current.st_dev, current.st_ino) != (fp['st_dev'], fp['st_ino']):
                     raise ValueError('执行时文件已变化，停止；已完成部分见回执')
+                reason = session_materials.path_error(item["path"], protect.HOME, item.get("session_materials"), original=item["source"])
+                if reason:
+                    raise ValueError(reason)
                 os.unlink(name, dir_fd=parent)
             journal['removed'].append(item)
             journal['bytes'] += item['bytes']
             plan.write_json(journal_path, journal)
-        journal.update({'finished_at': plan.now_iso(), 'free_after': act.free_bytes()})
+        journal.update({'finished_at': plan.now_iso(), 'free_after': act.free_bytes(), 'home_volume_after': act.home_volume_reading()})
         plan.write_json(journal_path, journal)
         import report
         report.make(run)

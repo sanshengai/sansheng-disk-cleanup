@@ -884,7 +884,7 @@ def rollout(env, tid, parent=None, day="03"):
     meta = {"id": tid}
     if parent:
         meta["source"] = {"subagent": {"thread_spawn": {"parent_thread_id": parent}}}
-    mkfile(p, (json.dumps({"type": "session_meta", "payload": meta}) + "\n" + "x" * 5000).encode())
+    mkfile(p, (json.dumps({"type": "session_meta", "payload": meta}) + "\n" + json.dumps("x" * 5000)).encode())
     os.utime(p, (OLD, OLD))
     codex_state._cache.clear()
     return p

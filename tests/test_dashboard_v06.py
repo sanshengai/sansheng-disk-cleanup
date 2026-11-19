@@ -215,11 +215,12 @@ def test_review_choices_are_visible_and_never_select_delete(browser, tmp_path):
     payload['proposal']['review_questions'] = [
         {'id': 'c05', 'title': '旧任务素材', 'question': '还要继续用吗？', 'bytes': 2000000000}]
     page, errors = open_page(browser, tmp_path, payload, viewport={'width': 390, 'height': 844})
-    assert not page.get_by_role('button', name='想清理，继续查', exact=True).is_visible()
-    page.get_by_text('待决定 1 项 · 展开选择核查方向', exact=True).click()
+    assert page.get_by_role('button', name='想清理，继续查', exact=True).is_visible(), '待决定一栏默认展开'
     page.get_by_role('button', name='想清理，继续查', exact=True).click()
     assert page.locator('details.asks').evaluate('(e)=>e.open'), '回答后保持展开，便于继续答下一项'
-    assert page.get_by_role('button', name='复制核查答复，发给 Agent').is_enabled()
+    assert page.get_by_role('button', name='复制核查答复，发给 Agent').count() == 0, '不再有第二个复制按钮'
+    page.evaluate("picked.clear(); modeOf.clear(); render()")
+    assert page.locator('#copy').is_enabled(), '只有核查答复时，唯一的复制按钮也可用'
     assert page.evaluate("picked.has('c05')") is False
     msg = page.evaluate("reviewMessage(facts.scan_id,REVIEW,reviewAns)")
     assert prefs.parse_board_export(msg)[1]
@@ -235,7 +236,6 @@ def test_investigated_review_still_requires_decision(browser, tmp_path):
     payload['review_status'] = {'entries': [{'id': 'c05', 'status': 'investigated', 'summary': 'Copy verified'}]}
     page, errors = open_page(browser, tmp_path, payload, viewport={'width': 390, 'height': 844})
     assert '已经核查 1 项' in page.inner_text('body')
-    page.get_by_text('待决定 1 项 · 展开选择核查方向', exact=True).click()
     assert page.get_by_role('button', name='想清理，继续查', exact=True).is_visible()
     assert page.evaluate("picked.has('c05')") is False
     assert page.get_by_role('link', name='查看逐项证据与保留条件 →').get_attribute('href') == 'review.html'
@@ -596,3 +596,106 @@ def test_pending_rule_shows_means_and_tolerates_missing(browser, tmp_path):
     page.locator(".qcard", has_text="下载里的视频").get_by_role("button", name="对", exact=True).click()
     assert "确认规则: p1" in page.evaluate("agentMessage()").splitlines()
     assert errs == []
+
+
+# ------------------------------------------------------------ 0.7 单一导出按钮 / 默认展开 / localStorage
+def test_single_copy_button_and_review_open_by_default():
+    assert HTML.count('id="copy"') == 1
+    assert HTML.count('>复制清单，发给 Agent</button>') == 1 and '复制核查答复，发给 Agent' not in HTML
+    assert 'let reviewsOpen=true' in HTML and 'let reviewsOpen=false' not in HTML
+
+
+def test_local_storage_key_and_try_catch():
+    assert "'sansheng-disk-cleanup:'+(facts.scan_id||plan.scan_id||'')+':'+(seal&&seal.digest?seal.digest:'')" in HTML
+    for m in re.finditer(r'localStorage\.(getItem|setItem)', HTML):
+        before = HTML[max(0, m.start() - 400):m.start()]
+        assert before.rfind('try{') > before.rfind('}catch'), '每次读写都要包在 try 里'
+    assert 'sessionStorage' not in HTML and 'indexedDB' not in HTML
+
+
+@pw
+def test_combined_export_has_both_parts_and_review_only(browser, tmp_path):
+    payload = sample_payload()
+    payload['proposal']['review_questions'] = [
+        {'id': 'c05', 'title': '旧任务素材', 'question': '还要继续用吗？', 'bytes': 2000000000}]
+    page, errors = open_page(browser, tmp_path, payload)
+    page.get_by_role('button', name='想清理，继续查', exact=True).click()
+    page.evaluate("picked.clear(); modeOf.clear(); render()")
+    only = page.evaluate("agentMessage()")
+    assert only.startswith('叁笙清理 · 待核查答复\n') and '清理:' not in only
+    page.evaluate("picked.clear(); setPick(cards.find(c=>c.verdict==='clean'),true); render()")
+    both = page.evaluate("agentMessage()")
+    head, tail = both.split('\n\n', 1)
+    assert head.startswith('叁笙清理选择\n') and tail.startswith('叁笙清理 · 待核查答复\n')
+    ex, errs = prefs.parse_board_export(head)      # 合并文本由 act.py 先按抬头切开，清理部分单独解析
+    assert ex and not errs
+    assert '核查答复' in page.inner_text('#ledger-hint')
+    assert not errors
+    page.close()
+
+
+@pw
+def test_state_persists_in_local_storage_and_isolated_by_key(browser, tmp_path):
+    payload = sample_payload()
+    payload['proposal']['review_questions'] = [
+        {'id': 'c05', 'title': '旧任务素材', 'question': '还要继续用吗？', 'bytes': 2000000000}]
+    f = build_page(payload, tmp_path / 'board.html')
+    ctx = browser.new_context()
+    page = ctx.new_page()
+    page.goto(f.as_uri())
+    page.get_by_role('button', name='想清理，继续查', exact=True).click()
+    page.fill('#note', '保留上周的图')
+    key = page.evaluate('STORE_KEY')
+    assert payload['facts']['scan_id'] in key and payload['seal']['digest'] in key
+    page.reload()
+    assert page.evaluate("reviewAns.get('c05')") == '想清理，继续查'
+    assert page.input_value('#note') == '保留上周的图'
+    # 旧 seal 的键不读：改键名后刷新，状态回到默认
+    page.evaluate("(k)=>{const v=localStorage.getItem(k);localStorage.removeItem(k);localStorage.setItem(k.replace(/:[^:]*$/,':oldseal'),v)}", key)
+    page.reload()
+    assert page.evaluate("reviewAns.size") == 0 and page.input_value('#note') == ''
+    page.close()
+
+
+@pw
+def test_page_works_when_storage_throws(browser, tmp_path):
+    f = build_page(sample_payload(), tmp_path / 'board.html')
+    page = browser.new_context().new_page()
+    errors = []
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    page.add_init_script("Object.defineProperty(window,'localStorage',{get(){throw new Error('denied')}})")
+    page.goto(f.as_uri())
+    page.evaluate("picked.clear(); setPick(cards.find(c=>c.verdict==='clean'),true); render()")
+    assert page.locator('#copy').is_enabled() and not errors
+    page.close()
+
+
+@pw
+def test_conversation_cards_are_never_bulk_selected(browser, tmp_path):
+    """AI 对话卡（交互对话、设了“对话逐个问”的项目里的对话）只能一张张选：档位按钮和“全选本类”都不勾它们；
+    一张张勾上的，换档位时保留，点“清空”才取消。"""
+    payload = sample_payload()
+    base = {"category": "ai-sessions", "verdict": "decide", "bytes": 10 ** 9, "summary": "测试", "preset": "recommended",
+            "source": "测试", "items": [], "evidence": [], "risk_summary": []}
+    payload["plan"]["cards"] += [dict(base, id="c06", title="交互对话", interactive=True),
+                                 dict(base, id="c07", title="逐个问的对话", conversation_ask=["Cowork"])]
+    page, errors = open_page(browser, tmp_path, payload)
+    for p in ("safe", "recommended", "all"):
+        ids = page.evaluate(f"presetCards('{p}').map(c=>c.id)")
+        assert "c06" not in ids and "c07" not in ids, (p, ids)
+    page.evaluate("choosePreset('all')")
+    assert page.evaluate("picked.has('c03')") and not page.evaluate("picked.has('c06')||picked.has('c07')")
+    page.evaluate("choosePreset('');setPick(cards.find(c=>c.id==='c06'),true);render()")
+    page.evaluate("choosePreset('recommended')")
+    assert page.evaluate("picked.has('c06')") and page.evaluate("modeOf.get('c06')") == "删"
+    assert page.evaluate("activePreset()") == "recommended"
+    page.evaluate("choosePreset('')")
+    assert page.evaluate("picked.size") == 0 and page.evaluate("modeOf.get('c06')") is None
+    page.evaluate("view='ai-sessions';render()")
+    box = page.locator("#pick-all")
+    assert box.count() == 1 and "一张张选" in page.locator("label:has(#pick-all)").inner_text()
+    box.click()                       # 勾上后页面会重画，换成新的复选框，所以用 click 不用 check
+    assert page.evaluate("picked.has('c03')") and not page.evaluate("picked.has('c06')||picked.has('c07')")
+    assert "一张张选" in page.locator("#quick").inner_text()
+    assert not errors, errors
+    page.close()

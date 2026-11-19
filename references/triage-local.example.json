@@ -53,5 +53,20 @@
     "min_free_gib": 50,
     "min_free_pct": 10,
     "max_drop_gib_7d": 60
-  }
+  },
+  "cold_storage": {
+    "label": "网盘冷存",
+    "cli": [
+      "python3",
+      "~/tools/cold-storage.py"
+    ],
+    "placeholder": "已移到网盘.md",
+    "consumer_scopes": [
+      {
+        "source": "~/work/archive/originals",
+        "roots": ["~/work/archive/year-index"]
+      }
+    ]
+  },
+  "_冷存协议": "cold_store.py 转交：<cli> cold offload <目录> --user-text T --min-idle-days N（上传并逐个核对，再经 quick_act.py 以 kind=backed_up 复核删除，原目录留 placeholder 说明；任一步失败不删本地）；<cli> where <路径>（不在冷存里退出码 1）；<cli> restore <路径>（按原路径取回并校验）。冷存目录里的文件应由 offdisk_backup.adapter 按冷存清单担保。"
 }
