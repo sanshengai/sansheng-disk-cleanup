@@ -157,6 +157,32 @@ def test_production_dir_needs_user_naming(world):
     assert r["status"] == "refused" and any("生产目录" in x for x in r["refusals"])
 
 
+def test_authorized_scope_can_isolate_with_transcript_mentions(world):
+    process = world["work"] / "proc" / "old-pastes"
+    cache = world["work"] / "regen" / "old-cache"
+    mk(str(process / "a.bin"))
+    mk(str(cache / "a.bin"))
+    text = "把上面列出的剩余项清理掉"
+    (world["talk"] / "mine.jsonl").write_text(json.dumps({"text": text}, ensure_ascii=False))
+    (world["talk"] / "other.jsonl").write_text(f"See {process} and {cache}")
+    items = [item(process, kind="process"), item(cache)]
+
+    plan_result = plan(world, items, text=text, isolate_authorized=True)
+    process_result, cache_result = plan_result["results"]
+    assert process_result["status"] == "ok" and process_result["method"] == "quarantine"
+    assert cache_result["status"] == "refused" and any("其他 Agent" in x for x in cache_result["refusals"])
+    assert qa.seal_of(dict(plan_result, isolate_authorized=False)) != plan_result["seal"]
+    receipts = run(world, plan_result["seal"])
+    assert any(r["status"] == "quarantined" for r in receipts)
+    assert not process.exists() and cache.is_dir()
+
+    mk(str(process / "a.bin"))
+    consumer = world["work"] / "consumer.py"
+    mk(str(consumer), f"PATH = {str(process)!r}")
+    result = plan(world, items[:1], text=text, isolate_authorized=True)["results"][0]
+    assert result["status"] == "refused" and any("代码引用" in x for x in result["refusals"])
+
+
 def test_process_is_quarantined_then_purged(world):
     d = world["work"] / "proc" / "试做-20261001"
     mk(str(d / "a.bin"))

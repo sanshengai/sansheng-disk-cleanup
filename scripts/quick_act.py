@@ -1057,7 +1057,12 @@ def judge(item, env, run_dir, upload=False, sample=8, planned=None):
         if th is None:
             refuse.append("对话记录检查失败（超时或 rg 出错）")
         elif th:
-            block.append("其他 Agent 近 %g 小时的对话提到它（%d 个会话，如 %s）" % (env.activity_hours, len(th), tilde(th[0])))
+            activity = "其他 Agent 近 %g 小时的对话提到它（%d 个会话，如 %s）" % (
+                env.activity_hours, len(th), tilde(th[0]))
+            if kind == "process" and env.isolate_authorized:
+                notes.append(activity + "；沿用本轮已授权清单，先隔离")
+            else:
+                block.append(activity)
     if kind == "verified_obsolete":
         if not DIRECT_DELETE_INTENT_RX.search(env.user_text or ""):
             refuse.append("直接永久删除（verified_obsolete）要求用户原话含明确直删意图（如“直接永久删除”/“不用隔离”）")
@@ -1141,6 +1146,7 @@ def strip_private(rows):
 def seal_of(plan):
     """封存码按内容算：清单、原话、本会话记录、每项可执行目标的路径与身份。run 时重算比对，改 plan 文件即失效。"""
     return digest({"schema": plan["schema"], "items": plan["items"], "user_text": plan["user_text"],
+                   **({"isolate_authorized": plan["isolate_authorized"]} if "isolate_authorized" in plan else {}),
                    **({"production_manifests": plan["production_manifests"]} if "production_manifests" in plan else {}),
                    "self_transcripts": plan.get("self_transcripts"),
                    "targets": {r["id"]: [[t["path"], t["ident"], t.get("file_digest")] for t in r["targets"] if "skip" not in t]
@@ -1222,11 +1228,14 @@ def cmd_plan(a):
         raise SystemExit("必须给出用户的实际原话（--user-text）")
     os.makedirs(a.run, exist_ok=True)
     env = Env(a.user_text, a.self_transcript, a.activity_hours)
+    env.isolate_authorized = a.isolate_authorized
     env.handoffs = [production_handoff.read(p) for p in triage.handoff_paths(a.production_manifest)]
     env.prefetch(items)
     rows = [judge(it, env, a.run, upload=a.upload_missing, sample=a.sample) for it in items]
     plan = {"schema": SCHEMA, "created_at": now_iso(), "user_text": a.user_text, "items": items,
             "results": strip_private(rows), "self_transcripts": sorted(env.mine)}
+    if env.isolate_authorized:
+        plan["isolate_authorized"] = True
     if env.handoffs:
         plan["production_manifests"] = {h["manifest"]: h["sha256"] for h in env.handoffs}
     plan["seal"] = seal = seal_of(plan)
@@ -1277,6 +1286,7 @@ def cmd_run(a):
     if a.seal != plan.get("seal") or seal_of(plan) != a.seal:
         raise SystemExit("封存码不符或计划文件被改过：重新 plan，并用它打印的封存码")
     env = Env(plan["user_text"], run_self_inputs(plan), a.activity_hours)
+    env.isolate_authorized = plan.get("isolate_authorized") is True
     manifests = plan.get("production_manifests", {})
     def load_handoffs():
         reports = [production_handoff.read(p) for p in triage.handoff_paths(manifests)]
@@ -1549,6 +1559,8 @@ def main(argv=None):
     p.add_argument("--items", required=True)
     p.add_argument("--user-text", required=True)
     p.add_argument("--run", required=True)
+    p.add_argument("--isolate-authorized", action="store_true",
+                   help="清单已获用户授权时，其他会话提及过程件只记录，仍只隔离")
     p.add_argument("--upload-missing", action="store_true", help="backed_up 项缺备份时先调用适配器补传")
     p.add_argument("--sample", type=int, default=8, help="backed_up 项每项抽样回读个数（至少 1）")
     p.add_argument("--self-transcript", action="append", default=[], help="本会话对话记录（自动识别不到时手动给，必须含用户原话）")

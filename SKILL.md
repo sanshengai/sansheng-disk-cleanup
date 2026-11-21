@@ -23,7 +23,7 @@ metadata:
 4. **备份检查**：只有盘外备份才算“可恢复”——盘外备份台账（`offdisk_backup.state`，键为工作区相对路径）列有它，或外接盘归档经核对存在。**同盘存档不是备份。** triage.py `backup_status()` 只读给出结果（外接盘需人工核对）。
 5. **清理日志**：每次真实删除**之前和之后**都追加到清理日志（`cleanup_log`，默认 `~/.sansheng/disk-cleanup/cleanup-log.md`）：时间、路径、大小、存档路径、恢复命令、谁要求的。其他 Agent 找不到文件时被指向这份日志（**把“文件不见了先查清理日志”写进共享 AGENTS.md**，否则别的 Agent 只会报“删除者未查明”）。`quick_act.py` 自动写前后两行。
 6. **隔离期**：没有盘外备份的非缓存内容，先改名为 `<名>.待删-YYYYMMDD`（同卷、瞬时、可撤销），等 7 天无人反馈再删。纯缓存与已核对盘外备份的除外。`quick_act.py` 对 `kind=process` 强制走隔离，`purge` 满期才删。
-8. **别的 Agent 还在用的不删**（2026-11-03 事故后加，见 [复盘](references/incident-20261103-active-agent-evidence.md)）：删前查该路径近 7 天有没有提交、其他 Agent 近 72 小时的对话记录有没有提到它、所在目录有没有已跟踪脚本（未跟踪文件可能是它们的输入或证据）、代码与门禁登记有没有按仓库相对路径引用它。任一命中都要用户在原话里写出目录名才放行；“全部删”“证据充分的都删”这类整批授权不覆盖它们。`quick_act.py` 已实现。
+8. **核查其他 Agent 是否在用**（见 [复盘](references/incident-20261103-active-agent-evidence.md)）：清理前查近期提交、其他 Agent 对话、已跟踪脚本和代码引用。用户已经授权处理明确范围（包括「把上面列出的剩余项清理掉」）时，直接使用原话和 `--isolate-authorized`。其他会话仅提到过程件路径时记入执行计划，按可恢复的隔离流程处理，无需让用户复述路径。实际占用、近期写入、代码引用等检查仍按执行器规则处理。
 7. **收尾报告**：删除后在最终回复里给出每项的确切恢复命令（如 `tar -xzf <存档> -C <原上级目录>` 或 `mv <名>.待删-YYYYMMDD <名>`）。
 
 ## 目标与默认流程（2026-10 改造，先读）
@@ -227,7 +227,7 @@ python3 scripts/plan.py propose --run <run目录>     # 写 proposal.json，打�
 用户在对话里整批授权（“低风险的直接删”“证据充分的全部删”）、不需要看板时，**不要临时写脚本自己删**：把判断好的清单写成 items JSON，交给 `scripts/quick_act.py`，复核、执行、清理日志、回执、恢复命令都由它做。
 
 ```sh
-python3 scripts/quick_act.py plan --items <清单.json> --user-text '<用户原话>' --run <运行目录> [--upload-missing]
+python3 scripts/quick_act.py plan --items <清单.json> --user-text '<用户原话>' --run <运行目录> [--isolate-authorized] [--upload-missing]
 python3 scripts/quick_act.py run  --run <运行目录> --seal <封存码> --pilot   # 先试点第一项
 python3 scripts/quick_act.py run  --run <运行目录> --seal <封存码>           # 再全部（已完成的自动跳过）
 python3 scripts/quick_act.py purge --run <运行目录>                           # 7 天后清单个隔离区
@@ -238,7 +238,7 @@ python3 scripts/quick_act.py purge --all [--orphan-scan <目录>]               
 - 每项写明 `kind`：`regenerable`（**已登记**的可再生缓存：第 1 档白名单、本机配置 `extra_tier1`、node_modules/__pycache__ 等，直接删；Agent 自己声明“可重建”但不在登记里的，一律按 `process` 只隔离）、`backed_up`（有盘外备份：调用本机配置的备份适配器逐文件核对台账、抽样从盘外回读，`--upload-missing` 先补传缺的，全部一致才删）、`verified_obsolete`（已核实冗余或已交付过程件：仅当用户原话同时给出明确直删意图与点名路径时直接删，保护名单/占用/静默期红线照旧拦截）、`process`（没有盘外备份的过程件：只改名隔离，不释放空间）。
 - `scope`：`all` / `children`（支持可选 `keep_names` 保留指定直属子项）/ `files` / `untracked`（Git 工作树里只删未跟踪和忽略的文件）。
 - plan 与 run 各做一遍红线检查（保护名单、生产目录、Git 跟踪、文档与代码引用、他人活动、打开文件、静默期写入、App 运行、盘外备份），run 以执行瞬间的事实为准，目标被替换（inode 变了）就跳过。
-- plan 打印的拒绝原因要如实转告用户；被“需用户点名”拦下的，向用户说明是谁在用、证据是什么，用户在原话里写出路径（或不少于 8 个字的完整目录名）后重新 plan。
+- 对话已明确授权处理某份清单或其中一部分时，清单只纳入已授权项，使用 `--isolate-authorized`，沿用原话和已有范围。该选项只处理「其他对话提到过路径」这一个信号，只允许隔离过程件。plan 的其他拒绝原因按实际检查结果处理。
 - 任何一项检查自身失败（超时、git/rg 出错、本机配置读不了、认不出本会话记录）都按拒绝处理；封存码按计划内容重算，改过计划文件就失效；删每个目标前再测一次身份、写入、占用和文件清单。
 - 本会话自己的对话记录不算“他人活动”：脚本按用户原话识别；识别不到时用 `--self-transcript <路径>` 指明。
 - 盘外备份适配器协议见 [triage-local.example.json](references/triage-local.example.json) 的 `offdisk_backup.adapter`。
