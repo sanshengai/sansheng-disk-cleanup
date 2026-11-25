@@ -585,3 +585,22 @@ def test_cold_batch_rechecks_consumers_added_after_seal(world, monkeypatch):
     rec = run(world, p["seal"])
     assert any(r["status"] == "refused" and "软链接" in str(r["why"]) for r in rec)
     assert (d / "sample.bin").is_file()
+
+
+def test_regenerable_cache_ignores_cleanup_tool_self_refs_but_keeps_real_code_ref(world, monkeypatch):
+    """清理工具自身的分类清单/测试提及可再生缓存时不应误拒，但真实业务脚本引用仍须按工具状态拦截。"""
+    monkeypatch.setattr(triage, "HARD_KEEP", ("/.git",))
+    d = world["work"] / "regen" / "gradle" / "caches"
+    mk(str(d / "modules-2" / "pkg.jar"))
+    # 工具自身分类清单与测试提到该缓存路径 → 放行（与 triage.tool_state_refs 口径一致）
+    mk(str(world["work"] / "skills" / "sansheng-disk-cleanup" / "scripts" / "producers.json"),
+       json.dumps({"path": str(d)}))
+    mk(str(world["work"] / "skills" / "sansheng-disk-cleanup" / "tests" / "test_scan.py"),
+       f'SAMPLE = "{d}"\n')
+    p = plan(world, [item(d)], text=f"同意删除：{d}")
+    assert p["results"][0]["status"] == "ok", p["results"][0]
+    # 反例：一旦有真实业务脚本按路径引用，点名也必须按工具状态拒绝
+    real_script = mk(str(world["work"] / "scripts" / "use_gradle.py"), f'CACHE = "{d}"\n')
+    p2 = plan(world, [item(d)], text=f"同意删除：{d}")
+    assert p2["results"][0]["status"] == "refused" and any("工具状态" in x for x in p2["results"][0]["refusals"])
+    os.remove(real_script)

@@ -1032,6 +1032,9 @@ def judge(item, env, run_dir, upload=False, sample=8, planned=None):
         refuse.append("代码引用检查失败（超时或 rg 出错）")
     else:
         code, code_hist = triage.split_ref_hits(code)   # 往期体检报告、快照、回执只是历史记录，不算消费者
+        if kind == "regenerable" and code:
+            # 清理工具自身的分类清单与测试不是项目消费者，过滤口径与 triage.tool_state_refs 保持一致。
+            code = [f for f in code if not triage.TOOL_REF_SKIP_RX.search(f)]
         if code and kind == "regenerable":
             # 项目可能按绝对路径调用缓存内的固定版本，须先核对脚本引用。
             refuse.append("可再生缓存被代码按路径引用，是工具状态（%s）：删了会重装成别的版本，点名也不放行"
